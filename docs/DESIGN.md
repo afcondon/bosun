@@ -521,6 +521,14 @@ shrinks the representable space to fit the legal one, in two tiers.
 > **ingested** ones are illegal-by-`validate`; both land in the same proven
 > type. And the type-level layer erases cleanly for the Go backend (CoreFn
 > input is already type-erased).
+>
+> **VERIFIED (spike, `purs` 0.15.15) — see `spike/`.** A zero-dependency
+> spike confirms the rows-as-sets encoding: `routeTo`/`requiresReady`/`bindsTo`
+> compile against compatible endpoints and are *rejected* against incompatible
+> ones (route to a `NoNetwork` worker, gate on a probe-less upstream, co-life
+> with a CDN), and `Lacks` makes double-adding a capability a type error —
+> genuine set semantics, the property Propellor's type-level *list* couldn't
+> give. Custom diagnostics via `Prim.TypeError` are a deferred polish.
 
 ### Tier 2 — caught by `validate` (representable loosely, absent from `ValidatedDeployment`)
 
