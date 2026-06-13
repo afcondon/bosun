@@ -61,6 +61,13 @@ This is **"parse, don't validate" at two altitudes**:
 The payoff lands hardest when you point it at a real, drifted system. We
 have one (§7).
 
+This two-altitude parsing is one face of a single governing discipline —
+*keep all uncertainty at the edges, keep the interior total* (Alexis King,
+"Parse, Don't Validate"). That discipline, the **two** edges it implies
+(configuration *and* observation), and the per-boundary invariant ledger that
+guards against "shotgun parsing" are set out in **`PRINCIPLES.md`**, which
+governs everything below.
+
 ---
 
 ## 2. The panoply — one concept, many dialects
@@ -397,6 +404,7 @@ apply     :: Plan -> Capabilities -> Result                -- the executor; Go o
     , observed :: Snapshot               -- what sync probes see NOW
     }
   data Status = Running | Starting | InBackoff | Failed | Down | CompletedOk
+              | Unknown Reason   -- probe couldn't tell; explicit, not coerced to Down (PRINCIPLES.md)
   type Snapshot = Map ServiceId Status
   ```
   Diffing only desired-vs-observed can't distinguish *"I changed the config"*
