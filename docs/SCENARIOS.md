@@ -250,6 +250,28 @@ against prior art (the research agent).
 These are the deltas between the current `DESIGN.md` types and what the
 scenarios demand. Each needs a decision before implementation.
 
+> **Status after the prior-art survey (`PRIOR-ART.md`).** Several are now
+> resolved and folded into `DESIGN.md`:
+> - **E1 ✓** — `RouteEdge` is a separate data graph and does *not* imply
+>   ordering; a companion `Inferred (Requires OnReady)` dep edge is derived.
+> - **E4 ✓** — resolution is edge-kind-aware by construction: `Wants` means
+>   "absent is OK" (drop+warn); hard requirements dangling = error.
+> - **E6 ✓** — `WorldState` is now three-way (desired/recorded/observed,
+>   Terraform D-7) with a rich `Status` enum incl. `InBackoff`/`CompletedOk`.
+> - **E9 ✓✓** — resolved by **open-ingest / closed-validate** (CUE, D-4):
+>   `extra :: Map String Json` passthrough preserves byte-identical round-trip;
+>   `validate` unifies against a closed `#Service` and *reports* survivors.
+> - **E10 (partial)** — the EdgeKind fidelity matrix is still TODO, but the
+>   richer `Requirement` gradient (Wants/Requires/Requisite/BindsTo/PartOf)
+>   means we now know *what* must be preserved/collapsed/dropped per tool.
+>
+> Still genuinely open: **E2** (single-facet ≠ drift — needs the "expected
+> facet set" notion), **E3** (CUE meet makes *any* field `Conflict` on
+> disagreement; the remaining question is purely which fields *define* a
+> facet vs which must agree), **E5** (planner reads `BindsTo`/`PartOf` for
+> `Stop` — noted in §4, needs the algorithm), **E7**, **E8**, **E11**
+> (conditional launchd `KeepAlive` richer than `RestartPolicy`).
+
 - **E1. Does `RoutesTo` imply a `Requires` ordering edge?** A proxy should
   start after (and arguably require the readiness of) what it routes to — or
   should routing and ordering be independent edges you can both assert?

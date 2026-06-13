@@ -186,24 +186,64 @@ real services reached by socket, not port. A model that assumed "service ⇒
 TCP port" couldn't even *describe* half of Andrew's infrastructure. Breadth
 earns its keep immediately.
 
-### 3.4 Edges — typed dependencies (systemd's taxonomy)
+### 3.4 Edges — typed dependencies (systemd's taxonomy, corrected)
+
+> **Revised per prior art (D-1, D-2, D-5, D-6 in `PRIOR-ART.md`).** systemd's
+> hard-won lesson is that **ordering and requirement are orthogonal** — a real
+> edge usually *combines* them (the canonical `Wants=`+`After=` pair), so an
+> edge is a **product**, not a flat sum. And the requirement axis is a
+> *gradient*, not one `Requires`/`BoundTo` pair.
 
 ```purescript
-data EdgeKind
-  = StartsAfter           -- ordering only            (compose depends_on default; systemd After=)
-  | Requires Gate         -- must be present AND wait  (systemd Requires=+After=; compose condition:)
-  | Informs               -- soft/optional            (systemd Wants=)
-  | BoundTo               -- co-life: dies if up dies  (systemd BindsTo=/PartOf=)
-  | RoutesTo RoutePath    -- proxy → backend           (nginx/traefik/Ingress route table)
+-- An edge in the DEPENDENCY graph. Ordering ⟂ requirement — both optional,
+-- and a real edge commonly asserts both.
+type DepEdge =
+  { from        :: ServiceId
+  , to          :: ServiceId
+  , ordering    :: Maybe Ordering
+  , requirement :: Maybe Requirement
+  , provenance  :: Provenance         -- inferred from dataflow, or hand-declared
+  }
+
+data Ordering = StartAfter | StartBefore           -- systemd After= / Before=
+
+data Requirement
+  = Wants                  -- best-effort; absent is OK         (systemd Wants=)
+  | Requires Gate          -- hard; wait per the gate           (systemd Requires= + condition)
+  | Requisite              -- must ALREADY be active; never auto-start (an external dep)
+  | BindsTo                -- Requires + crash-coupling: I stop if it stops unexpectedly
+  | PartOf                 -- reverse-only: its stop/restart propagates to me; its start does not
 
 data Gate = OnStarted | OnReady | OnHealthy | OnCompleted   -- compose condition:* ; k8s gates
 
-type Edge = { from :: ServiceId, to :: ServiceId, kind :: EdgeKind }
+data Provenance = Declared | Inferred DataRef              -- Pulumi: most edges inferred from dataflow
+data DataRef = ViaPort Port | ViaSocket AbsPath | ViaEnv EnvVar
 ```
 
-`Requires (gate)` is the only edge that *waits*, and the gate says on what.
-`OnReady`/`OnHealthy` impose an obligation on the upstream (§3.5) — that's
-the `UncheckableGate` check.
+- **Requirement gradient** (systemd): `Wants` (soft) → `Requires gate`
+  (hard, waits) → `Requisite` (must pre-exist, never started by us — the
+  honest model for an unmanaged external DB) → `BindsTo` (also dies on the
+  upstream's *unexpected* stop) → `PartOf` (reverse-only lifecycle). Our v1's
+  single `BoundTo` collapsed three genuinely different operational semantics.
+- `Requires gate` is the only requirement that *waits*; `OnReady`/`OnHealthy`
+  impose a readiness obligation on the upstream (§3.5) → the `UncheckableGate`
+  check.
+- **Provenance** (Pulumi): an edge derivable from one service referencing
+  another's port/socket/env is `Inferred`; only genuinely external ordering
+  is `Declared`. `validate` can warn on a `Declared` edge that duplicates an
+  `Inferred` one.
+
+**The reverse-proxy route is NOT a lifecycle edge** — it's a *data/traffic*
+edge, and it lives in a separate graph (§3.6, D-5):
+
+```purescript
+type RouteEdge = { proxy :: ServiceId, backend :: ServiceId, path :: RoutePath }
+```
+
+A `RouteEdge` does not *by itself* imply ordering or requirement — but it
+almost always co-occurs with an `Inferred (Requires OnReady)` dep edge
+(a proxy should start after, and wait on, what it routes to). We derive that
+companion dep edge rather than overloading one edge with both meanings.
 
 ### 3.5 Health — the readiness/liveness/startup split
 
@@ -243,7 +283,7 @@ data Selector
   | Workspace   String   -- terraform
 ```
 
-Selectors are exactly the vision's *second edge type* over the same nodes —
+Selectors are the vision's *second edge type* over the same nodes —
 membership, not dependency. The universal invariant: **a selector must be
 closed under `Requires`** (if `minard-frontend` is in profile `minard` and
 `Requires` `minard-backend`, then `minard-backend` must be in `minard`).
@@ -252,12 +292,25 @@ bug, the kustomize "Deployment without its ConfigMap" bug, and the systemd
 "target Wants a unit whose After-dep isn't pulled in" bug — *one type, three
 tools' worth of footguns.*
 
+> **THREE SEPARATE GRAPHS (D-5, Pulumi).** Bosun maintains three edge sets
+> over the same nodes, and they must never be conflated:
+> 1. **Dependency** (`DepEdge`) — ordering + requirement. *This is the only
+>    graph that drives `BootOrder`; it is the only one we topo-sort.*
+> 2. **Containment** (`Selector` membership) — organizational; **never
+>    topo-sorted.** Topo-sorting containment is a category error that every
+>    profile/namespace system invites.
+> 3. **Data/traffic** (`RouteEdge`) — reverse-proxy routes; informs the route
+>    table and an *inferred* companion dep edge, but is not itself ordering.
+
 ### 3.7 The loose ingested node, and the tight validated graph
 
 ```purescript
 data Source = FromCompose | FromRegistry | FromPlist | FromSystemd | FromK8s
 
--- LOOSE: one per (source × unit). Edges still point at raw string names.
+-- LOOSE / OPEN (D-4, CUE open structs): one per (source × unit). Edges point
+-- at raw string names; `extra` carries every source field we don't model, so
+-- ingest→emit can round-trip byte-for-byte (the differential test) WITHOUT the
+-- IR pretending to understand `networks`/`volumes`/`deploy.resources`/labels.
 type ServiceInstance =
   { source    :: Source
   , project   :: Maybe ProjectSlug
@@ -268,8 +321,10 @@ type ServiceInstance =
   , exposure  :: Exposure
   , health    :: Health
   , restart   :: RestartPolicy
-  , rawEdges  :: Array { to :: String, kind :: EdgeKind }
+  , rawDeps   :: Array { to :: String, ordering :: Maybe Ordering, requirement :: Maybe Requirement }
+  , rawRoutes :: Array { to :: String, path :: RoutePath }
   , selectors :: Array Selector
+  , extra     :: Map String Json         -- unmodeled passthrough (CUE freeform); preserves round-trip
   }
 
 -- TIGHT: minted only by `validate`. A ServiceRef is *proof* the id resolves.
@@ -291,6 +346,22 @@ is proven present. Past that boundary a dangling edge is unrepresentable —
 `plan` never has to handle "what if this points nowhere." `BootOrder`'s mere
 existence is the acyclicity certificate.
 
+**Open-ingest, closed-validate (D-4, the resolution of E9).** The loose
+`ServiceInstance` is an *open* struct — `extra` keeps unmodeled fields so
+emit can round-trip them byte-for-byte. `validate` unifies each instance
+against a *closed* `#Service` shape; a field still sitting in `extra` that
+`validate` was told to expect-empty becomes a reported `UnmodeledField`
+(neither silently dropped nor silently kept). This is exactly CUE's
+open-`{...}` / `close()` toggle, and it dissolves the lingua-franca-vs-
+fidelity tension: fidelity lives in `extra` through the open phase; rigor is
+imposed at the closed phase.
+
+**Decoders model `Absent | Present a`, never silent default-fill (D-10,
+Dhall's `omitNull`).** "field absent" and "field present-but-empty" can mean
+opposite things (k8s `labelSelector`: absent ⇒ matches nothing; empty ⇒
+matches everything); a decoder that defaults an absent field can invert
+deployment semantics.
+
 ---
 
 ## 4. The pipeline
@@ -306,23 +377,57 @@ apply     :: Plan -> Capabilities -> Result                -- the executor; Go o
 - `V Errors` (from `purescript-validation`) everywhere up to `validate`,
   because the brief is *"catch **all** the inconsistencies"* — accumulate,
   don't short-circuit. Collapse to `Either` only at the CLI boundary.
-- `WorldState` = observed reality (what's up, what's healthy *now*),
-  gathered by **synchronous** probes (HTTP GET / TCP connect / `launchctl
-  list` / `docker ps`). Sync = inside the no-Aff envelope.
-- `plan` is the **Build-Systems-à-la-Carte rebuilder**: a service's "value"
-  is *running & ready*; the planner emits a `Change` only for the *stale*
-  (down, unhealthy, or config-drifted), in `BootOrder`. This is precisely
+- **`reconcile` is a lattice meet, not last-write-wins (D-3, CUE).** Merging
+  two sources' claims about one field is the semilattice *meet*: agreement
+  unifies, disagreement yields an explicit `Conflict` value (CUE's bottom),
+  *surfaced* — never silently resolved by priority. Because meet is
+  commutative/associative/idempotent, **cross-source drift falls out for
+  free**: drift is precisely non-idempotent re-meet. The merge is
+  **type-directed** (D-11, NixOS): each field's type carries its strategy —
+  a port `Conflict`s on disagreement, labels union, lists-of-records merge
+  *by identity key* (never by position). We adopt NixOS's *taxonomy of
+  strategies* but CUE's *report-don't-resolve* default, because Bosun's
+  headline is drift detection.
+- **Three-way state, not two (D-7, Terraform).** `plan` diffs three typed
+  values, not two:
+  ```purescript
+  type WorldState =
+    { desired  :: ValidatedDeployment   -- what the spec says
+    , recorded :: Maybe Snapshot         -- last-known (Bosun's state file)
+    , observed :: Snapshot               -- what sync probes see NOW
+    }
+  data Status = Running | Starting | InBackoff | Failed | Down | CompletedOk
+  type Snapshot = Map ServiceId Status
+  ```
+  Diffing only desired-vs-observed can't distinguish *"I changed the config"*
+  (→ apply) from *"reality drifted underneath me"* (→ adopt/import) — they
+  warrant different actions. `Status` is a rich enum, not a boolean:
+  `InBackoff` is the "launchd `ThrottleInterval` looks dead for ~40s" gotcha
+  (don't double-restart it); `CompletedOk` is success for an `OnCompleted`
+  gate, not "down."
+- **The rebuilder is verifying-traces (D-8, Build à la Carte).** A service's
+  "value" is *running & ready*; the planner emits a `Change` only for the
+  *stale* — and "stale" is decided by **hashing inputs+outputs**, not a dirty
+  bit, because deployment reality drifts *out of band*. This is precisely
   `terraform plan` / a k8s reconcile pass.
+- **The dependency graph stays applicative (D-9).** Boot order is derived
+  from statically-known edges, so "proven-acyclic `BootOrder`" is a *real
+  theorem*. Any edge whose existence depends on *observed runtime state*
+  (a route to a discovered upstream) is the monadic case — quarantined in an
+  explicitly-typed escape hatch, never allowed to pollute the static
+  acyclicity guarantee.
 
 ```purescript
 data Change = Start ServiceRef | Restart ServiceRef Reason | NoOp ServiceRef | Stop ServiceRef
 newtype Plan = Plan (Array { stage :: Int, change :: Change })   -- carries BootOrder stages
 ```
 
-`apply` consumes the staged plan: **within a stage**, changes are
-independent and run concurrently (Go `errgroup`); **across stages**, ordered
-with readiness gates between them. That is the one place real concurrency is
-needed — and it is the one place we hand to Go (§6).
+`Plan` is a reviewable *typed ADT*, never an imperative one-pass reconcile.
+`apply` consumes the staged plan: **within a stage**, changes are independent
+and run concurrently (Go `errgroup`); **across stages**, ordered with
+readiness gates between them. That is the one place real concurrency is
+needed — and the one place we hand to Go (§6). The planner also reads
+`BindsTo`/`PartOf` edges to propagate `Stop`, not just `Start` (E5).
 
 ---
 
@@ -372,6 +477,42 @@ shrinks the representable space to fit the legal one, in two tiers.
 | Port outside 1..65535 | `Port` smart ctor | every YAML |
 | A dependency edge pointing nowhere (past validate) | `ServiceRef` minted-present | compose, systemd, k8s |
 | A dependency cycle (past validate) | `BootOrder` existence ⇒ acyclic | compose `depends_on`, systemd |
+| Health probe on a `NoNetwork` service | `Health` lives inside port/socket-bearing `Exposure` variants | compose, k8s |
+
+> **D-12 — Tier-1 in PureScript: no native GADTs, but the workarounds are
+> easy and one *improves* on the prior art.** PureScript lacks GADTs, but the
+> compile-time guarantees Propellor gets from GADTs + type-level MetaTypes are
+> reachable here, on **two distinct paths that converge on
+> `ValidatedDeployment`:**
+>
+> - **Ingestion path (YAML → loose → `validate`)** is necessarily *runtime*-
+>   checked — data parsed at runtime can't carry compile-time tags — so here
+>   Tier-1 comes from **smart constructors** (`mkPort`, `mkAbsPath`),
+>   **phantom-typed proofs** (`ServiceRef` mintable only by `validate`),
+>   **sums for mutual exclusion** (`Executor`, `Exposure`), **`Either` for
+>   XOR** (`image`/`build`). This is the multi-source/drift path.
+> - **Authoring path (a hand-written PureScript `.deploy` EDSL)** is where the
+>   *type-level* guarantees live, Propellor-grade. The GADT workarounds:
+>   - **Row types ARE type-level sets** — and this *fixes Propellor's own
+>     stated wart* (Joey wanted a set but had an order-sensitive type-level
+>     *list*). A service phantom-indexed by a row,
+>     `Service (reachable :: Unit, hasReadiness :: Unit)`, with
+>     `Row.Cons`/`Row.Union`/`Row.Lacks` constraints, models the metatype set
+>     *natively*.
+>   - **`type-equality`/Leibniz + final-tagless** for genuine GADT-style
+>     refinement where a constructor must carry a proof.
+>   Then the EDSL combinators enforce compatibility at compile time:
+>   `routeTo` typechecks only if the backend's row has `reachable`;
+>   `requiresReady`/`requiresHealthy` only if the upstream has `hasReadiness`
+>   (so `UncheckableGate` becomes a *type error*, not a validate-time one);
+>   `bindsTo`/`partOf` only between lifecycle-managed endpoints (never a
+>   `StaticCDN` you don't control).
+>
+> So the `.deploy` DSL (the §10 "write vs reconcile-out-of-sources" question)
+> answers itself: **authored** deployments are illegal-by-non-compilation;
+> **ingested** ones are illegal-by-`validate`; both land in the same proven
+> type. And the type-level layer erases cleanly for the Go backend (CoreFn
+> input is already type-erased).
 
 ### Tier 2 — caught by `validate` (representable loosely, absent from `ValidatedDeployment`)
 
