@@ -12,5 +12,7 @@ package:
     - tuples
     - arrays
     - ordered-collections
+    - foldable-traversable
     - strings
     - argonaut-core
+    - validation

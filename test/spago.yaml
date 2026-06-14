@@ -13,7 +13,11 @@ package:
     dependencies:
       - effect
       - aff
+      - arrays
+      - either
       - maybe
+      - partial
+      - validation
       - spec
       - spec-node
       - spec-quickcheck
