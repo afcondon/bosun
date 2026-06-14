@@ -25,6 +25,7 @@
         "path": "cli",
         "core": {
           "dependencies": [
+            "argonaut-core",
             "arrays",
             "bosun-adapters",
             "bosun-core",
@@ -35,6 +36,8 @@
             "ordered-collections",
             "partial",
             "prelude",
+            "strings",
+            "tuples",
             "validation"
           ]
         },

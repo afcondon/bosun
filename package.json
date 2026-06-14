@@ -8,5 +8,8 @@
     "build": "spago build",
     "test": "spago test",
     "bosun": "spago run -p bosun-cli"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
   }
 }

@@ -9,10 +9,13 @@ package:
     - effect
     - console
     - arrays
+    - argonaut-core
     - either
     - maybe
     - ordered-collections
     - partial
+    - strings
+    - tuples
     - validation
     - bosun-core
     - bosun-adapters

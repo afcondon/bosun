@@ -36,6 +36,7 @@ import Bosun.Atoms (Host, ServiceId, mkServiceId, unAbsPath, unDomain, unPort, u
 import Bosun.Error (DeployError(..))
 import Bosun.Executor (ExecutorMechanism, mechanism)
 import Bosun.Exposure (Exposure(..))
+import Bosun.Health (Probe(..))
 import Bosun.Service
   ( Deployment, LooseDep, LooseRoute, LooseService, RawDep, RawRoute
   , ServiceInstance, mkDeployment, unRole
@@ -86,7 +87,7 @@ reconcile aliases insts =
     , divergence: case NEA.fromArray facetKeys of
         Just nea | NEA.length nea > 1 -> Just (Divergence { svc: sid, facets: nea })
         _ -> Nothing
-    , loose: map (toLoose aliases sid) (A.head is)
+    , loose: map (\rep -> toLoose aliases sid rep is) (A.head is)
     }
     where
     byFacet :: Map FacetKey (Array ServiceInstance)
@@ -111,17 +112,21 @@ withinFacetConflict sid fis =
        then [ CrossSourceDrift { svc: sid, field: "exposure", claims } ]
        else []
 
--- the representative loose node for validate: first instance, edges resolved
--- through the alias map
-toLoose :: AliasMap -> ServiceId -> ServiceInstance -> LooseService
-toLoose aliases sid si =
+-- The representative loose node for validate. Host/exposure come from the
+-- representative instance `rep` (a single facet — multi-facet collision is
+-- Phase 6), but the FACET-LOCAL relationships (selectors, deps, routes,
+-- readiness) are UNIONED across all of the service's instances — otherwise a
+-- registry-only representative would drop compose's profiles/healthchecks and
+-- `validate` would raise false SelectorNotClosed / UncheckableGate.
+toLoose :: AliasMap -> ServiceId -> ServiceInstance -> Array ServiceInstance -> LooseService
+toLoose aliases sid rep is =
   { id: sid
-  , host: si.host
-  , exposure: si.exposure
-  , readiness: si.health.readiness
-  , deps: map (resolveDep aliases) si.rawDeps
-  , routes: map (resolveRoute aliases) si.rawRoutes
-  , selectors: si.selectors
+  , host: rep.host
+  , exposure: rep.exposure
+  , readiness: fromMaybe NoProbe (A.find (_ /= NoProbe) (map (\si -> si.health.readiness) is))
+  , deps: A.nubEq (is >>= \si -> map (resolveDep aliases) si.rawDeps)
+  , routes: A.nubEq (is >>= \si -> map (resolveRoute aliases) si.rawRoutes)
+  , selectors: A.nubEq (is >>= _.selectors)
   }
 
 resolveDep :: AliasMap -> RawDep -> LooseDep
