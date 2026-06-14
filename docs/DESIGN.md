@@ -1,8 +1,9 @@
 # Bosun — Design
 
-> *Bosun, "the Go son."* A typed deployment-DAG tool. Two hats: (1) the
-> MVP-gating showcase for the PureScript→Go backend; (2) a standalone
-> ShapedSteer-family proof-of-concept — a deployment is a typed DAG.
+> *Bosun* — a typed **deployment-configuration reconciler** (a bosun keeps a
+> ship's whole rig in working order). Two hats: (1) the MVP-gating showcase
+> for the PureScript→Go backend; (2) a standalone ShapedSteer-family
+> proof-of-concept — a deployment is a typed DAG.
 
 Status: design. No code on disk yet. This document is the type design we
 build from.

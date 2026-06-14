@@ -1,7 +1,8 @@
 # Bosun
 
-*"The Go son."* A typed deployment-DAG tool — and the MVP-gating showcase
-for the PureScript→Go backend.
+A typed **deployment-configuration reconciler** — and the MVP-gating showcase
+for the PureScript→Go backend. (A bosun keeps a ship's whole rig in working
+order.)
 
 A deployment is a **typed directed graph**: services are nodes, dependencies
 are typed edges, a small set of executors bring nodes to life. Bosun's core
@@ -34,9 +35,14 @@ compiler won't let you write."**
     rows-as-sets encoding works (`purs` 0.15.15).
   - [`docs/PRIOR-ART.md`](docs/PRIOR-ART.md) — type-design lessons from
     Propellor, Dhall, CUE, systemd, NixOS, Pulumi, Terraform, Build-à-la-Carte.
-- **Family:** a standalone ShapedSteer-family proof-of-concept (Marginalia
-  #227, child of ShapedSteer #132). No obligation to share ShapedSteer code;
-  embodies the vision, written fresh.
+- **Family:** Bosun double-belongs. By *structure* it's a **ShapedSteer**
+  proof-of-concept (a deployment is a typed DAG — Marginalia #227, child of
+  ShapedSteer #132; embodies the vision, written fresh, no obligation to share
+  code). By *intent* it's a candidate for the **Humboldt / "Minard for X"**
+  cartography family: it's **Minard-for-containers** — a map of your
+  deployment that surfaces structure, drift, and dependency the way Minard
+  maps a codebase. The reconciler and the map are the same artifact seen two
+  ways.
 - **Built with:** the PureScript→Go backend. PureScript owns the pure core
   + synchronous I/O; Go owns concurrency (and only concurrency).
 

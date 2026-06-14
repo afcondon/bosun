@@ -19,7 +19,7 @@ DOCS=(FOR-DEVOPS PRINCIPLES DESIGN SCENARIOS DECISIONS PRIOR-ART)
   # ── Cover ──────────────────────────────────────────────────────────
   echo "# Bosun — Design Dossier"
   echo
-  echo "<p class=\"cover-tag\">A typed deployment-DAG tool. \"The Go son.\" — a checker, reconciler, and generator that reads the deployment config you already have, across every tool it's smeared across, and tells you where it's wrong before anything runs.</p>"
+  echo "<p class=\"cover-tag\">A typed deployment-configuration reconciler. It reads the deployment config you already have, across every tool it's smeared across, checks it, and tells you where it's wrong before anything runs.</p>"
   echo
   echo "<p class=\"cover-meta\">Status: design stage (no shipping product yet). Generated $DATE from the repo docs. Reading order below; the first chapter (<em>For people who run things</em>) needs no functional-programming background and is the right starting point for a devops reader.</p>"
   echo
