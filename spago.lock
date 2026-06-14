@@ -45,6 +45,23 @@
           "dependencies": []
         }
       },
+      "bosun-conformance": {
+        "path": "conformance",
+        "core": {
+          "dependencies": [
+            "bosun-core",
+            "console",
+            "effect",
+            "maybe",
+            "ordered-collections",
+            "partial",
+            "prelude"
+          ]
+        },
+        "test": {
+          "dependencies": []
+        }
+      },
       "bosun-core": {
         "path": "core",
         "core": {

@@ -1,0 +1,20 @@
+# The purescript-go conformance harness (BUILD-PLAN Phase 4). A single `main`
+# that runs the pure Detect pipeline (reconcile -> validate -> renderReport)
+# over a HARDCODED fixture and prints the report — NO file/YAML/argv I/O, so
+# the only foreign surface is the pure-core library set (Map/Set/Array/NEA/
+# String/Generic/Foldable/Effect.Console). Compiled both via node and via
+# backend-go; the two report strings must be byte-identical. This is
+# signal-box's cross-backend conformance pattern, realised for Bosun.
+package:
+  name: bosun-conformance
+  description: "purescript-go conformance harness: the pure pipeline over a fixture, printed."
+  dependencies:
+    - prelude
+    - effect
+    - console
+    - maybe
+    - ordered-collections
+    - partial
+    - bosun-core
+  run:
+    main: Bosun.Conformance.Main
