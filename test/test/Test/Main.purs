@@ -3,6 +3,7 @@ module Test.Main where
 import Prelude
 
 import Effect (Effect)
+import Test.Bosun.AdapterSpec as AdapterSpec
 import Test.Bosun.AtomsSpec as AtomsSpec
 import Test.Bosun.PBTSpec as PBTSpec
 import Test.Bosun.ReconcileSpec as ReconcileSpec
@@ -18,6 +19,7 @@ main :: Effect Unit
 main = runSpecAndExitProcess [specReporter] do
   describe "bosun-core" do
     AtomsSpec.spec
+    AdapterSpec.spec
     ValidateSpec.spec
     ReconcileSpec.spec
     PBTSpec.spec

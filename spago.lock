@@ -5,8 +5,15 @@
         "path": "adapters",
         "core": {
           "dependencies": [
+            "argonaut-core",
+            "arrays",
             "bosun-core",
-            "prelude"
+            "foreign-object",
+            "integers",
+            "maybe",
+            "ordered-collections",
+            "prelude",
+            "strings"
           ]
         },
         "test": {
@@ -58,6 +65,7 @@
         "path": "test",
         "core": {
           "dependencies": [
+            "bosun-adapters",
             "bosun-core",
             "prelude"
           ]
@@ -65,6 +73,7 @@
         "test": {
           "dependencies": [
             "aff",
+            "argonaut-core",
             "arrays",
             "effect",
             "either",

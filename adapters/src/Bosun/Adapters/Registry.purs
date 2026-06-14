@@ -1,0 +1,60 @@
+-- | Ingest the Marginalia service registry (the `/api/ports` JSON) into loose
+-- | `ServiceInstance`s. The registry is the cross-source partner to compose:
+-- | it is where the *native/dev* facet of each service lives (mbp, a
+-- | `startCommand`, a localhost port), against compose's *containerised* facet.
+-- |
+-- | A pure decode (`Json -> Array ServiceInstance`): the effectful read of the
+-- | JSON file/endpoint happens in the CLI, keeping the no-Aff seam. Decoding is
+-- | lenient — the registry shape is known and stable; a row missing its `role`
+-- | is skipped rather than failing the whole ingest.
+module Bosun.Adapters.Registry (ingestRegistry) where
+
+import Prelude
+
+import Bosun.Adapters.StartCommand (parseStartCommand)
+import Bosun.Atoms (mkHost, mkPort, mkProjectSlug)
+import Bosun.Exposure (Exposure(..))
+import Bosun.Health (BaseRestart(..), Probe(..))
+import Bosun.Service (ServiceInstance, Source(..), mkRole)
+import Data.Argonaut.Core (Json, toArray, toNumber, toObject, toString)
+import Data.Array as A
+import Data.Int (round)
+import Data.Map as Map
+import Data.Maybe (Maybe(..), fromMaybe, maybe)
+import Foreign.Object (Object)
+import Foreign.Object as FO
+
+ingestRegistry :: Json -> Array ServiceInstance
+ingestRegistry json = fromMaybe [] do
+  obj <- toObject json
+  serversJson <- FO.lookup "servers" obj
+  servers <- toArray serversJson
+  pure (A.mapMaybe decodeRow servers)
+
+decodeRow :: Json -> Maybe ServiceInstance
+decodeRow j = do
+  o <- toObject j
+  role <- str o "role"
+  let
+    portM = int o "port"
+  pure
+    { source: FromRegistry
+    , project: map mkProjectSlug (str o "projectSlug")
+    , localName: fromMaybe role (str o "projectName")
+    , role: mkRole role
+    , host: map mkHost (str o "host")
+    , executor: parseStartCommand (fromMaybe "" (str o "startCommand"))
+    , exposure: maybe NoNetwork HostPort (portM >>= mkPort)
+    , health: { liveness: NoProbe, readiness: NoProbe, startup: Nothing }
+    , restart: { base: Always, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }
+    , rawDeps: []
+    , rawRoutes: []
+    , selectors: []
+    , extra: Map.empty
+    }
+
+str :: Object Json -> String -> Maybe String
+str o k = FO.lookup k o >>= toString
+
+int :: Object Json -> String -> Maybe Int
+int o k = round <$> (FO.lookup k o >>= toNumber)

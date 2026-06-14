@@ -7,3 +7,10 @@ package:
   dependencies:
     - prelude
     - bosun-core
+    - maybe
+    - arrays
+    - strings
+    - integers
+    - ordered-collections
+    - argonaut-core
+    - foreign-object
