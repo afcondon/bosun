@@ -35,11 +35,19 @@ message }` becomes:
 
 ```go
 // Bosun apply execution edge (Phase 6C): run one shell line. A backgrounded
-// launch (`… &`) returns as soon as the shell forks; the fixture redirects the
-// child's output to a file, so CombinedOutput sees EOF immediately and does not
-// hang. exit 0 = "dispatched"; actual health is the observation edge's job.
+// launch (`… &`) is fire-and-forget: Start() without Wait, stdio left nil
+// (/dev/null) so the daemonising child can't hold an output pipe open and hang
+// us (CombinedOutput on a `… &` line DOES hang — the child keeps the pipe).
+// exit 0 = "dispatched"; actual health is the observation edge's job.
+// Everything else (docker, ssh) is synchronous with captured output.
 var Bosun_Conformance_ApplyMain_execLineImpl any = func(args ...any) any {
 	line := args[0].(string)
+	if strings.HasSuffix(strings.TrimSpace(line), "&") {
+		if err := exec.Command("/bin/sh", "-c", line).Start(); err != nil {
+			return map[string]any{"ok": false, "code": 1, "message": err.Error()}
+		}
+		return map[string]any{"ok": true, "code": 0, "message": "launched (backgrounded)"}
+	}
 	out, err := exec.Command("/bin/sh", "-c", line).CombinedOutput()
 	if err != nil {
 		code := 1
