@@ -11,6 +11,10 @@ module Bosun.Report
   ( renderError
   , renderDivergence
   , renderReport
+  , renderPlan
+  , renderChange
+  , renderReason
+  , renderStatus
   ) where
 
 import Prelude
@@ -18,9 +22,11 @@ import Prelude
 import Bosun.Atoms (Host, ServiceId, unEnvVar, unHost, unPort, unRoutePath, unServiceId)
 import Bosun.Edge (Gate)
 import Bosun.Error (DeployError(..), SdiViolation(..))
+import Bosun.Plan (Change(..), Plan, Reason(..), Status(..), planSteps)
 import Bosun.Reconcile (Divergence(..), FacetKey)
 import Bosun.Selector (Selector)
-import Data.Array (filter, null)
+import Bosun.Service (unServiceRef)
+import Data.Array (filter, groupBy, length, null, sortWith)
 import Data.Array.NonEmpty as NEA
 import Data.Foldable (intercalate)
 import Data.Maybe (Maybe, maybe)
@@ -86,6 +92,64 @@ renderReport recon vErrors =
   section title = case _ of
     [] -> ""
     items -> title <> "\n" <> intercalate "\n" (map ("  - " <> _) items)
+
+-- ── the `bosun plan` report ───────────────────────────────────────────────────
+
+-- | Render a `Plan` (DESIGN §4). Actionable changes are grouped by stage in
+-- | ascending order — `apply` runs the stages in this order, ties concurrently.
+-- | `NoOp`s are summarised, not listed (a 40-service rig with one restart should
+-- | read clean). Display, not `Show` (entry 73).
+renderPlan :: Plan -> String
+renderPlan p =
+  case actionable of
+    [] -> "bosun plan: nothing to do — rig matches desired state ("
+            <> show noops <> " service(s) in sync)."
+    _ ->
+      "PLAN — " <> show (length groups) <> " stage(s), "
+        <> show (length actionable) <> " change(s)"
+        <> (if noops > 0 then " (" <> show noops <> " in sync)" else "")
+        <> "\n\n"
+        <> intercalate "\n\n" (map renderStage groups)
+  where
+  steps = sortWith _.stage (planSteps p)
+  actionable = filter (not <<< isNoOp <<< _.change) steps
+  noops = length steps - length actionable
+  groups = groupBy (\a b -> a.stage == b.stage) actionable
+
+  renderStage grp =
+    "stage " <> show (NEA.head grp).stage <> ":\n"
+      <> intercalate "\n" (map (\s -> "  " <> renderChange s.change) (NEA.toArray grp))
+
+isNoOp :: Change -> Boolean
+isNoOp = case _ of
+  NoOp _ -> true
+  _ -> false
+
+renderChange :: Change -> String
+renderChange = case _ of
+  Start r -> "start    " <> ref r
+  Restart r reason -> "restart  " <> ref r <> " (" <> renderReason reason <> ")"
+  NoOp r -> "noop     " <> ref r
+  Stop r -> "stop     " <> ref r
+  where
+  ref = unServiceId <<< unServiceRef
+
+renderReason :: Reason -> String
+renderReason = case _ of
+  Crashed -> "crashed"
+  SpecChanged -> "spec changed"
+  DependencyRestarted sid -> "dependency " <> unServiceId sid <> " restarted"
+  ProbeUnreachable msg -> "probe unreachable: " <> msg
+
+renderStatus :: Status -> String
+renderStatus = case _ of
+  Running -> "running"
+  Starting -> "starting"
+  InBackoff -> "in-backoff"
+  Failed -> "failed"
+  Down -> "down"
+  CompletedOk -> "completed-ok"
+  Unknown reason -> "unknown (" <> renderReason reason <> ")"
 
 -- ── small label helpers (display, not Show) ──────────────────────────────────
 

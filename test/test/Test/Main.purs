@@ -6,6 +6,7 @@ import Effect (Effect)
 import Test.Bosun.AdapterSpec as AdapterSpec
 import Test.Bosun.AtomsSpec as AtomsSpec
 import Test.Bosun.PBTSpec as PBTSpec
+import Test.Bosun.PlanSpec as PlanSpec
 import Test.Bosun.ReconcileSpec as ReconcileSpec
 import Test.Bosun.ValidateSpec as ValidateSpec
 import Test.Spec (describe)
@@ -22,4 +23,5 @@ main = runSpecAndExitProcess [specReporter] do
     AdapterSpec.spec
     ValidateSpec.spec
     ReconcileSpec.spec
+    PlanSpec.spec
     PBTSpec.spec
