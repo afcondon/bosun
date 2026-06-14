@@ -8,7 +8,7 @@ module Test.Bosun.ReconcileSpec where
 
 import Prelude
 
-import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkServiceId)
+import Bosun.Atoms (AbsPath, Port, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkServiceId)
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Exposure (Exposure(..))
 import Bosun.Health (BaseRestart(..), Probe(..))
@@ -79,7 +79,7 @@ tiltedCompose = inst
   }
 
 -- the alias bridges compose's name to the registry-derived id
-aliases :: Map.Map String _
+aliases :: Map.Map String ServiceId
 aliases = Map.singleton "tidal-frontend" (mkServiceId "uniform-romeo-romeo-juliet:frontend")
 
 spec :: Spec Unit

@@ -42,7 +42,9 @@ derive newtype instance Eq ImageRef
 derive newtype instance Ord ImageRef
 derive newtype instance Show ImageRef
 
-newtype BuildContext = BuildContext { context :: AbsPath, dockerfile :: Maybe String }
+-- | `context` is a String, not an AbsPath: compose build contexts are
+-- | normally *relative* to the compose file (e.g. `../foo/bar`).
+newtype BuildContext = BuildContext { context :: String, dockerfile :: Maybe String }
 derive newtype instance Eq BuildContext
 derive newtype instance Show BuildContext
 

@@ -4,14 +4,18 @@ module Test.Bosun.AdapterSpec where
 
 import Prelude
 
+import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.Adapters.Registry (ingestRegistry)
 import Bosun.Adapters.StartCommand (parseStartCommand)
 import Bosun.Atoms (unAbsPath)
 import Bosun.Executor (Executor(..), ExecutorMechanism(..), mechanism)
+import Bosun.Health (Probe(..))
 import Bosun.Reconcile (exposureLabel)
+import Bosun.Selector (Selector(..))
 import Data.Argonaut.Parser (jsonParser)
-import Data.Array (length)
+import Data.Array (find, length)
 import Data.Either (Either(..))
+import Data.Maybe (Maybe(..))
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (fail, shouldEqual)
 
@@ -58,3 +62,43 @@ spec = describe "Bosun.Adapters" do
           map _.localName svcs `shouldEqual` [ "tilted-radio", "minard" ]
           map (exposureLabel <<< _.exposure) svcs `shouldEqual` [ "host:3013", "host:3000" ]
           map (mechanism <<< _.executor) svcs `shouldEqual` [ MechProcess, MechUnmanaged ]
+
+  describe "ingestCompose" do
+    let
+      fixture =
+        """{"services":{
+          "tidal-frontend":{"profiles":["tidal","full"],"build":{"context":"../x/psd3-tilted-radio"},"healthcheck":{"test":["CMD","wget","-q","http://localhost/"]}},
+          "tidal-backend":{"profiles":["tidal","full"],"build":{"context":"../x/purerl-tidal"},"ports":["3012:3012"],"healthcheck":{"test":["CMD","wget"]}},
+          "edge":{"profiles":["full"],"build":{"context":"../x/edge"},"ports":["80:80"],"depends_on":["website"]}
+        }}"""
+
+    it "decodes services with build => Container, ports => HostPort, healthcheck => readiness" do
+      case jsonParser fixture of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> do
+          let svcs = ingestCompose j
+          length svcs `shouldEqual` 3
+          case find (\s -> s.localName == "tidal-backend") svcs of
+            Nothing -> fail "tidal-backend not ingested"
+            Just s -> do
+              exposureLabel s.exposure `shouldEqual` "host:3012"
+              mechanism s.executor `shouldEqual` MechContainer
+              (s.health.readiness == NoProbe) `shouldEqual` false   -- healthcheck => a probe
+
+    it "decodes depends_on (array form) into a Requires-OnStarted edge" do
+      case jsonParser fixture of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j ->
+          case find (\s -> s.localName == "edge") (ingestCompose j) of
+            Nothing -> fail "edge not ingested"
+            Just s -> map _.to s.rawDeps `shouldEqual` [ "website" ]
+
+    it "decodes profiles into Selectors; a portless service is NoNetwork (behind the edge)" do
+      case jsonParser fixture of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j ->
+          case find (\s -> s.localName == "tidal-frontend") (ingestCompose j) of
+            Nothing -> fail "tidal-frontend not ingested"
+            Just s -> do
+              s.selectors `shouldEqual` [ Profile "tidal", Profile "full" ]
+              exposureLabel s.exposure `shouldEqual` "none"

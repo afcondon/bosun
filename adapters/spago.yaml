@@ -11,6 +11,7 @@ package:
     - arrays
     - strings
     - integers
+    - tuples
     - ordered-collections
     - argonaut-core
     - foreign-object

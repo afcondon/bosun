@@ -1,0 +1,123 @@
+-- | Ingest a docker-compose file (already parsed from YAML to `Json` by the
+-- | CLI's js-yaml FFI) into loose `ServiceInstance`s — the *containerised*
+-- | facet partner to the registry's native facet.
+-- |
+-- | Each `services:` entry becomes a `ServiceInstance`: `build`/`image` -> a
+-- | `Container` executor, `ports:` -> `HostPort` (else `NoNetwork`, behind the
+-- | edge), `depends_on:` -> `rawDeps` (array form = `Requires OnStarted`; map
+-- | form reads `condition:`), `healthcheck:` presence -> a readiness probe,
+-- | `profiles:` -> `Selector`s. Pure; compose runs on the macmini, so the host
+-- | is tagged `macmini` (the deploy target — configurable later).
+-- |
+-- | PHASE 3B SCOPE: unmodeled fields (networks, container_name, build details
+-- | beyond context) are dropped rather than stashed in `extra`; the
+-- | byte-identical round-trip (`extra` passthrough) is Phase 6.
+module Bosun.Adapters.Compose (ingestCompose) where
+
+import Prelude
+
+import Bosun.Atoms (Port, mkHost, mkPort)
+import Bosun.Edge (DepOrdering(..), Gate(..), Requirement(..))
+import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ImageRef(..))
+import Bosun.Exposure (Exposure(..))
+import Bosun.Health (BaseRestart(..), Probe(..))
+import Bosun.Selector (Selector(..))
+import Bosun.Service (RawDep, ServiceInstance, Source(..), mkRole)
+import Data.Argonaut.Core (Json, toArray, toObject, toString)
+import Data.Array as A
+import Data.Either (Either(..))
+import Data.Int as Int
+import Data.Map as Map
+import Data.Maybe (Maybe(..), fromMaybe, isJust, maybe)
+import Data.String (Pattern(..))
+import Data.String as String
+import Data.Tuple (uncurry)
+import Foreign.Object (Object)
+import Foreign.Object as FO
+
+ingestCompose :: Json -> Array ServiceInstance
+ingestCompose json = fromMaybe [] do
+  root <- toObject json
+  servicesJson <- FO.lookup "services" root
+  services <- toObject servicesJson
+  pure (A.mapMaybe (uncurry decodeService) (FO.toUnfoldable services))
+
+decodeService :: String -> Json -> Maybe ServiceInstance
+decodeService name sj = do
+  o <- toObject sj
+  pure
+    { source: FromCompose
+    , project: Nothing
+    , localName: name
+    , role: mkRole (roleFromName name)
+    , host: Just (mkHost "macmini")   -- compose's deploy target
+    , executor: executorOf name o
+    , exposure: maybe NoNetwork HostPort (hostPort o)
+    , health: { liveness: probeOf o, readiness: probeOf o, startup: Nothing }
+    , restart: { base: UnlessStopped, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }
+    , rawDeps: dependsOn o
+    , rawRoutes: []
+    , selectors: map Profile (strArray o "profiles")
+    , extra: Map.empty
+    }
+
+-- "tidal-frontend" -> "frontend"; "edge" -> "edge"
+roleFromName :: String -> String
+roleFromName name = fromMaybe name (A.last (String.split (Pattern "-") name))
+
+executorOf :: String -> Object Json -> Executor
+executorOf name o = case FO.lookup "image" o >>= toString of
+  Just img -> Container (ContainerSpec { source: Left (ImageRef img), internalPort: Nothing, publish: hostPort o })
+  Nothing -> case FO.lookup "build" o >>= toObject of
+    Just b -> Container (ContainerSpec
+      { source: Right (BuildContext { context: fromMaybe "" (str b "context"), dockerfile: str b "dockerfile" })
+      , internalPort: Nothing
+      , publish: hostPort o
+      })
+    Nothing -> Unmanaged name
+
+-- first "host:container" entry -> the host port
+hostPort :: Object Json -> Maybe Port
+hostPort o = do
+  pj <- FO.lookup "ports" o
+  ps <- toArray pj
+  first <- A.head ps
+  s <- toString first
+  hostPart <- A.head (String.split (Pattern ":") s)
+  Int.fromString hostPart >>= mkPort
+
+-- a healthcheck present -> a (non-NoProbe) readiness signal
+probeOf :: Object Json -> Probe
+probeOf o = if isJust (FO.lookup "healthcheck" o) then ExecCmd (healthTest o) else NoProbe
+
+healthTest :: Object Json -> Array String
+healthTest o = fromMaybe [] do
+  hc <- FO.lookup "healthcheck" o >>= toObject
+  arr <- FO.lookup "test" hc >>= toArray
+  pure (A.mapMaybe toString arr)
+
+dependsOn :: Object Json -> Array RawDep
+dependsOn o = case FO.lookup "depends_on" o of
+  Nothing -> []
+  Just dj -> case toArray dj of
+    Just arr -> A.mapMaybe (\x -> toString x <#> \n -> rawDep n OnStarted) arr
+    Nothing -> case toObject dj of
+      Just obj -> map (uncurry (\n cj -> rawDep n (gateOf cj))) (FO.toUnfoldable obj)
+      Nothing -> []
+
+rawDep :: String -> Gate -> RawDep
+rawDep n gate = { to: n, ordering: Just StartAfter, requirement: Just (Requires gate) }
+
+gateOf :: Json -> Gate
+gateOf cj = case toObject cj >>= str' "condition" of
+  Just "service_healthy" -> OnHealthy
+  Just "service_completed_successfully" -> OnCompleted
+  _ -> OnStarted
+  where
+  str' k ob = FO.lookup k ob >>= toString
+
+strArray :: Object Json -> String -> Array String
+strArray o k = fromMaybe [] (FO.lookup k o >>= toArray <#> A.mapMaybe toString)
+
+str :: Object Json -> String -> Maybe String
+str o k = FO.lookup k o >>= toString
