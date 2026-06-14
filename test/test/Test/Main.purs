@@ -4,6 +4,7 @@ import Prelude
 
 import Effect (Effect)
 import Test.Bosun.AtomsSpec as AtomsSpec
+import Test.Bosun.PBTSpec as PBTSpec
 import Test.Bosun.ValidateSpec as ValidateSpec
 import Test.Spec (describe)
 import Test.Spec.Reporter.Spec (specReporter)
@@ -17,3 +18,4 @@ main = runSpecAndExitProcess [specReporter] do
   describe "bosun-core" do
     AtomsSpec.spec
     ValidateSpec.spec
+    PBTSpec.spec
