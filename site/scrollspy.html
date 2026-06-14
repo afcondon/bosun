@@ -1,0 +1,33 @@
+<script>
+  // Highlight the TOC entry for the heading currently in view.
+  (function () {
+    var toc = document.getElementById('TOC');
+    if (!toc) return;
+    var links = Array.prototype.slice.call(toc.querySelectorAll('a[href^="#"]'));
+    var byId = {};
+    links.forEach(function (a) { byId[decodeURIComponent(a.getAttribute('href').slice(1))] = a; });
+    var heads = links
+      .map(function (a) { return document.getElementById(decodeURIComponent(a.getAttribute('href').slice(1))); })
+      .filter(Boolean);
+
+    var current = null;
+    function setActive(a) {
+      if (current === a) return;
+      if (current) current.classList.remove('active');
+      if (a) a.classList.add('active');
+      current = a;
+      if (a && a.scrollIntoViewIfNeeded) a.scrollIntoViewIfNeeded();
+    }
+
+    var obs = new IntersectionObserver(function (entries) {
+      // pick the topmost heading that is intersecting near the top of the viewport
+      var visible = entries.filter(function (e) { return e.isIntersecting; });
+      if (!visible.length) return;
+      visible.sort(function (a, b) { return a.boundingClientRect.top - b.boundingClientRect.top; });
+      var id = visible[0].target.id;
+      if (byId[id]) setActive(byId[id]);
+    }, { rootMargin: '0px 0px -75% 0px', threshold: 0 });
+
+    heads.forEach(function (h) { obs.observe(h); });
+  })();
+</script>
