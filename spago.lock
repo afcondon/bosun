@@ -32,7 +32,14 @@
         "path": "core",
         "core": {
           "dependencies": [
-            "prelude"
+            "argonaut-core",
+            "arrays",
+            "either",
+            "maybe",
+            "ordered-collections",
+            "prelude",
+            "strings",
+            "tuples"
           ]
         },
         "test": {
@@ -51,6 +58,7 @@
           "dependencies": [
             "aff",
             "effect",
+            "maybe",
             "quickcheck",
             "spec",
             "spec-node",

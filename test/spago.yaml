@@ -13,6 +13,7 @@ package:
     dependencies:
       - effect
       - aff
+      - maybe
       - spec
       - spec-node
       - spec-quickcheck

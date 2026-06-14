@@ -7,3 +7,10 @@ package:
   description: "Pure deployment IR: atoms, types, validate/reconcile/plan/emit, DeployError."
   dependencies:
     - prelude
+    - maybe
+    - either
+    - tuples
+    - arrays
+    - ordered-collections
+    - strings
+    - argonaut-core
