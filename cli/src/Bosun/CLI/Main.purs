@@ -14,8 +14,9 @@ import Prelude
 
 import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.Adapters.Registry (ingestRegistry)
-import Bosun.Atoms (AbsPath, Port, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkServiceId, unAbsPath, unProjectSlug)
+import Bosun.Atoms (AbsPath, Port, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkServiceId, unAbsPath, unProjectSlug, unServiceId)
 import Bosun.CLI.IO (argv, readJsonFile, readYamlFile)
+import Bosun.CLI.Observe (observeSnapshot)
 import Bosun.Edge (Gate(..), Requirement(..))
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Exposure (Exposure(..))
@@ -29,6 +30,7 @@ import Bosun.Version (version)
 import Data.Argonaut.Core (Json, toObject, toString)
 import Data.Array as A
 import Data.Either (Either(..), either)
+import Data.Foldable (intercalate)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromJust, fromMaybe, maybe)
@@ -48,6 +50,7 @@ main = do
     [ "check", composePath, registryPath ] -> runCheck composePath registryPath
     [ "plan", composePath, registryPath ] -> runPlan composePath registryPath Nothing
     [ "plan", composePath, registryPath, snapshotPath ] -> runPlan composePath registryPath (Just snapshotPath)
+    [ "observe", composePath, registryPath ] -> runObserve composePath registryPath
     _ -> runDemo
 
 -- ── bosun check <compose> <registry> ────────────────────────────────────────
@@ -92,6 +95,41 @@ runPlan composePath registryPath snapshotPath = do
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
     Right vd ->
       log (renderPlan (plan vd { desired: vd, recorded: Nothing, observed }))
+
+-- ── bosun observe <compose> <registry> ──────────────────────────────────────
+-- |
+-- | Probe the live rig (read-only) and print the observed `Snapshot` as JSON on
+-- | stdout, in the exact shape `bosun plan … <snapshot.json>` reads back — so
+-- | the loop is `bosun observe … > snap.json && bosun plan … snap.json`. Works
+-- | off the reconciled (loose) deployment, so it does not require the rig to
+-- | validate first.
+runObserve :: String -> String -> Effect Unit
+runObserve composePath registryPath = do
+  composeJson <- readYamlFile composePath
+  registryJson <- readJsonFile registryPath
+  let
+    insts = ingestCompose composeJson <> ingestRegistry registryJson
+    r = reconcile (buildAliases insts) insts
+  snapshot <- observeSnapshot r.deployment
+  log (encodeSnapshot snapshot)
+
+-- | The encode half of the snapshot boundary codec (inverse of `statusOf`):
+-- | emits tokens `statusOf` parses, so observe → plan round-trips.
+encodeSnapshot :: Snapshot -> String
+encodeSnapshot snap =
+  "{\n" <> intercalate ",\n" (map entry (Map.toUnfoldable snap :: Array (Tuple ServiceId Status))) <> "\n}"
+  where
+  entry (Tuple sid st) = "  " <> show (unServiceId sid) <> ": " <> show (statusToken st)
+
+statusToken :: Status -> String
+statusToken = case _ of
+  Running -> "running"
+  Starting -> "starting"
+  InBackoff -> "in-backoff"
+  Failed -> "failed"
+  Down -> "down"
+  CompletedOk -> "completed-ok"
+  Unknown _ -> "unknown"
 
 -- | Boundary codec (entry-73): observed reality crossing into the pure core.
 decodeSnapshot :: Json -> Snapshot
