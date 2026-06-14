@@ -31,6 +31,8 @@ compiler won't let you write."**
   - [`docs/DECISIONS.md`](docs/DECISIONS.md) — ADR-style resolutions to the
     open questions (facet model, stop-propagation, config refs, restart
     conditions).
+  - [`docs/BUILD-PLAN.md`](docs/BUILD-PLAN.md) — the dependency-ordered,
+    session-resumable build roadmap (Phases 0–6 = MVP).
   - [`spike/`](spike/) — compile-verified proof that the authoring-DSL
     rows-as-sets encoding works (`purs` 0.15.15).
   - [`docs/PRIOR-ART.md`](docs/PRIOR-ART.md) — type-design lessons from
