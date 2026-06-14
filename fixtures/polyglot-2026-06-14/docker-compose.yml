@@ -1,0 +1,397 @@
+# Polyglot PureScript - Full Stack
+#
+# Runs all showcases behind the Scuppered Ligature edge layer
+#
+# Usage:
+#   docker compose --profile <name> up -d    # Start a profile
+#   docker compose --profile full up -d      # Start everything
+#   docker compose down --remove-orphans     # Stop all services
+#   docker compose logs -f                   # Follow logs
+#
+# Profiles:
+#   core      - Edge router + website only (minimal baseline)
+#   minard    - Code cartography (edge + website + minard)
+#   tidal     - Tilted Radio music editor (edge + website + tidal)
+#   hypo      - Hypo-Punter EE/GE explorers (edge + website + ee + ge)
+#   sankey    - Sankey editor (edge + website + sankey)
+#   wasm      - WASM force demo (edge + website + wasm)
+#   libs      - Library documentation sites (edge + website + lib-*)
+#   showcases - Other showcase apps (optics, zoo, layouts, hylograph)
+#   full      - Everything
+#
+# Routes (via edge layer at port 80):
+#   /           - Polyglot PureScript home (website)
+#   /website    - PSD3 documentation (alias)
+#   /ee         - Embedding Explorer (UI at /ee, API at /ee/api)
+#   /ge         - Grid Explorer (UI at /ge, API at /ge/api)
+#   /tidal      - Tidal Editor (UI at /tidal, API at /tidal/api)
+#   /code       - Minard Code Cartography (UI at /code, API at /code/api)
+#   /sankey     - Sankey Editor
+#   /wasm       - WASM Force Demo
+#   /psd3/*     - Library documentation sites
+
+services:
+  # ============================================================
+  # EDGE LAYER (Lua/Nginx)
+  # ============================================================
+  edge:
+    profiles: ["core", "minard", "tidal", "hypo", "sankey", "wasm", "libs", "showcases", "full"]
+    build:
+      context: ../purescript-hylograph-showcases/scuppered-ligature
+      dockerfile: docker/Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - website
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/edge/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # ============================================================
+  # CORE SERVICES
+  # ============================================================
+  website:
+    profiles: ["core", "minard", "tidal", "hypo", "sankey", "wasm", "libs", "showcases", "full"]
+    build:
+      context: ../purescript-polyglot/site/website
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # ============================================================
+  # TILTED RADIO (Erlang + JavaScript)
+  # ============================================================
+  tidal-backend:
+    profiles: ["tidal", "full"]
+    build:
+      context: ../music/live-coding/purerl-tidal
+    ports:
+      - "3012:3012"
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3012/"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+  tidal-frontend:
+    profiles: ["tidal", "full"]
+    build:
+      context: ../purescript-hylograph-showcases/psd3-tilted-radio
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # ============================================================
+  # HYPO-PUNTER (Python + JavaScript)
+  # ============================================================
+  ee-backend:
+    profiles: ["hypo", "full"]
+    build:
+      context: ../purescript-hylograph-showcases/hypo-punter/ee-server
+    ports:
+      - "3020:3020"
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3020/')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 5s
+      retries: 3
+
+  ee-frontend:
+    profiles: ["hypo", "full"]
+    build:
+      context: ../purescript-hylograph-showcases/hypo-punter/ee-website
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  ge-backend:
+    profiles: ["hypo", "full"]
+    build:
+      context: ../purescript-hylograph-showcases/hypo-punter/ge-server
+    ports:
+      - "3022:3022"
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3022/')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 5s
+      retries: 3
+
+  ge-frontend:
+    profiles: ["hypo", "full"]
+    build:
+      context: ../purescript-hylograph-showcases/hypo-punter/ge-website
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # ============================================================
+  # ARID KEYSTONE (JS only)
+  # ============================================================
+  sankey:
+    profiles: ["sankey", "full"]
+    build:
+      context: ../purescript-hylograph-showcases/psd3-arid-keystone
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # ============================================================
+  # MINARD - Code Cartography (Node.js + JavaScript)
+  # ============================================================
+  minard-backend:
+    profiles: ["minard", "full"]
+    build:
+      context: ../CodeExplorer/minard
+      dockerfile: server/Dockerfile
+    ports:
+      - "3000:3000"
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      start_period: 5s
+      retries: 3
+
+  minard-frontend:
+    profiles: ["minard", "full"]
+    build:
+      context: ../CodeExplorer/minard/frontend
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # ============================================================
+  # TYPE EXPLORER (Type relationship visualization)
+  # ============================================================
+  type-explorer:
+    profiles: ["minard", "full"]
+    build:
+      context: ../CodeExplorer/type-explorer/frontend
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # ============================================================
+  # WASM FORCE DEMO (Rust/WASM + JavaScript)
+  # ============================================================
+  wasm-demo:
+    profiles: ["wasm", "full"]
+    build:
+      context: ../purescript-hylograph-showcases/wasm-force-demo
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # ============================================================
+  # ADDITIONAL PURESCRIPT SHOWCASES
+  # ============================================================
+  optics:
+    profiles: ["showcases", "full"]
+    build:
+      context: ../purescript-hylograph-showcases/emptier-coinage
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  zoo:
+    profiles: ["showcases", "full"]
+    build:
+      context: ../purescript-hylograph-showcases/psd3-prim-zoo-mosh
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # honeycomb:
+  #   profiles: ["showcases", "full"]
+  #   build:
+  #     context: ../showcases/psd3-honeycomb
+  #   networks:
+  #     - polyglot
+  #   healthcheck:
+  #     test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+  #     interval: 30s
+  #     timeout: 3s
+  #     retries: 3
+
+  # anscombe:
+  #   profiles: ["showcases", "full"]
+  #   build:
+  #     context: ../visualisation libraries/psd3-anscombe-quartet
+  #   networks:
+  #     - polyglot
+  #   healthcheck:
+  #     test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+  #     interval: 30s
+  #     timeout: 3s
+  #     retries: 3
+
+  layouts:
+    profiles: ["showcases", "full"]
+    build:
+      context: ../purescript-hylograph-showcases/allergy-outlay
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  hylograph:
+    profiles: ["showcases", "full"]
+    build:
+      context: ../purescript-hylograph-showcases/hylograph-app
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  site-explorer:
+    profiles: ["minard", "full"]
+    build:
+      context: ../CodeExplorer/minard/site-explorer
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # Hylographic (Visualization Blog)
+  hylographic:
+    profiles: ["showcases", "full"]
+    build:
+      context: ../purescript-polyglot/blog
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # ============================================================
+  # LIBRARY DOCUMENTATION SITES
+  # ============================================================
+  lib-selection:
+    profiles: ["libs", "full"]
+    build:
+      context: ../purescript-polyglot/site/lib-selection
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  lib-simulation:
+    profiles: ["libs", "full"]
+    build:
+      context: ../purescript-polyglot/site/lib-simulation
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  lib-layout:
+    profiles: ["libs", "full"]
+    build:
+      context: ../purescript-polyglot/site/lib-layout
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  lib-graph:
+    profiles: ["libs", "full"]
+    build:
+      context: ../purescript-polyglot/site/lib-graph
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  lib-music:
+    profiles: ["libs", "full"]
+    build:
+      context: ../purescript-polyglot/site/lib-music
+    networks:
+      - polyglot
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+networks:
+  polyglot:
+    driver: bridge

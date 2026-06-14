@@ -1,0 +1,21 @@
+bosun 0.0.0 — check fixtures/polyglot-2026-06-14/docker-compose.yml + fixtures/polyglot-2026-06-14/registry.json
+
+VALIDATION ERRORS
+  - port collision: macmini:80 claimed by tango-hotel-victor-victor:edge, edge
+
+FACET DIVERGENCE (informational)
+  - alpha-papa-tango-victor:frontend has 2 deployment facets: (macmini, MechContainer); (mbp, MechProcess)
+  - bravo-sierra-charlie-foxtrot:frontend has 2 deployment facets: (macmini, MechContainer); (mbp, MechProcess)
+  - golf-romeo-victor-golf:frontend has 2 deployment facets: (macmini, MechContainer); (mbp, MechProcess)
+  - juliet-bravo-juliet-mike:ee-api has 2 deployment facets: (macmini, MechContainer); (mbp, MechProcess)
+  - juliet-bravo-juliet-mike:ee-frontend has 2 deployment facets: (macmini, MechContainer); (mbp, MechProcess)
+  - juliet-bravo-juliet-mike:ge-api has 2 deployment facets: (macmini, MechContainer); (mbp, MechProcess)
+  - juliet-bravo-juliet-mike:ge-frontend has 2 deployment facets: (macmini, MechContainer); (mbp, MechProcess)
+  - lima-yankee-bravo-mike:blog has 2 deployment facets: (macmini, MechContainer); (mbp, MechProcess)
+  - lima-yankee-bravo-mike:website has 2 deployment facets: (macmini, MechContainer); (mbp, MechProcess)
+  - quebec-sierra-yankee-echo:websocket has 2 deployment facets: (macmini, MechContainer); (mbp, MechProcess)
+  - sierra-tango-golf-bravo:api has 2 deployment facets: (macmini, MechContainer); (mbp, MechProcess)
+  - uniform-romeo-romeo-juliet:frontend has 2 deployment facets: (macmini, MechContainer); (mbp, MechProcess)
+  - yankee-golf-hotel-oscar:frontend has 2 deployment facets: (macmini, MechContainer); (mbp, MechProcess)
+  - yankee-hotel-oscar-juliet:frontend has 2 deployment facets: (macmini, MechContainer); (mbp, MechProcess)
+  - zulu-mike-november-quebec:frontend has 2 deployment facets: (macmini, MechContainer); (mbp, MechProcess)
