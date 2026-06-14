@@ -1,0 +1,5 @@
+# A minimal valid input pair for `bosun plan` (the happy path). The registry
+# carries three single-facet native services on the mbp; this compose adds no
+# overlapping facets, so reconcile sees three clean services with distinct
+# host:ports and no dependency edges — it validates, and `plan` can run.
+services: {}

@@ -20,20 +20,23 @@ import Bosun.Edge (Gate(..), Requirement(..))
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Exposure (Exposure(..))
 import Bosun.Health (BaseRestart(..), Probe(..))
+import Bosun.Plan (Reason(..), Snapshot, Status(..), plan)
 import Bosun.Reconcile (AliasMap, reconcile)
-import Bosun.Report (renderReport)
+import Bosun.Report (renderPlan, renderReport)
 import Bosun.Service (ServiceInstance, Source(..), mkRole, unRole)
 import Bosun.Validate (validate)
 import Bosun.Version (version)
+import Data.Argonaut.Core (Json, toObject, toString)
 import Data.Array as A
 import Data.Either (Either(..), either)
 import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromJust, fromMaybe)
+import Data.Maybe (Maybe(..), fromJust, fromMaybe, maybe)
 import Data.String (Pattern(..))
 import Data.String as String
 import Data.Tuple (Tuple(..))
 import Data.Validation.Semigroup (toEither)
+import Foreign.Object as FO
 import Effect (Effect)
 import Effect.Console (log)
 import Partial.Unsafe (unsafePartial)
@@ -43,6 +46,8 @@ main = do
   args <- argv
   case args of
     [ "check", composePath, registryPath ] -> runCheck composePath registryPath
+    [ "plan", composePath, registryPath ] -> runPlan composePath registryPath Nothing
+    [ "plan", composePath, registryPath, snapshotPath ] -> runPlan composePath registryPath (Just snapshotPath)
     _ -> runDemo
 
 -- ── bosun check <compose> <registry> ────────────────────────────────────────
@@ -58,6 +63,53 @@ runCheck composePath registryPath = do
   log ("bosun " <> version <> " — check " <> composePath <> " + " <> registryPath)
   log ""
   log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
+
+-- ── bosun plan <compose> <registry> [snapshot.json] ─────────────────────────
+-- |
+-- | Reconcile + validate, then diff the validated deployment against an
+-- | observed `Snapshot`. The snapshot is a JSON object `{ "<serviceId>":
+-- | "<status>" }` (`running`/`starting`/`in-backoff`/`failed`/`down`/
+-- | `completed-ok`); any service absent from it — or the whole file absent — is
+-- | treated as `down`, so the bare `bosun plan` answers "bring the rig up from
+-- | nothing." This reads a snapshot *file*; the live observation edge
+-- | (`observe :: Probe -> Effect Status`) is the next step (Phase 6). A
+-- | deployment that fails validation cannot be planned — we print the check
+-- | report instead, since `plan` is total only past `validate`.
+runPlan :: String -> String -> Maybe String -> Effect Unit
+runPlan composePath registryPath snapshotPath = do
+  composeJson <- readYamlFile composePath
+  registryJson <- readJsonFile registryPath
+  observed <- maybe (pure Map.empty) (map decodeSnapshot <<< readJsonFile) snapshotPath
+  let
+    insts = ingestCompose composeJson <> ingestRegistry registryJson
+    r = reconcile (buildAliases insts) insts
+  log ("bosun " <> version <> " — plan " <> composePath <> " + " <> registryPath)
+  log ""
+  case toEither (validate r.deployment) of
+    Left vErrors -> do
+      log "cannot plan: the deployment does not validate —"
+      log ""
+      log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
+    Right vd ->
+      log (renderPlan (plan vd { desired: vd, recorded: Nothing, observed }))
+
+-- | Boundary codec (entry-73): observed reality crossing into the pure core.
+decodeSnapshot :: Json -> Snapshot
+decodeSnapshot json = fromMaybe Map.empty do
+  obj <- toObject json
+  pure (Map.fromFoldable (map decodeEntry (FO.toUnfoldable obj :: Array (Tuple String Json))))
+  where
+  decodeEntry (Tuple k v) = Tuple (mkServiceId k) (statusOf (fromMaybe "" (toString v)))
+
+statusOf :: String -> Status
+statusOf = case _ of
+  "running" -> Running
+  "starting" -> Starting
+  "in-backoff" -> InBackoff
+  "failed" -> Failed
+  "down" -> Down
+  "completed-ok" -> CompletedOk
+  other -> Unknown (ProbeUnreachable other)
 
 -- Bridge compose ↔ registry by shared directory basename (the registry row's
 -- cwd vs the compose service's build context). DECISIONS "alias-map for MVP",

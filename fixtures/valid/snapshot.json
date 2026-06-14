@@ -1,0 +1,5 @@
+{
+  "shop:db": "running",
+  "shop:api": "failed",
+  "shop:frontend": "down"
+}
