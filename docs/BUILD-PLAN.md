@@ -88,7 +88,10 @@ type design as code.
   injectors (`addBackEdge → DependencyCycle`, `dangleDep → DanglingDependency`,
   `collide → PortCollision`, `dropGatedProbe → UncheckableGate`).
 - Encode must-fail scenarios B1–B9 as example tests too (the corpus seeds the
-  generators' coverage).
+  generators' coverage). This is where `Show DeployError` gets added — *for the
+  spec assertions only* (entry-73 use); confirm generic-`Show`-over-records
+  compiles on this package set, or hand-write the few record-bearing instances.
+  The user-facing renderer is Phase 3 and stays separate (`renderError`).
 
 **DoD:** `validate` rejects every B-scenario with the *specific* error; the
 round-trip and fault-injection properties pass. The design is now *measured*.
@@ -105,6 +108,12 @@ round-trip and fault-injection properties pass. The design is now *measured*.
 - `reconcile` (the facet model, `DECISIONS.md D-E3`: lattice meet, facet
   partition, facet-divergence vs conflict).
 - A report renderer (the `bosun check` output in `FOR-DEVOPS.md`).
+  **`renderError :: DeployError -> String`, never `show`** (Elements of
+  PureScript Style, entry 73: `Show` is for the REPL and test-failure
+  messages; user-facing text gets a `display` function with an explicit,
+  documented format, and any data crossing a boundary gets a codec). Derived
+  `Show` on the error/IR types — when present — exists only for spec
+  assertions; it must not leak into the report or the JSON boundary.
 
 **DoD:** pointed at the real polyglot `docker-compose.yml` + registry, `bosun
 check` reports the actual cases from §7 (tilted-radio facet divergence; the SDI
