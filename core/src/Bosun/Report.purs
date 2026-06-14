@@ -15,10 +15,13 @@ module Bosun.Report
   , renderChange
   , renderReason
   , renderStatus
+  , renderScript
+  , renderCommand
   ) where
 
 import Prelude
 
+import Bosun.Apply (Command(..), StagedCommand)
 import Bosun.Atoms (Host, ServiceId, unEnvVar, unHost, unPort, unRoutePath, unServiceId)
 import Bosun.Edge (Gate)
 import Bosun.Error (DeployError(..), SdiViolation(..))
@@ -26,7 +29,7 @@ import Bosun.Plan (Change(..), Plan, Reason(..), Status(..), planSteps)
 import Bosun.Reconcile (Divergence(..), FacetKey)
 import Bosun.Selector (Selector)
 import Bosun.Service (unServiceRef)
-import Data.Array (filter, groupBy, length, null, sortWith)
+import Data.Array (filter, groupBy, length, mapWithIndex, null, sortWith)
 import Data.Array.NonEmpty as NEA
 import Data.Foldable (intercalate)
 import Data.Maybe (Maybe, maybe)
@@ -109,15 +112,17 @@ renderPlan p =
         <> show (length actionable) <> " change(s)"
         <> (if noops > 0 then " (" <> show noops <> " in sync)" else "")
         <> "\n\n"
-        <> intercalate "\n\n" (map renderStage groups)
+        <> intercalate "\n\n" (mapWithIndex renderStage groups)
   where
   steps = sortWith _.stage (planSteps p)
   actionable = filter (not <<< isNoOp <<< _.change) steps
   noops = length steps - length actionable
   groups = groupBy (\a b -> a.stage == b.stage) actionable
 
-  renderStage grp =
-    "stage " <> show (NEA.head grp).stage <> ":\n"
+  -- display stages densely (1..k); the PlanStep's own `stage` is the internal
+  -- scheduling key (sparse: stops occupy a band below starts), not for humans.
+  renderStage i grp =
+    "stage " <> show (i + 1) <> ":\n"
       <> intercalate "\n" (map (\s -> "  " <> renderChange s.change) (NEA.toArray grp))
 
 isNoOp :: Change -> Boolean
@@ -150,6 +155,32 @@ renderStatus = case _ of
   Down -> "down"
   CompletedOk -> "completed-ok"
   Unknown reason -> "unknown (" <> renderReason reason <> ")"
+
+-- ── the `bosun apply --dry-run` script ────────────────────────────────────────
+
+-- | Render an apply script (Phase 6B). The commands are grouped by stage, in
+-- | the order `apply` would run them. Display, not `Show` (entry 73). A `Manual`
+-- | line is prefixed `# MANUAL:` so a dry-run reads as a runnable shell script
+-- | with the un-automatable steps commented.
+renderScript :: Array StagedCommand -> String
+renderScript cmds = case cmds of
+  [] -> "apply: nothing to do — the rig already matches desired state."
+  _ ->
+    "APPLY SCRIPT — " <> show (length groups) <> " stage(s), "
+      <> show (length cmds) <> " command(s)\n\n"
+      <> intercalate "\n\n" (mapWithIndex renderStage groups)
+  where
+  groups = groupBy (\a b -> a.stage == b.stage) cmds
+
+  renderStage i grp =
+    "# stage " <> show (i + 1) <> ":\n"
+      <> intercalate "\n" (map (\c -> renderCommand c.command) (NEA.toArray grp))
+
+renderCommand :: Command -> String
+renderCommand = case _ of
+  Shell s -> maybe "" (\c -> "cd " <> c <> " && ") s.cwd <> s.line
+  Ssh target inner -> "ssh " <> target <> " '" <> renderCommand inner <> "'"
+  Manual note -> "# MANUAL: " <> note
 
 -- ── small label helpers (display, not Show) ──────────────────────────────────
 

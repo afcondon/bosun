@@ -4,6 +4,7 @@ import Prelude
 
 import Effect (Effect)
 import Test.Bosun.AdapterSpec as AdapterSpec
+import Test.Bosun.ApplySpec as ApplySpec
 import Test.Bosun.AtomsSpec as AtomsSpec
 import Test.Bosun.PBTSpec as PBTSpec
 import Test.Bosun.PlanSpec as PlanSpec
@@ -24,4 +25,5 @@ main = runSpecAndExitProcess [specReporter] do
     ValidateSpec.spec
     ReconcileSpec.spec
     PlanSpec.spec
+    ApplySpec.spec
     PBTSpec.spec

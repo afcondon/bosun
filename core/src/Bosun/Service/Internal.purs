@@ -57,6 +57,14 @@ type RawDep = { to :: String, ordering :: Maybe DepOrdering, requirement :: Mayb
 -- | An ingested route, backend still a raw string.
 type RawRoute = { to :: String, path :: RoutePath }
 
+-- | What `apply` needs to *launch* a service (Phase 6): the representative
+-- | facet's `Executor` plus its source-local name (the compose service key /
+-- | registry projectName) for `docker compose up -d <name>`. The compose
+-- | profile is read off `Service.selectors`; the compose file path is supplied
+-- | at the CLI edge. Carried on the loose/tight node so the validated graph
+-- | knows how to start each proven service.
+type LaunchSpec = { executor :: Executor, localName :: String }
+
 -- | LOOSE / OPEN (§3.7): the ingest output, one per (source × unit). `extra`
 -- | preserves the byte-identical round-trip. Consumed by `reconcile` (Phase 3).
 type ServiceInstance =
@@ -93,6 +101,7 @@ type LooseService =
   , deps      :: Array LooseDep
   , routes    :: Array LooseRoute
   , selectors :: Array Selector
+  , launch    :: LaunchSpec
   }
 
 -- | Post-reconcile, pre-validate. PROVISIONAL (§4-5): `reconcile` (Phase 3)
@@ -143,6 +152,7 @@ type Service =
   , deps      :: Array ResolvedDep
   , routes    :: Array ResolvedRoute
   , selectors :: Array Selector
+  , launch    :: LaunchSpec
   }
 
 type ValidatedDeploymentR =

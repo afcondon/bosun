@@ -1,0 +1,28 @@
+# A small containerised stack (the shape of the polyglot deploy on the MacMini).
+# Three services with build contexts, healthchecks and an ordered dependency
+# chain db -> api -> web. Reconciles to host=macmini container facets, so
+# `bosun apply --dry-run` emits ssh-wrapped `docker compose up -d` in boot order.
+services:
+  db:
+    build:
+      context: ./db
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+  api:
+    build:
+      context: ./api
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+  web:
+    build:
+      context: ./web
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_started

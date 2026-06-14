@@ -14,6 +14,7 @@ import Prelude
 
 import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.Adapters.Registry (ingestRegistry)
+import Bosun.Apply (applyScript)
 import Bosun.Atoms (AbsPath, Port, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkServiceId, unAbsPath, unProjectSlug, unServiceId)
 import Bosun.CLI.IO (argv, readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeSnapshot)
@@ -23,7 +24,7 @@ import Bosun.Exposure (Exposure(..))
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Plan (Reason(..), Snapshot, Status(..), plan)
 import Bosun.Reconcile (AliasMap, reconcile)
-import Bosun.Report (renderPlan, renderReport)
+import Bosun.Report (renderPlan, renderReport, renderScript)
 import Bosun.Service (ServiceInstance, Source(..), mkRole, unRole)
 import Bosun.Validate (validate)
 import Bosun.Version (version)
@@ -51,6 +52,8 @@ main = do
     [ "plan", composePath, registryPath ] -> runPlan composePath registryPath Nothing
     [ "plan", composePath, registryPath, snapshotPath ] -> runPlan composePath registryPath (Just snapshotPath)
     [ "observe", composePath, registryPath ] -> runObserve composePath registryPath
+    [ "apply", "--dry-run", composePath, registryPath ] -> runApplyDryRun composePath registryPath Nothing
+    [ "apply", "--dry-run", composePath, registryPath, snapshotPath ] -> runApplyDryRun composePath registryPath (Just snapshotPath)
     _ -> runDemo
 
 -- ── bosun check <compose> <registry> ────────────────────────────────────────
@@ -95,6 +98,31 @@ runPlan composePath registryPath snapshotPath = do
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
     Right vd ->
       log (renderPlan (plan vd { desired: vd, recorded: Nothing, observed }))
+
+-- ── bosun apply --dry-run <compose> <registry> [snapshot.json] ───────────────
+-- |
+-- | Print the command script `apply` WOULD run — the pure `Plan -> Array
+-- | StagedCommand` rendered as a shell script (docker/ssh lines; un-automatable
+-- | steps as `# MANUAL:` comments). No mutation. Like `plan`, it refuses a
+-- | deployment that does not validate. Live execution (os-exec) is a deliberate
+-- | next step, to be run with the user present.
+runApplyDryRun :: String -> String -> Maybe String -> Effect Unit
+runApplyDryRun composePath registryPath snapshotPath = do
+  composeJson <- readYamlFile composePath
+  registryJson <- readJsonFile registryPath
+  observed <- maybe (pure Map.empty) (map decodeSnapshot <<< readJsonFile) snapshotPath
+  let
+    insts = ingestCompose composeJson <> ingestRegistry registryJson
+    r = reconcile (buildAliases insts) insts
+  log ("bosun " <> version <> " — apply --dry-run " <> composePath <> " + " <> registryPath)
+  log ""
+  case toEither (validate r.deployment) of
+    Left vErrors -> do
+      log "cannot apply: the deployment does not validate —"
+      log ""
+      log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
+    Right vd ->
+      log (renderScript (applyScript vd (plan vd { desired: vd, recorded: Nothing, observed })))
 
 -- ── bosun observe <compose> <registry> ──────────────────────────────────────
 -- |

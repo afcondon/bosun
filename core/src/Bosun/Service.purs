@@ -13,7 +13,7 @@ module Bosun.Service
 import Bosun.Service.Internal
   ( Source(..)
   , Role, mkRole, unRole
-  , RawDep, RawRoute
+  , RawDep, RawRoute, LaunchSpec
   , ServiceInstance
   , LooseDep, LooseRoute, LooseService
   , Deployment, mkDeployment, deploymentServices

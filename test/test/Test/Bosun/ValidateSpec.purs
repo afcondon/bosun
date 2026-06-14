@@ -9,6 +9,7 @@ import Prelude
 import Bosun.Atoms (Port, mkHost, mkPort, mkRoutePath, mkServiceId)
 import Bosun.Edge (Gate(..), Requirement(..))
 import Bosun.Error (DeployError(..))
+import Bosun.Executor (Executor(..))
 import Bosun.Exposure (Exposure(..))
 import Bosun.Health (Probe(..))
 import Bosun.Selector (Selector(..))
@@ -33,6 +34,7 @@ leaf name =
   , deps: []
   , routes: []
   , selectors: []
+  , launch: { executor: Unmanaged ("test:" <> name), localName: name }
   }
 
 -- a pure ordering dep (OnStarted needs no readiness, so it never trips a gate)

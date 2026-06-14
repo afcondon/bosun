@@ -15,10 +15,11 @@ import Bosun.Edge (Gate(..), Requirement(..))
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Exposure (Exposure(..))
 import Bosun.Health (BaseRestart(..), Probe(..))
-import Bosun.Plan (Status(..), plan)
+import Bosun.Apply (applyScript)
+import Bosun.Plan (Snapshot, Status(..), plan)
 import Bosun.Reconcile (reconcile)
-import Bosun.Report (renderPlan, renderReport)
-import Bosun.Service (ServiceInstance, Source(..), mkRole)
+import Bosun.Report (renderPlan, renderReport, renderScript)
+import Bosun.Service (ServiceInstance, Source(..), ValidatedDeployment, mkRole)
 import Bosun.Validate (validate)
 import Data.Either (Either(..), either)
 import Data.Map as Map
@@ -39,6 +40,9 @@ main = do
   log ""
   log "--- plan over a valid fixture + observed snapshot ---"
   log planReport
+  log ""
+  log "--- apply script for the same plan (Phase 6B) ---"
+  log applyReport
 
 -- | The plan column (BUILD-PLAN Phase 5). A clean three-tier deployment that
 -- | validates, against an observed snapshot where the api crashed: the base
@@ -46,16 +50,28 @@ main = do
 -- | backward along the worker's `BindsTo` edge — all pure, so node and
 -- | backend-go must render this byte-identically too.
 planReport :: String
-planReport = case toEither (validate (reconcile Map.empty planFixture).deployment) of
+planReport = withPlanFixture \vd ->
+  renderPlan (plan vd { desired: vd, recorded: Nothing, observed: planObserved })
+
+-- | The apply column (BUILD-PLAN Phase 6B). The *same* plan rendered as the
+-- | command script `apply` would run — pure `Plan -> Array StagedCommand`, so
+-- | the backend-go binary must emit the byte-identical docker/ssh/process
+-- | script the node binary does. This is the headline claim, gated.
+applyReport :: String
+applyReport = withPlanFixture \vd ->
+  renderScript (applyScript vd (plan vd { desired: vd, recorded: Nothing, observed: planObserved }))
+
+withPlanFixture :: (ValidatedDeployment -> String) -> String
+withPlanFixture f = case toEither (validate (reconcile Map.empty planFixture).deployment) of
   Left _ -> "plan fixture failed to validate (should not happen)"
-  Right vd ->
-    renderPlan (plan vd { desired: vd, recorded: Nothing, observed })
-  where
-  observed = Map.fromFoldable
-    [ Tuple (mkServiceId "store:db") Running
-    , Tuple (mkServiceId "store:api") Failed
-    , Tuple (mkServiceId "store:worker") Running
-    ]
+  Right vd -> f vd
+
+planObserved :: Snapshot
+planObserved = Map.fromFoldable
+  [ Tuple (mkServiceId "store:db") Running
+  , Tuple (mkServiceId "store:api") Failed
+  , Tuple (mkServiceId "store:worker") Running
+  ]
 
 planFixture :: Array ServiceInstance
 planFixture =
@@ -65,6 +81,7 @@ planFixture =
       , localName = "store-db"
       , role = mkRole "db"
       , exposure = HostPort (port_ 5432)
+      , executor = Process { cwd: absPath "/srv/store-db", command: "postgres", env: [] }
       , health = inst.health { readiness = TcpConnect (port_ 5432) }
       }
   , inst
@@ -73,6 +90,7 @@ planFixture =
       , localName = "store-api"
       , role = mkRole "api"
       , exposure = HostPort (port_ 3000)
+      , executor = Process { cwd: absPath "/srv/store-api", command: "node server.js", env: [] }
       , health = inst.health { readiness = HttpGet { port: port_ 3000, path: "/health", expectStatus: 200 } }
       , rawDeps = [ { to: "store:db", ordering: Nothing, requirement: Just (Requires OnReady) } ]
       }
@@ -82,6 +100,7 @@ planFixture =
       , localName = "store-worker"
       , role = mkRole "worker"
       , exposure = NoNetwork
+      , executor = Process { cwd: absPath "/srv/store-worker", command: "node worker.js", env: [] }
       , rawDeps = [ { to: "store:api", ordering: Nothing, requirement: Just BindsTo } ]
       }
   ]

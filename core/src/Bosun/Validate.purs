@@ -116,6 +116,7 @@ validate dep =
           else Nothing   -- a dropped soft edge
     , routes: map (\r -> { to: mkServiceRef r.to, path: r.path }) s.routes
     , selectors: s.selectors
+    , launch: s.launch
     }
 
 -- B2 — DanglingDependency. Edge-kind-aware (E4): a *soft* (`Wants`) edge to an

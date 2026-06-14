@@ -127,6 +127,7 @@ toLoose aliases sid rep is =
   , deps: A.nubEq (is >>= \si -> map (resolveDep aliases) si.rawDeps)
   , routes: A.nubEq (is >>= \si -> map (resolveRoute aliases) si.rawRoutes)
   , selectors: A.nubEq (is >>= _.selectors)
+  , launch: { executor: rep.executor, localName: rep.localName }
   }
 
 resolveDep :: AliasMap -> RawDep -> LooseDep
