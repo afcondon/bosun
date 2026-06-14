@@ -222,6 +222,51 @@ Phase-4 conformance harness from *correctness* (byte-identical) to
               (PBT harness rides 2→6)
 ```
 
+### Status — Phases 0–5 + 6A DONE (as of 2026-06-14)
+
+Since the Phase-4 win, in this session:
+- **Phase 5A — `plan` (pure):** `Bosun.Plan` — `Status`/`Reason`/`Snapshot`/
+  `WorldState`, `Change`, `Plan`, `plan :: ValidatedDeployment -> WorldState ->
+  Plan`. Total by construction (validate already proved acyclic + resolved).
+  Base status→change pass + **D-E5 backward Stop/Restart propagation** along
+  reverse `BindsTo`/`PartOf` as a severity-monotone fixpoint; stops staged
+  before starts (reverse boot order). `renderPlan` in `Bosun.Report`. PlanSpec
+  (base mapping, both propagation rules, staging, + 2 convergence properties
+  reusing `genLegal`) → **46 tests green**. The plan path rides the **go-
+  conformance gate too** (planReport in `Bosun.Conformance.Main`, byte-identical
+  node vs backend-go, 27 Go files).
+- **Phase 5B — `bosun plan` CLI:** `bosun plan <compose> <registry>
+  [snapshot.json]`; reads an observed Snapshot (JSON object {id: status},
+  absent ⇒ down). Refuses to plan a deployment that doesn't validate (prints the
+  check report). `fixtures/valid/` seeds the corpus. Live rig correctly REFUSED
+  (real `macmini:80` edge port-collision).
+- **Phase 6A — the observation edge (`bosun observe`), READ-ONLY:**
+  `Bosun.CLI.Observe` — `observe :: Maybe Host -> Probe -> Effect Status` via
+  synchronous `execSync` (curl/nc), no-Aff seam intact. `effectiveProbe`: a
+  portful service with no declared probe is observed by a TCP connect to its
+  port (implicit liveness). Prints a Snapshot JSON that pipes straight into
+  `bosun plan` — the **observe → plan loop is closed**. Verified live: 22
+  running / 7 down / 24 unknown over the 53-service rig.
+
+**Remaining for MVP: Phase 6B — `apply` (the mutating edge) + the headline
+MacMini deploy.** Two open decisions block it (see below).
+
+### Phase 6B — `apply`: the two open decisions (for the next session)
+
+1. **Executor threading.** The validated `Service` carries only structural
+   fields (id/host/exposure/readiness/deps/routes/selectors) — NOT the
+   `Executor`, nor compose-coordinates (compose service name, file, profile).
+   `apply` needs them to emit launch commands. Options: (a) thread `Executor`
+   (+ a small `LaunchSpec`) through `LooseService`→`Service` properly (a type
+   evolution across reconcile/validate); (b) pass a side `Map ServiceId
+   Executor` from the CLI. (a) is the principled end state; (b) unblocks faster.
+2. **Live fire.** `apply` mutates the running rig (`ssh andrew@andrews-mac-mini`
+   + `docker compose --profile X up -d`). Recommended sequence: build `apply`
+   as **pure command-generation** (`Plan → Array StagedCommand`, conformance-
+   gated — "the Go binary emits the identical docker/ssh script") + a
+   `--dry-run` that PRINTS the commands, THEN wire `os-exec` to actually fire,
+   and only run live against the MacMini with the user present.
+
 ### Status — Phases 0–4 DONE (as of 2026-06-14)
 
 `0 ─→ 1 ─→ 2 ─→ 3 ─→ 4` all green and committed:
