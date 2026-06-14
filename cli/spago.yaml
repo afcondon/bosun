@@ -1,0 +1,14 @@
+# The `bosun` command-line entrypoint and the two effectful edges
+# (observe, apply) plus the report renderer. This is the node column's
+# imperative shell around the pure core. Phase 0: prints the version.
+package:
+  name: bosun-cli
+  description: "The `bosun` CLI entrypoint + effectful edges (observe, apply) + report renderer."
+  dependencies:
+    - prelude
+    - effect
+    - console
+    - bosun-core
+    - bosun-adapters
+  run:
+    main: Bosun.CLI.Main

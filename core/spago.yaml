@@ -1,0 +1,9 @@
+# The pure, backend-portable heart: atoms, the tight types, and the
+# total pipeline (reconcile / validate / plan / emit) + the DeployError
+# ledger. No FFI, no Effect — this is the package that runs identically
+# on the node and purescript-go columns. Phase 1 fills in DESIGN.md §3.
+package:
+  name: bosun-core
+  description: "Pure deployment IR: atoms, types, validate/reconcile/plan/emit, DeployError."
+  dependencies:
+    - prelude

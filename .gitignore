@@ -1,1 +1,13 @@
+# Generated design dossier (built by site/build.sh)
 site/bosun-design.html
+
+# Spago / PureScript
+output/
+output-go/
+.spago/
+.psci_modules/
+node_modules/
+.psc-ide-port
+
+# spec-node failure-rerun cache
+.spec-results

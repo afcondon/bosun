@@ -1,0 +1,19 @@
+# The measurement package: the scenario corpus as example tests, and
+# (from Phase 2) the property-based-testing harness — typed generators,
+# fault injectors, shrinkers (SCENARIOS.md §G). Library-grade test
+# helpers live in src/; the spec runner is the test stanza's Test.Main.
+package:
+  name: bosun-test
+  description: "Scenario corpus as tests + PBT generators / injectors / shrinkers."
+  dependencies:
+    - prelude
+    - bosun-core
+  test:
+    main: Test.Main
+    dependencies:
+      - effect
+      - aff
+      - spec
+      - spec-node
+      - spec-quickcheck
+      - quickcheck

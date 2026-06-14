@@ -1,0 +1,9 @@
+# Pure ingest/emit, one module per source format (docker-compose, the
+# SDI service registry, launchd plists, …). Each adapter parses *into*
+# the core IR and renders *out of* it. Phase 3 lands compose + registry.
+package:
+  name: bosun-adapters
+  description: "Pure ingest/emit per source format (compose, registry, plist)."
+  dependencies:
+    - prelude
+    - bosun-core

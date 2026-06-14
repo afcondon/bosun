@@ -1,0 +1,15 @@
+# Bosun workspace root.
+#
+# Four packages, mirroring signal-box's core/harness split:
+#   core/      pure: atoms, types, validate/reconcile/plan/emit, DeployError
+#   adapters/  pure ingest/emit per source (compose, registry, plist)
+#   cli/       the `bosun` entrypoint + the Effect edges (observe, apply) + report
+#   test/      scenario corpus as tests + PBT generators / injectors / shrinkers
+#
+# Develop and test on the node backend; purescript-go is a separate
+# conformance column wired in Phase 4 (the backend-go MVP gate). See
+# docs/BUILD-PLAN.md.
+workspace:
+  packageSet:
+    registry: 77.5.0
+  extraPackages: {}

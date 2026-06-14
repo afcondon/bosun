@@ -1,0 +1,12 @@
+{
+  "name": "bosun",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A typed deployment-configuration reconciler.",
+  "scripts": {
+    "build": "spago build",
+    "test": "spago test",
+    "bosun": "spago run -p bosun-cli"
+  }
+}
