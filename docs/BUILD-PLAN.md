@@ -154,21 +154,27 @@ ledger). **Detect tier shippable.**
 
 ---
 
-## Phase 6 — `apply` + `emit` (launch tier MVP + atomic demo)
+## Phase 6 — `apply` + `emit` (launch tier MVP + the real deploy test)
 
-**Goal:** stand up the polyglot showcases; close the round-trip.
+**Goal:** stand up the polyglot showcases *for real*; close the round-trip.
 
 - `apply` sequential via os-exec (no concurrency yet); reads `BindsTo`/`PartOf`
   for `Stop`.
 - `emit` compose; the differential test (emit byte-identical to the
   hand-written file) — a *separate* validation/migration capability.
-- The atomic demo (`DESIGN.md §6/§7`): author overlay → validate → render DAG +
-  status grid → `plan` → `apply` boots the showcases in `BootOrder` → emit
-  byte-identical compose.
+- **THE HEADLINE FUNCTIONAL TEST (user, 2026-06-14): can the Go program
+  actually deploy the polyglot stack to the MacMini?** Take a `Plan`, run its
+  `BootOrder` stages via os-exec against the real target — `ssh
+  andrew@andrews-mac-mini` + `docker compose --profile <p> up -d` for the
+  container facets — and verify the showcases come up. This is `apply` proving
+  it *does the devops*, not just describes it. Needs an os-exec foreign on BOTH
+  columns; the **Go column is where this belongs** (the concurrency tier).
+- The atomic demo (`DESIGN.md §6/§7`): overlay → validate → render → `plan` →
+  `apply` boots the showcases in `BootOrder` → emit byte-identical compose.
 
-**DoD:** `bosun apply` brings up the polyglot showcases in order, without
-rewriting any source config; `bosun emit compose` round-trips byte-identical.
-**MVP complete — gates backend-go's MVP.**
+**DoD:** `bosun apply` brings the polyglot showcases up on the MacMini in
+`BootOrder`, without rewriting any source config; `bosun emit compose`
+round-trips byte-identical. **MVP complete — gates backend-go's MVP.**
 
 ---
 
@@ -182,6 +188,31 @@ Terraform-state adapters · `Rollout` strategies · continuous reconcile loop ·
 the Hylograph DAG view as a first-class artifact (the Minard-for-containers
 angle) · the E10 EdgeKind×tool fidelity matrix.
 
+### Parser-hardening track (user, 2026-06-14 — independent, can run anytime)
+
+**Stress-test the heck out of both adapters.** The Phase-3 adapters are
+minimal-viable; harden them against the real corpus:
+- Run `ingestCompose`/`ingestRegistry` over the FULL inputs — the entire
+  ~44-row registry (`/api/ports`) and the whole `docker-compose.yml` — and
+  every A–D scenario in `SCENARIOS.md`, asserting no crash and sane decode.
+- Compose edge cases: map-form `depends_on` (with `condition:`), `image:` form,
+  multi-port, `env_file`, YAML anchors/aliases, the routes-in-a-comment header,
+  the commented-out `anscombe` stale service (§7.3).
+- Registry edge cases: NULL/prose `startCommand` (→ `Unmanaged`), `ssh …`
+  rows (→ `Remote`, currently `Unmanaged`), `udp://` / `ws://` urls, workers
+  with null port, the SDI `node router.mjs` row (→ `SdiContractViolation`).
+- Turn these into a test *population* (extend AdapterSpec + a fixtures dir).
+  Goal: the parsers never crash and degrade gracefully (`Unmanaged`/skip +
+  surfaced note), never silently mis-decode.
+
+### Benchmarking track (user, 2026-06-14 — "fairly distant later session")
+
+Node vs purescript-go on the **apply / sysadmin-devops** path, à la
+backend-go's own `run_bench.sh`. Same PureScript source, two columns; compare
+wall-clock on the os-exec-heavy `apply` (and the pure pipeline). Extends the
+Phase-4 conformance harness from *correctness* (byte-identical) to
+*performance*. Belongs after Phase 6 (there must be an `apply` to benchmark).
+
 ---
 
 ## Critical path & "start here"
@@ -191,18 +222,35 @@ angle) · the E10 EdgeKind×tool fidelity matrix.
               (PBT harness rides 2→6)
 ```
 
-The single highest-value early milestone is **Phase 3** — `bosun check` on the
-real rig — because it turns the whole paper design into a thing that finds
-real bugs. Everything before it (0–2) is the runway to get there.
+### Status — Phases 0–4 DONE (as of 2026-06-14)
 
-**Immediate next actions (a fresh session can just go):**
-1. Phase 0: `spago init` the workspace, the four packages, the test runner,
-   the stub CLI on the node backend.
-2. Phase 1: transcribe `DESIGN.md §3` into `core` types; unit-test the smart
-   ctors.
-3. Phase 2: `validate` + the first fault injectors.
+`0 ─→ 1 ─→ 2 ─→ 3 ─→ 4` all green and committed:
+- **0–2:** workspace; the §3 vocabulary in `bosun-core`; `validate` (B1–B6
+  caught, Kahn-levels `BootOrder`, tight ctors hidden in
+  `Bosun.Service.Internal`); the PBT harness.
+- **3:** the real adapters (`Bosun.Adapters.{StartCommand,Registry,Compose}`,
+  pure `Json -> ServiceInstance`; CLI sync fs+js-yaml FFI) + `reconcile` (facet
+  model, auto-alias by dir basename) + `Bosun.Report`. `bosun check <compose>
+  <registry>` runs on the LIVE rig: 15 services flagged two-facet divergence
+  (incl. §7 tilted-radio) + a port-collision. 37 tests green.
+- **4:** `scripts/go-conformance.sh` — the pure Detect pipeline transpiles via
+  backend-go to ~25 Go files and runs **byte-identical to node**. The
+  backend-go MVP gate, green. Harness: `conformance/Bosun.Conformance.Main`.
+
+**Detect tier is shippable and gated across both backends.**
+
+### Next-session agenda (set by user, 2026-06-14, after the Phase-4 win)
+
+1. **The real deploy test (Phase 5 → 6):** can the Go program actually deploy
+   the polyglot stack to the MacMini? → `plan` (Phase 5, pure) then `apply`
+   (Phase 6) via os-exec / ssh + `docker compose up`, run through the Go
+   column. *This is the priority — "does it do the devops."*
+2. **Parser hardening** (the track above): stress-test both adapters against
+   the full registry + compose + the A–D scenarios. Independent; can interleave.
+3. **Benchmarking** (the track above): node vs Go on the apply path — *"a
+   fairly distant later session."*
 
 Reference while building: `DESIGN.md` (types), `DECISIONS.md` (the resolved
-edge cases), `PRINCIPLES.md` (the invariant-boundary ledger — *which* phase
-establishes *which* invariant), `SCENARIOS.md §G` (the PBT shape), `spike/`
-(the EDSL encoding, for Phase 7's overlay surface).
+edge cases — D-E5 for `Stop`-propagation in `plan`), `PRINCIPLES.md` (the
+two edges — Phase 5 stands up the *observation* edge), `SCENARIOS.md §G` (PBT),
+`spike/` (the EDSL overlay, Phase 7).
