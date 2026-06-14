@@ -134,3 +134,54 @@ genuinely effectful, can-fail-arbitrarily work — `observe` (sync probes) and
 (`reconcile`, `validate`, `plan`, all rendering) is pure and total. Keeping
 uncertainty at the edges and keeping effects at the edges are the same
 discipline; that they coincide is a good sign the decomposition is right.
+
+## Lineage: signal-box, and measuring instead of asserting
+
+Bosun's kernel exists already, in miniature: the **signal-box** demonstrator,
+whose thesis is *"illegal states made unrepresentable — measured, not
+asserted."* It fixes a tiny **finite** world (a single-line railway passing
+loop), writes one oracle (`isLegal`) once against the loosest type, then climbs
+a **ladder of state types** — each rung a transferable technique — and at every
+rung **exhaustively enumerates** the finite space and **counts** how many
+states in each named violation family the rung extinguished, while proving it
+still covers every legal state.
+
+Bosun is that ladder applied to a real, **infinite**, painful domain. The rungs
+map almost verbatim:
+
+| signal-box rung | Bosun |
+|---|---|
+| v1 *name your atoms* | `Port` / `AbsPath` / `Host` / … newtypes + smart ctors |
+| v2 *derive, don't store* | exposure-vs-executor; edges inferred from dataflow; **local-vs-remote = `host == thisHost`, machine-vs-CDN = an `Executor` property** (precisely the §3.1 Host fix — derived, so it can't contradict) |
+| v3 *locking table as a type* | `Executor` / `Exposure` closed sums; `Either ImageRef BuildContext` — the conflicting-state constructor *does not exist* |
+| v4 *parse, don't validate* | `validate :: Deployment -> V (Array DeployError) ValidatedDeployment`; opaque tight type, representable = legal by API totality — signal-box's `make :: … -> Either (Array Violation) State`, verbatim |
+
+Two of signal-box's moves transfer, and one **extends**:
+
+- **Coverage — safety never bought with expressiveness.** signal-box proves
+  every rung still reaches all its legal states ("the squeeze comes from above
+  only"). Bosun's analog: closed-`validate` must extinguish every *illegal*
+  deployment while rejecting **no legal one** — a round-trip / coverage
+  property (`SCENARIOS.md §G`).
+- **Named violation families.** signal-box counts collision / conflicting-greens
+  / derailment / green-into-occupied going extinct rung by rung. Bosun's fault
+  injectors (§G) target the same shape — PortCollision / DependencyCycle /
+  DanglingDependency / UncheckableGate — and confirm each is caught.
+- **The extension: finite enumeration → infinite via PBT.** signal-box can
+  *count* because its world is finite. Bosun's is infinite, so exhaustive
+  enumeration is impossible — and **typed-generator property testing (§G) is
+  the infinite-domain analog of signal-box's exhaustive count.** That is how
+  "measured, not asserted" survives the jump to a real domain: generate the
+  strong types, *measure* that the violation families stay extinct, rather than
+  merely claiming it. (A signal-box-style single `isLegal` oracle, written once
+  against the loose `Deployment` and never changed, can audit that `validate`
+  agrees — the method borrowed directly.)
+
+And the tie is **literal, not only thematic.** signal-box's pure core (no FFI,
+no `Effect`, no PRNG) runs *identically across every PureScript backend* as a
+conformance matrix. Bosun's pure core — `ingest` / `reconcile` / `validate` /
+`plan`, the **Detect** tier — has the same shape and runs on **purescript-go**,
+the backend Bosun is the MVP showcase for. The effectful edges (`apply`) are
+where Bosun extends past signal-box's purity, exactly along the no-Aff seam.
+So Bosun is signal-box's thesis made *useful*, *infinite-domain*, and run
+through the Go column.
