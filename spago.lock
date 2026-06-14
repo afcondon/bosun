@@ -17,11 +17,17 @@
         "path": "cli",
         "core": {
           "dependencies": [
+            "arrays",
             "bosun-adapters",
             "bosun-core",
             "console",
             "effect",
-            "prelude"
+            "either",
+            "maybe",
+            "ordered-collections",
+            "partial",
+            "prelude",
+            "validation"
           ]
         },
         "test": {
@@ -63,11 +69,13 @@
             "effect",
             "either",
             "maybe",
+            "ordered-collections",
             "partial",
             "quickcheck",
             "spec",
             "spec-node",
             "spec-quickcheck",
+            "strings",
             "validation"
           ]
         }

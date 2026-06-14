@@ -8,6 +8,12 @@ package:
     - prelude
     - effect
     - console
+    - arrays
+    - either
+    - maybe
+    - ordered-collections
+    - partial
+    - validation
     - bosun-core
     - bosun-adapters
   run:

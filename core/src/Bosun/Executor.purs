@@ -67,3 +67,23 @@ instance Show CDNProvider where show = genericShow
 -- | to an opaque string.
 data RemoteVia = Ssh { user :: Maybe String, host :: Host }
 derive instance Eq RemoteVia
+
+-- | The mechanism tag, abstracting away an `Executor`'s payload. Half of a
+-- | facet key `(Host, ExecutorMechanism)` (DECISIONS D-E3): "the two ways we
+-- | deploy this" differ legitimately on host AND mechanism.
+data ExecutorMechanism
+  = MechProcess | MechContainer | MechSystemd | MechLaunchd | MechCDN | MechRemote | MechUnmanaged
+derive instance Eq ExecutorMechanism
+derive instance Ord ExecutorMechanism
+derive instance Generic ExecutorMechanism _
+instance Show ExecutorMechanism where show = genericShow
+
+mechanism :: Executor -> ExecutorMechanism
+mechanism = case _ of
+  Process _ -> MechProcess
+  Container _ -> MechContainer
+  SystemdUnit _ -> MechSystemd
+  LaunchdJob _ -> MechLaunchd
+  StaticCDN _ -> MechCDN
+  Remote _ -> MechRemote
+  Unmanaged _ -> MechUnmanaged

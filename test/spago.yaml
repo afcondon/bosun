@@ -16,7 +16,9 @@ package:
       - arrays
       - either
       - maybe
+      - ordered-collections
       - partial
+      - strings
       - validation
       - spec
       - spec-node
