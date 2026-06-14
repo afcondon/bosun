@@ -25,7 +25,7 @@ module Bosun.Apply
 
 import Prelude
 
-import Bosun.Atoms (Host, ServiceId, unAbsPath, unHost)
+import Bosun.Atoms (Host, ServiceId, unAbsPath, unHost, unServiceId)
 import Bosun.Executor (Executor(..))
 import Bosun.Plan (Change(..), Plan, changeRef, planSteps)
 import Bosun.Selector (Selector(..))
@@ -33,7 +33,9 @@ import Bosun.Service (Service, ValidatedDeployment, unServiceRef, unValidatedDep
 import Data.Array as A
 import Data.Foldable (foldMap)
 import Data.Map as Map
-import Data.Maybe (Maybe(..))
+import Data.Maybe (Maybe(..), isJust)
+import Data.String (Pattern(..), Replacement(..))
+import Data.String as String
 
 -- | A launch action. `Shell` is a local command (optionally in a cwd); `Ssh`
 -- | runs an inner command on a remote login target; `Manual` is a documented
@@ -68,15 +70,21 @@ commandFor change svc = map (wrap svc.host) (raw change)
   docker :: String -> Command
   docker verb = Shell { cwd: Nothing, line: "docker compose" <> profileFlags svc <> " " <> verb <> " " <> name }
 
+  -- A Process is a long-running service, so a launch must be DETACHED — else
+  -- `apply` blocks forever on the first foreground server (flask, julia, a dev
+  -- server). `daemonize` backgrounds + log-redirects the command unless it
+  -- already backgrounds itself (so a fixture that bakes in `… &` is untouched).
+  processLaunch pr = Shell { cwd: Just (unAbsPath pr.cwd), line: daemonize svc.id pr.command }
+
   raw :: Change -> Maybe Command
   raw = case _ of
     NoOp _ -> Nothing
     Start _ -> Just case svc.launch.executor of
-      Process pr -> Shell { cwd: Just (unAbsPath pr.cwd), line: pr.command }
+      Process pr -> processLaunch pr
       Container _ -> docker "up -d"
       ex -> manual ex
     Restart _ _ -> Just case svc.launch.executor of
-      Process pr -> Shell { cwd: Just (unAbsPath pr.cwd), line: pr.command }
+      Process pr -> processLaunch pr
       Container _ -> docker "restart"
       ex -> manual ex
     Stop _ -> Just case svc.launch.executor of
@@ -101,6 +109,21 @@ manual = case _ of
   Remote _ -> Manual "remote (ssh) launch (not automated)"
   Unmanaged s -> Manual ("unmanaged: " <> s)
   _ -> Manual "no launch command for this executor yet"
+
+-- Detach a long-running Process launch: `nohup <cmd> >/tmp/bosun-apply-<id>.log
+-- 2>&1 &`, so the exec edge fires it and returns. A command that already
+-- backgrounds itself (ends in `&`) is left as-is — the exec edge will detach it.
+daemonize :: ServiceId -> String -> String
+daemonize sid cmd
+  | isJust (String.stripSuffix (Pattern "&") (String.trim cmd)) = cmd
+  | otherwise = "nohup " <> cmd <> " >" <> logPath sid <> " 2>&1 &"
+
+logPath :: ServiceId -> String
+logPath sid = "/tmp/bosun-apply-" <> sanitize (unServiceId sid) <> ".log"
+  where
+  sanitize =
+    String.replaceAll (Pattern ":") (Replacement "-")
+      >>> String.replaceAll (Pattern "/") (Replacement "-")
 
 profileFlags :: Service -> String
 profileFlags svc = foldMap flag svc.selectors

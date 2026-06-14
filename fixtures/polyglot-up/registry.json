@@ -1,0 +1,21 @@
+{
+  "_comment": "The CURRENT polyglot exhibits (not the stale purepy hypo-punter rows). Python = purescript-python-new examples on 8081/8082 (ports chosen to dodge SDI); julia = Jurist stability-atlas; site = polyglot website.",
+  "servers": [
+    { "role": "website", "port": 3040, "host": "mbp",
+      "projectSlug": "polyglot", "projectName": "polyglot-website",
+      "startCommand": "cd /Users/afc/work/afc-work/purescript-polyglot/site/website && npx serve public -p 3040" },
+
+    { "role": "embedding-explorer", "port": 8081, "host": "mbp",
+      "projectSlug": "python-new", "projectName": "embedding-explorer",
+      "startCommand": "cd /Users/afc/work/afc-work/purescript-backends/purescript-python-new/examples/embedding-explorer && python3 output-py" },
+
+    { "role": "grid-explorer", "port": 8082, "host": "mbp",
+      "projectSlug": "python-new", "projectName": "grid-explorer",
+      "startCommand": "cd /Users/afc/work/afc-work/purescript-backends/purescript-python-new/examples/grid-explorer && python3 output-py" },
+
+    { "role": "atlas-service", "port": 3210, "host": "mbp",
+      "projectSlug": "jurist", "projectName": "jurist-atlas",
+      "startCommand": "cd /Users/afc/work/afc-work/purescript-backends/purescript-julia/examples/stability-atlas/service && ATLAS_PORT=3210 julia -t auto --project=julia-env output-jl/main.jl" }
+  ],
+  "count": 4
+}

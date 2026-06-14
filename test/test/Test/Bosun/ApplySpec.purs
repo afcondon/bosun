@@ -56,9 +56,13 @@ withScript d obs f = case toEither (validate d) of
 spec :: Spec Unit
 spec = describe "Bosun.Apply" do
 
-  it "Process Start -> local 'cd … && cmd' (not ssh-wrapped)" $
+  it "Process Start -> local, daemonized (long-running service, not ssh-wrapped)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && run-a" ]
+      lines `shouldEqual` [ "cd /srv/a && nohup run-a >/tmp/bosun-apply-a.log 2>&1 &" ]
+
+  it "a Process command that already backgrounds itself is left as-is" $
+    withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a &" ]) (snap []) \lines ->
+      lines `shouldEqual` [ "cd /srv/a && run-a &" ]
 
   it "macmini Container Start -> ssh-wrapped docker compose up" $
     withScript (mkDeployment [ containerLeaf "web" "macmini" ]) (snap []) \lines ->
