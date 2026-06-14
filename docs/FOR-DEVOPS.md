@@ -96,12 +96,35 @@ The honest precedents are tools you already trust, none of which are "standard
 Bosun is that layer for deployment config: it *consumes* the standards instead
 of competing with them.
 
-There **is** one place Bosun can emit a format — an optional single source spec
-that *generates* your compose files and units from one typed model, so they
-can't drift. Even then you are not adopting a Bosun format downstream: the
-artifacts you ship are still ordinary compose / systemd / k8s files that any
-tool reads. Bosun stays the thing that produces and checks them, never a
-runtime dependency anyone else has to install.
+### The overlay — not a new config file
+
+There is **one** file Bosun adds, and it is the strongest part of the anti-927
+argument, not the weakest. Your existing files already hold the *configuration*
+— ports, images, commands, env. What they **cannot** express is the
+cross-cutting truth that today lives in nobody's file: which compose service
+*is* which registry entry, the start-order dependencies you keep in a README or
+a bash script, which "wait until healthy" gates on what. The overlay is where
+that goes. It is **the format for the stuff that has no other format.**
+
+Three properties keep it from being config-format #15:
+
+- **It never duplicates your config.** It doesn't restate a port or an image;
+  it adds *relationships between* the things your real files already define. It
+  is strictly **additive**.
+- **It is valid empty.** With no overlay at all, Bosun still ingests,
+  reconciles, and checks your existing files — the overlay only adds what those
+  files structurally can't say. You opt into exactly as much as you need to fix
+  a real problem.
+- **It's a plain data file the binary reads at runtime.** No new toolchain.
+  (PureScript shops can *optionally* author it in a typed DSL that's checked at
+  build time and emits this same data file — like compiling Dhall to YAML
+  before `kubectl` — but that's an opt-in, not a requirement, and the artifacts
+  you ship downstream are still ordinary compose / systemd / k8s files that any
+  tool reads.)
+
+So the only thing you "adopt" is a place to write down the relationships your
+tools already assume but can't state. Bosun stays the thing that reads and
+checks your stack — never a runtime dependency anyone else has to install.
 
 ---
 

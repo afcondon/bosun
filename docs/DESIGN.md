@@ -41,10 +41,30 @@ forbid**, and each tool becomes an **adapter** that *parses into* the IR
   ├─ systemd unit ─┼─ ingest ─→  Typed Deployment  ─ emit ─┼→ systemd unit
   ├─ marginalia DB ┤  (adapters)      Graph        (adapters)├→ Caddyfile / nginx
   ├─ SDI registry ─┤                    │                    ├→ Sankey / status-grid
-  └─ k8s manifests ┘              reconcile + validate        └→ boot-timeline
-                                         │
-                                  plan → apply (reconcile reality)
+  ├─ k8s manifests ┘              reconcile + validate        └→ boot-timeline
+  └─ .deploy overlay ──────────────────┘ │
+     (additive; valid empty)      plan → apply (reconcile reality)
 ```
+
+**The `.deploy` overlay (introduced here because it's easy to mistake for
+config-format #15 — it is the opposite).** The existing sources hold the
+*configuration*. They structurally cannot express the **cross-cutting**
+truth — which compose service *is* which registry entry, the start-order deps
+that live in a README, which gate waits on which readiness, facet
+expectations. That truth currently lives in nobody's file; the overlay is its
+home — "the format for the stuff that has no other format." It is **strictly
+additive** (it adds *relationships between* the things the real sources define;
+it never restates a port or image) and **valid empty** (with no overlay, Bosun
+still ingests + reconciles + validates the sources alone; the overlay only adds
+what they can't say). Internally it is *just another `Source`* (`FromOverlay`),
+so anything it does happen to restate is reconciled — and conflict-checked —
+like any source. **Two surfaces, same facts:** the default is a **data file the
+binary reads at runtime** (no toolchain; guarantees = the runtime
+`DeployError` ledger); optionally a **typed PureScript EDSL** authored and
+`purs`-compiled *at build time* (full type-level MISU, §6) that *emits* that
+same data file — the build-time analogue of compiling Dhall to YAML. The
+combinators are exactly the relationship vocabulary (`routeTo`,
+`requiresReady`, `bindsTo` — §6 spike), never config.
 
 This is **"parse, don't validate" at two altitudes**:
 
@@ -356,6 +376,7 @@ tools' worth of footguns.*
 
 ```purescript
 data Source = FromCompose | FromRegistry | FromPlist | FromSystemd | FromK8s
+            | FromOverlay   -- the additive .deploy overlay (§1): just another source
 
 -- LOOSE / OPEN (D-4, CUE open structs): one per (source × unit). Edges point
 -- at raw string names; `extra` carries every source field we don't model, so
@@ -554,8 +575,15 @@ shrinks the representable space to fit the legal one, in two tiers.
 >   **phantom-typed proofs** (`ServiceRef` mintable only by `validate`),
 >   **sums for mutual exclusion** (`Executor`, `Exposure`), **`Either` for
 >   XOR** (`image`/`build`). This is the multi-source/drift path.
-> - **Authoring path (a hand-written PureScript `.deploy` EDSL)** is where the
->   *type-level* guarantees live, Propellor-grade. The GADT workarounds:
+> - **Authoring path (the optional, build-time PureScript EDSL surface of the
+>   `.deploy` overlay — §1)** is where the *type-level* guarantees live,
+>   Propellor-grade. Crucially this is **not a competing config file**: it is
+>   the additive overlay (relationships, not config) authored in typed form.
+>   Because it's an *eDSL* and the backend is ahead-of-time (no interpreter
+>   yet), using it means a **`purs` compile step**, which is exactly why it is
+>   *opt-in* and the *data* surface is the default — the compile step is the
+>   build-time validation gate, and it *emits the same data overlay*. The GADT
+>   workarounds:
 >   - **Row types ARE type-level sets** — and this *fixes Propellor's own
 >     stated wart* (Joey wanted a set but had an order-sensitive type-level
 >     *list*). A service phantom-indexed by a row,
@@ -732,7 +760,13 @@ Bosun is architected so the MVP never needs it. The split is clean and
   `(ProjectSlug, Role)` — so `Role` should be **opaque** (`newtype Role =
   Role String`), or at most `WellKnown … | Other String` if a known-set buys
   nicer rendering. Leaning opaque.
-- **One spec file vs derive-from-sources.** Is the Bosun `.deploy` DSL a
-  thing you *write*, or only ever *reconciled out of* existing sources? The
-  ambitious answer is both: ingest to bootstrap, then the typed spec becomes
-  the source of truth and the old files become emit targets.
+- **The `.deploy` overlay — RESOLVED (see §1).** Not a source of truth that
+  *replaces* your files (that would be config-format #15). It is the **additive
+  overlay** of cross-cutting *relationships* the per-tool sources can't express
+  — strictly additive, valid empty, internally `FromOverlay` (just another
+  `Source`). Two surfaces: a **data file the binary reads at runtime**
+  (default, no toolchain) and an **opt-in build-time PureScript EDSL** that
+  `purs`-compiles (full type-level MISU) and *emits that same data file*.
+  Open sub-question: a future **interpreter** (an Atelier-style in-process
+  PureScript evaluator) could one day typecheck-and-run an EDSL overlay without
+  a user-side build — parking-lot, not MVP.
