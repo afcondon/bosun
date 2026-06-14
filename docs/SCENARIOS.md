@@ -265,12 +265,16 @@ scenarios demand. Each needs a decision before implementation.
 >   richer `Requirement` gradient (Wants/Requires/Requisite/BindsTo/PartOf)
 >   means we now know *what* must be preserved/collapsed/dropped per tool.
 >
-> Still genuinely open: **E2** (single-facet ≠ drift — needs the "expected
-> facet set" notion), **E3** (CUE meet makes *any* field `Conflict` on
-> disagreement; the remaining question is purely which fields *define* a
-> facet vs which must agree), **E5** (planner reads `BindsTo`/`PartOf` for
-> `Stop` — noted in §4, needs the algorithm), **E7**, **E8**, **E11**
-> (conditional launchd `KeepAlive` richer than `RestartPolicy`).
+> **Now all resolved — see `DECISIONS.md`:** **E2** (single-facet ≠ drift;
+> opt-in `expectedFacets`), **E3** (three-tier facet model; "drift" splits
+> into facet-divergence vs conflict), **E5** (backward transitive-closure
+> Stop/restart propagation over `BindsTo`/`PartOf`, terminates by acyclicity),
+> **E7** (probe ports are the service's own listening port, unconstrained by
+> host-exposure), **E8** (`ConfigRef`/`ConfigSupplier` resolution at validate),
+> **E11** (enriched `RestartPolicy` = base + portable `RestartCondition`s;
+> exotic launchd `KeepAlive` keys ride in `extra`, reported on lossy emit).
+> Deferred (non-blocking): **E10** (the full EdgeKind×tool fidelity matrix —
+> a per-adapter implementation-time task).
 
 - **E1. Does `RoutesTo` imply a `Requires` ordering edge?** A proxy should
   start after (and arguably require the readiness of) what it routes to — or

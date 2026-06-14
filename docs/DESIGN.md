@@ -270,15 +270,33 @@ type Health =
   , startup   :: Maybe { probe :: Probe, graceSec :: Int }  -- compose start_period; k8s startupProbe
   }
 
-data RestartPolicy
-  = Never | OnFailure | Always | UnlessStopped
--- with backoff knobs: { policy :: RestartPolicy, minBackoffSec :: Int, maxRetries :: Maybe Int }
+-- Enriched per D-E11: a base mode + portable extra conditions (launchd's
+-- KeepAlive dict is richer than a flat enum). Backoff knobs alongside.
+type RestartPolicy =
+  { base       :: BaseRestart
+  , conditions :: Array RestartCondition          -- empty = unconditional
+  , backoff    :: { minSec :: Int, maxRetries :: Maybe Int }
+  }
+data BaseRestart = Never | OnFailure | Always | UnlessStopped
+data RestartCondition
+  = WhilePathExists AbsPath   -- launchd PathState (runtime); ≠ systemd ConditionPathExists (start-time)
+  | WhileNetworkUp            -- launchd NetworkState
+  | OnlyIfCrashed             -- launchd Crashed ; ≈ systemd Restart=on-abnormal
+-- unmodeled KeepAlive keys ride in `extra` and are reported on lossy emit (DECISIONS.md D-E11)
+
+-- Config references vs suppliers (D-E8): resolve ${VAR:-default} at validate.
+data ConfigRef      = ConfigRef EnvVar (Maybe String)         -- referenced var + optional default
+data ConfigSupplier = InlineEnv (Array (Tuple EnvVar String)) -- compose environment: / systemd Environment=
+                    | EnvFile AbsPath                          -- compose env_file / systemd EnvironmentFile=
+                    | ConfigMapRef String                      -- k8s
+                    | SecretRef String                         -- presence tracked; value never read
 ```
 
-The backoff knobs encode the real "launchd `ThrottleInterval` makes a
-restarting service look dead for ~40s" gotcha from the Marginalia deploy
-notes — Bosun can *know* a service is in backoff rather than reporting it
-dead.
+The `backoff` knobs encode the real "launchd `ThrottleInterval` makes a
+restarting service look dead for ~40s" gotcha — Bosun's `Status` can report
+`InBackoff` rather than `Down`. A `ConfigRef` unsatisfied by any in-scope
+`ConfigSupplier` and lacking a default is an `UnboundReference` at `validate`
+(this subsumes the SDI "literal port must appear in the command" rule).
 
 ### 3.6 Selectors — the second edge type (Containment)
 
@@ -435,7 +453,9 @@ newtype Plan = Plan (Array { stage :: Int, change :: Change })   -- carries Boot
 and run concurrently (Go `errgroup`); **across stages**, ordered with
 readiness gates between them. That is the one place real concurrency is
 needed — and the one place we hand to Go (§6). The planner also reads
-`BindsTo`/`PartOf` edges to propagate `Stop`, not just `Start` (E5).
+`BindsTo`/`PartOf` edges to propagate `Stop`/`Restart` *backward* (reverse of
+boot order), as a transitive closure that terminates by acyclicity — the
+algorithm is pinned in `DECISIONS.md` D-E5.
 
 ---
 
@@ -451,20 +471,30 @@ back to a normalized name. The compose `tidal-frontend` and the registry
 `psd3-tilted-radio` both resolve to the same `ServiceId` because both carry
 project `psd3-tilted-radio` and role `frontend`.
 
-**Facets.** One logical `Service` may have several **deployment facets** —
-*(mbp, native, SDI-spawned)* and *(macmini, container, behind edge)* are two
-legitimate ways to deploy the same thing. Reconciliation does **not** force
-them to be identical; it partitions instances by `(host, mechanism)` into
-facets and checks:
+**Facets (resolved in `DECISIONS.md` D-E3/E2).** One logical `Service` may
+have several **deployment facets** — *(mbp, native, SDI-spawned)* and
+*(macmini, container, behind edge)* are two legitimate ways to deploy the same
+thing. The fields sort into three tiers:
 
-- *within* a facet: internally consistent (one port, one executor);
-- *across* facets that claim to be the same deployment: agreement on the
-  invariants (project, role, the dependency shape) and explicit, intended
-  divergence on the rest (port, host, mechanism).
+- **Identity** `(ProjectSlug, Role)` — the grouping key; cannot differ.
+- **Facet key** `(Host, ExecutorMechanism)` — *legitimately* differs across
+  facets; it is *what a facet is*.
+- **Facet-local** (port/exposure, restart, env, probe wiring) — differs freely
+  *between* facets; must agree *within* a facet.
+- **Must-agree across facets** — the **dependency shape** + service contract.
 
-A disagreement on something that *must* match → `CrossSourceDrift`. This is
-the engine of the §7 demo and the reason Bosun is more than a generator: it
-*reconciles* two hand-maintained sources that have silently diverged.
+So "drift" splits in two: **facet divergence** (two facets differing on
+facet-local fields — *expected, reported informationally*) vs **conflict**
+(two sources describing the *same* facet that disagree, or contradictory
+dependency shapes across facets — `CrossSourceDrift`, an *error*).
+
+`reconcile` partitions each `ServiceId`'s instances by facet key, unifies
+(lattice meet) *within* each facet, and meets the must-agree projection
+*across* facets. A single-facet service has nothing to conflict with —
+**absence of a facet is never drift** (opt into `expectedFacets :: Maybe (Set
+FacetKey)` to assert coverage). This is the engine of the §7 demo and the
+reason Bosun is more than a generator: it correctly tells *expected two-way
+deployment* apart from *silent divergence*.
 
 ---
 

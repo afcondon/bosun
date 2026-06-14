@@ -27,6 +27,11 @@ compiler won't let you write."**
     panoply, the two-tier "illegal states" story.
   - [`docs/SCENARIOS.md`](docs/SCENARIOS.md) — 29 scenarios stress-testing
     the types; the open-questions agenda.
+  - [`docs/DECISIONS.md`](docs/DECISIONS.md) — ADR-style resolutions to the
+    open questions (facet model, stop-propagation, config refs, restart
+    conditions).
+  - [`spike/`](spike/) — compile-verified proof that the authoring-DSL
+    rows-as-sets encoding works (`purs` 0.15.15).
   - [`docs/PRIOR-ART.md`](docs/PRIOR-ART.md) — type-design lessons from
     Propellor, Dhall, CUE, systemd, NixOS, Pulumi, Terraform, Build-à-la-Carte.
 - **Family:** a standalone ShapedSteer-family proof-of-concept (Marginalia
