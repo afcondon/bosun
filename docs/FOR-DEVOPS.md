@@ -115,16 +115,23 @@ Three properties keep it from being config-format #15:
   reconciles, and checks your existing files — the overlay only adds what those
   files structurally can't say. You opt into exactly as much as you need to fix
   a real problem.
-- **It's a plain data file the binary reads at runtime.** No new toolchain.
-  (PureScript shops can *optionally* author it in a typed DSL that's checked at
-  build time and emits this same data file — like compiling Dhall to YAML
-  before `kubectl` — but that's an opt-in, not a requirement, and the artifacts
-  you ship downstream are still ordinary compose / systemd / k8s files that any
-  tool reads.)
+- **It never gets shipped downstream.** Whatever you produce, the artifacts
+  other tools consume are still ordinary compose / systemd / k8s files. Bosun
+  is never a runtime dependency anyone else has to install.
+
+This is a two-tier offering, and you choose your rung:
+
+- **Detect** — the prebuilt binary, zero setup. Point it at your config and it
+  reports every problem (the `bosun check` above). Read-only.
+- **Reconcile & launch** — author the overlay in a typed DSL and compile it (a
+  build step). The payoff: illegal deployments *don't compile*, and Bosun can
+  then bring your system up consistently — in dependency order, with the right
+  health gates — **without rewriting a single one of your config files.** It
+  orchestrates *on top of* your compose/units; it doesn't take them over.
 
 So the only thing you "adopt" is a place to write down the relationships your
-tools already assume but can't state. Bosun stays the thing that reads and
-checks your stack — never a runtime dependency anyone else has to install.
+tools already assume but can't state — and even at the launch tier, Bosun stays
+*non-invasive*: it reads and coordinates your stack, it never rewrites it.
 
 ---
 
@@ -226,9 +233,11 @@ together.
 
 It is, and you will never see that. Two things are worth knowing:
 
-1. **It ships as a single static binary** (compiled to Go). No runtime, no
-   JVM, no Python environment, no dependencies to install. Drop it on a box and
-   run it.
+1. **The detect tier is a single static binary** (compiled to Go). No runtime,
+   no JVM, no Python environment, no dependencies to install. Drop it on a box,
+   point it at your config, read the report. The launch tier asks for one build
+   step (compiling your overlay) — see below for why that's a feature, not a
+   tax.
 
 2. **The implementation language lets the tool guarantee, not just hope.** When
    Bosun says a deployment is valid, it doesn't mean "we ran some checks and
@@ -236,15 +245,18 @@ It is, and you will never see that. Two things are worth knowing:
    cycles, references to services that don't exist, two services on one port, a
    health-gated wait on a service with no health check — **cannot be present**,
    the same way a compiled, typechecked program can't have a "method not found"
-   at runtime. The tool is built so that an invalid deployment can't make it
-   past the front door, rather than being caught (or missed) by scattered checks
-   later. That's the whole reason for the technology choice; the payoff lands as
-   *fewer 3am surprises*, which is a language you do speak.
+   at runtime. At the detect tier you get this as a report; at the launch tier
+   the **compile step is the gate** — an illegal deployment doesn't compile, so
+   it can't be launched. Either way an invalid deployment can't make it past the
+   front door, rather than being caught (or missed) by scattered checks later.
+   That's the whole reason for the technology choice; the payoff is *fewer 3am
+   surprises*, which is a language you do speak.
 
-You configure Bosun by pointing it at your existing files (or, optionally, by
-writing one spec — in which case the tool refuses to let you *write* the
-illegal states in the first place). Either way, no functional programming
-required of you.
+You configure Bosun by pointing it at your existing files (and, for the launch
+tier, by writing the overlay — in which case the tool refuses to let you
+*write* the illegal states in the first place). Either way, no functional
+programming required of you — the overlay is relationships, not code you'd
+recognise as a program.
 
 ---
 

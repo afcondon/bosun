@@ -58,13 +58,13 @@ it never restates a port or image) and **valid empty** (with no overlay, Bosun
 still ingests + reconciles + validates the sources alone; the overlay only adds
 what they can't say). Internally it is *just another `Source`* (`FromOverlay`),
 so anything it does happen to restate is reconciled — and conflict-checked —
-like any source. **Two surfaces, same facts:** the default is a **data file the
-binary reads at runtime** (no toolchain; guarantees = the runtime
-`DeployError` ledger); optionally a **typed PureScript EDSL** authored and
-`purs`-compiled *at build time* (full type-level MISU, §6) that *emits* that
-same data file — the build-time analogue of compiling Dhall to YAML. The
-combinators are exactly the relationship vocabulary (`routeTo`,
-`requiresReady`, `bindsTo` — §6 spike), never config.
+like any source. It rides a **capability ladder** (§9): the prebuilt binary
+alone **detects** problems from your existing config (read-only, zero setup);
+authoring the overlay in the typed PureScript EDSL and `purs`-compiling it (a
+build step we accept — full type-level MISU, §6) unlocks **reconcile + launch**
+*without touching the underlying config files*. The combinators are exactly the
+relationship vocabulary (`routeTo`, `requiresReady`, `bindsTo` — §6 spike),
+never config.
 
 This is **"parse, don't validate" at two altitudes**:
 
@@ -725,18 +725,35 @@ Bosun is architected so the MVP never needs it. The split is clean and
 
 ## 9. Scope
 
-**MVP (gates backend-go's MVP):**
-- adapters: ingest compose + Marginalia registry + launchd plists; emit
-  compose.
-- `reconcile` with cross-source drift detection.
-- `validate` → `ValidatedDeployment` with the full `DeployError` set.
-- views: dependency DAG (Hylograph) + status grid.
-- `plan` (sync). `apply` sequential via os-exec for the polyglot showcases.
-- differential test: emitted compose byte-identical to hand-written.
+### The capability ladder (the product shape)
 
-**Post-MVP / breadth (where the panoply pays off):**
+Two tiers, by what they cost the user and what they do:
+
+| Tier | You bring | What it does |
+|---|---|---|
+| **Detect** | nothing — the **prebuilt binary** | point it at your existing config; ingest + reconcile + validate + **report** every problem. Read-only diagnosis (the linter / `terraform plan` value). |
+| **Reconcile & launch** | the typed overlay + a **`purs` compile step** | author the additive relationships, compile (illegal deployments don't compile — full MISU), and bring the system to a consistent state in the right order with the right gates — **without touching the underlying config files** (non-invasive: we orchestrate on top, never rewrite). |
+
+Binary-only is a *nice claim, not a constraint* — the compile step for the
+launch tier is accepted. A future runtime reader that lets the pure binary
+*also* reconcile from a data overlay (and, further out, an Atelier-style
+in-process PureScript evaluator) is a nicety, **not** an MVP requirement.
+
+### MVP (gates backend-go's MVP)
+- adapters: ingest compose + a service registry + launchd plists; emit compose.
+- **Detect tier:** `reconcile` (facet model + cross-source drift) → `validate`
+  → `ValidatedDeployment` with the full `DeployError` ledger; report.
+- **Reconcile/launch tier:** the typed overlay (compiled), `plan` (sync),
+  `apply` sequential via os-exec for the polyglot showcases — *without
+  rewriting any source config*.
+- views: dependency DAG (Hylograph) + status grid.
+- differential test: emitted compose byte-identical to hand-written (a
+  *separate* validation/migration capability, not the launch path).
+
+### Post-MVP / breadth (where the panoply pays off)
+- runtime **data-overlay** reader (pure binary can reconcile, not just detect).
 - adapters: systemd, k8s manifests, Procfile, Terraform-state ingest.
-- `apply` concurrency (Go errgroup) + the SDI lazy-spawn router (Stage 3).
+- `apply` concurrency (Go errgroup) + the SDI lazy-spawn router.
 - `Rollout` strategies (rolling / blue-green / canary).
 - continuous reconcile loop (controller-style), not one-shot.
 - secrets/config providers beyond plain env.
