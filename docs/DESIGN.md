@@ -134,11 +134,35 @@ newtype AbsPath     = AbsPath String      -- mkAbsPath :: String -> Maybe AbsPat
 newtype Domain      = Domain String       -- hylograph.net
 newtype RoutePath   = RoutePath String    -- "/code", "/ee/api"
 newtype EnvVar      = EnvVar String
-newtype ProjectSlug = ProjectSlug String  -- stable NATO id from Marginalia, survives renames
+newtype ProjectSlug = ProjectSlug String  -- a stable inventory id that survives renames (optional)
 newtype ServiceId   = ServiceId String    -- Bosun's stable logical identity (see §5 reconcile)
 
-data Host = Mbp | MacMini | Cloudflare | AndrewOnly | NamedHost String
+newtype Host = Host String   -- OPAQUE runtime identity, verbatim from the user's inventory
 ```
+
+> **`Host` is opaque, not an enumeration — the recompile test.** An earlier
+> draft had `data Host = Mbp | MacMini | Cloudflare | …`, which is wrong twice
+> over: it bakes *one operator's machines* into a general tool, and — worse —
+> it makes the host set **closed at compile time**, so a user couldn't point a
+> prebuilt binary at *their* hosts without editing the source and rebuilding.
+> That breaks the "drop the static binary on a box" promise outright.
+>
+> The rule it violated: **closed ADTs are for alternatives the program's own
+> logic enumerates and exhaustively handles** (source formats, executor kinds,
+> edge kinds, error kinds — adding one *is* a code change). **Opaque newtypes
+> are for identifiers that arrive as user data** (host names, service names,
+> project slugs). The test: *if extending the set would force the **user** to
+> recompile, it's modelled wrong.* Host names fail that test, so `Host` is an
+> opaque string.
+>
+> The semantic distinctions the code genuinely makes are **derived, not
+> enumerated**: *"local vs remote"* is the runtime comparison `host ==
+> thisHost` (and *"which host am I"* is read at startup from an env var / flag
+> / `hostname`, exactly as the SDI router's `ourHost()` already does);
+> *"a machine vs a CDN vs an unmanaged external"* is a property of the
+> **`Executor`** (`Process`/`Container` vs `StaticCDN` vs `Unmanaged`), not of
+> the host. The old `Cloudflare`/`AndrewOnly` constructors were that
+> distinction leaking into the wrong type.
 
 `Port` and `AbsPath` are the front line of MISU. `mkAbsPath "node router.mjs"`
 returns `Nothing` — which is *exactly* how the real SDI registry row gets
@@ -701,8 +725,13 @@ Bosun is architected so the MVP never needs it. The split is clean and
 - **How much of the edge config to ingest.** Routes-as-comments vs parsing
   the actual Scuppered-Ligature nginx/lua. MVP: model routes in the Bosun
   spec, *emit* the edge config; don't ingest it yet.
-- **`Role` openness.** Closed ADT (safe, must-extend) vs `WellKnown | Other
-  String` (won't foreclose). Leaning open with a known-set.
+- **`Role` openness.** By the recompile test (§3.1): role names (`api`,
+  `frontend`, `worker`) arrive as *user data* from the inventory, so a closed
+  `data Role = Api | …` would fail the same way `Host` did. The core never
+  branches on a role semantically — it's only an identity discriminator in
+  `(ProjectSlug, Role)` — so `Role` should be **opaque** (`newtype Role =
+  Role String`), or at most `WellKnown … | Other String` if a known-set buys
+  nicer rendering. Leaning opaque.
 - **One spec file vs derive-from-sources.** Is the Bosun `.deploy` DSL a
   thing you *write*, or only ever *reconciled out of* existing sources? The
   ambitious answer is both: ingest to bootstrap, then the typed spec becomes
