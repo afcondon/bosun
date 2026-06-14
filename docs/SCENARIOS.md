@@ -329,3 +329,77 @@ scenarios demand. Each needs a decision before implementation.
 - A genuinely large graph (the full ~44-entry registry) — does the DAG view
   stay legible? (Connects to the hierarchical-force-rollup work.)
 - Partial deployment / targeted apply ("just bring up the `minard` profile").
+
+---
+
+## G. Property-based testing — generalizing the corpus
+
+The scenarios above are **examples**. The type design's claims are
+**properties**, so the corpus wants a property-based companion (QuickCheck
+family) that turns each example into a population. The decisive design choice
+is *what to generate* — get that wrong and the generators re-encode the rules
+(and the bugs); get it right and the generators can't disagree with the spec.
+
+### The rule that avoids the buggy-generator trap
+
+**Generate the *tight typed value*; derive everything else.** A generator for
+`ValidatedDeployment` (a type that by construction can only express legal
+deployments) cannot produce an illegal one — an attempt won't compile. So the
+generator carries *no rule knowledge to get wrong*; the types are the spec.
+The thing **not** to build is a hand-rolled generator of config **text** that
+re-encodes well-formedness and hopes for coverage — that is exactly where a
+complex `Arbitrary` grows its own bugs.
+
+### Property families (each needs only well-typed generators)
+
+1. **Round-trips (no oracle needed).** `ingest (emit vd) == Right vd` —
+   the byte-identical differential test (D1), generalized from one hand-written
+   case to a population. `validate`-after-`loosen` recovers the original.
+2. **Algebraic laws — test the claims we asserted.** D-3 says `reconcile` is a
+   lattice meet: **commutative, associative, idempotent**. PBT is purpose-built
+   for this — permute source order, feed a source twice, regroup the merges;
+   the result must be identical. (Order-independence of reconciliation is a
+   property, not an example.) Likewise: a consistent rename across all sources
+   yields the same `ValidatedDeployment` up to the rename (identity stability).
+3. **Structural invariants.** For every dependency edge `A → B`, `B`'s
+   `BootOrder` stage precedes `A`'s (topological correctness). No `ServiceRef`
+   dangles. Every selector is closed under `Requires`. Every route is backed.
+4. **Fault injection — the must-fail corpus, generalized *safely*.** Generate a
+   *legal* deployment, then apply **one small typed break** and assert the
+   *specific* error: `introducePortCollision → PortCollision`,
+   `dangleADependency → DanglingDependency`, `addBackEdge → DependencyCycle`,
+   `dropGatedReadinessProbe → UncheckableGate`. The injectors are individually
+   trivial and checkable — the antithesis of a monolithic `Arbitrary`. B1–B9
+   become B1–B9 *populations*.
+5. **Convergence (the rebuilder's whole point).** `plan` then `apply` then
+   `plan` again = no-op; `apply` over a `BootOrder` stage is order-safe.
+
+### The validity partition (Kerckhove / Notothenia)
+
+This is the `GenValid` (legal) vs *fault-injected invalid* split, and it is
+**[[Notothenia]]'s thesis exercised** — Bosun's test strategy is a concrete
+instance of the QuickCheck-family approach designed for these linting engines
+(validity-based generator partition; scope-minimization-as-shrinking). The
+example corpus (must-pass A1–A8, must-fail B1–B9) and the generators
+**cross-validate**: the must-pass shapes should lie in the valid generator's
+range; the must-fail ones should be reachable by the injectors.
+
+### Honest caveats (where the real work is)
+
+- **Shrinking a graph is non-trivial.** A shrinker must preserve well-typedness
+  *and* the invariant under test (drop-a-node-and-its-edges, drop-an-edge,
+  canonicalize a port toward a fixed value). Prefer **integrated /
+  Hedgehog-style shrinking** if a PureScript library offers it — it removes the
+  whole "shrinker disagrees with generator" bug class.
+- **Keep text-fuzzing narrow.** A *dumb* generator of malformed bytes/structure
+  is fine for the weak assertion "`ingest` rejects garbage gracefully (returns
+  `V Errors`, never crashes)." Do **not** try to make a text generator that
+  produces *meaningfully varied valid* configs — that is the trap.
+
+### Verdict
+
+Not a blind alley — *if* aimed at laws / round-trips / fault-injection over
+typed generators. The "AI-writes-one-big-`Arbitrary`-over-config-text-and-we-
+hope" version is the blind alley the typed approach specifically avoids. An AI
+is well-suited to the *safe* version: well-typed value generators + a library
+of small, single-purpose fault injectors + graph shrinkers.
