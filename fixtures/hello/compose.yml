@@ -1,0 +1,5 @@
+# The "hello world of Bosun": two background HTTP servers on the mbp, declared
+# only in the registry. No compose services — this file just satisfies the
+# two-source CLI shape. `bosun apply` launches them via os-exec; `bosun observe`
+# confirms the ports came up. Fully local and reversible (kill the pythons).
+services: {}

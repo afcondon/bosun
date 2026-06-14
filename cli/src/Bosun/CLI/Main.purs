@@ -14,8 +14,9 @@ import Prelude
 
 import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.Adapters.Registry (ingestRegistry)
-import Bosun.Apply (applyScript)
+import Bosun.Apply (Command(..), StagedCommand, applyScript)
 import Bosun.Atoms (AbsPath, Port, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkServiceId, unAbsPath, unProjectSlug, unServiceId)
+import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (argv, readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeSnapshot)
 import Bosun.Edge (Gate(..), Requirement(..))
@@ -24,12 +25,13 @@ import Bosun.Exposure (Exposure(..))
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Plan (Reason(..), Snapshot, Status(..), plan)
 import Bosun.Reconcile (AliasMap, reconcile)
-import Bosun.Report (renderPlan, renderReport, renderScript)
+import Bosun.Report (renderCommand, renderPlan, renderReport, renderScript)
 import Bosun.Service (ServiceInstance, Source(..), mkRole, unRole)
 import Bosun.Validate (validate)
 import Bosun.Version (version)
 import Data.Argonaut.Core (Json, toObject, toString)
 import Data.Array as A
+import Data.Array.NonEmpty as NEA
 import Data.Either (Either(..), either)
 import Data.Foldable (intercalate)
 import Data.Map (Map)
@@ -37,6 +39,7 @@ import Data.Map as Map
 import Data.Maybe (Maybe(..), fromJust, fromMaybe, maybe)
 import Data.String (Pattern(..))
 import Data.String as String
+import Data.Traversable (traverse)
 import Data.Tuple (Tuple(..))
 import Data.Validation.Semigroup (toEither)
 import Foreign.Object as FO
@@ -54,6 +57,8 @@ main = do
     [ "observe", composePath, registryPath ] -> runObserve composePath registryPath
     [ "apply", "--dry-run", composePath, registryPath ] -> runApplyDryRun composePath registryPath Nothing
     [ "apply", "--dry-run", composePath, registryPath, snapshotPath ] -> runApplyDryRun composePath registryPath (Just snapshotPath)
+    [ "apply", composePath, registryPath ] -> runApply composePath registryPath Nothing
+    [ "apply", composePath, registryPath, snapshotPath ] -> runApply composePath registryPath (Just snapshotPath)
     _ -> runDemo
 
 -- ── bosun check <compose> <registry> ────────────────────────────────────────
@@ -123,6 +128,60 @@ runApplyDryRun composePath registryPath snapshotPath = do
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
     Right vd ->
       log (renderScript (applyScript vd (plan vd { desired: vd, recorded: Nothing, observed })))
+
+-- ── bosun apply <compose> <registry> [snapshot.json] ────────────────────────
+-- |
+-- | The real thing: reconcile → validate → plan → run the command script via
+-- | os-exec, stage by stage, IN BOOT ORDER. Within a stage commands run
+-- | sequentially (concurrency is a later, Go-owned tier); a failed command
+-- | aborts the run before its dependents start. `# MANUAL:` steps are reported
+-- | and skipped. Refuses a deployment that does not validate.
+runApply :: String -> String -> Maybe String -> Effect Unit
+runApply composePath registryPath snapshotPath = do
+  composeJson <- readYamlFile composePath
+  registryJson <- readJsonFile registryPath
+  observed <- maybe (pure Map.empty) (map decodeSnapshot <<< readJsonFile) snapshotPath
+  let
+    insts = ingestCompose composeJson <> ingestRegistry registryJson
+    r = reconcile (buildAliases insts) insts
+  log ("bosun " <> version <> " — apply " <> composePath <> " + " <> registryPath)
+  log ""
+  case toEither (validate r.deployment) of
+    Left vErrors -> do
+      log "cannot apply: the deployment does not validate —"
+      log ""
+      log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
+    Right vd -> do
+      let
+        script = applyScript vd (plan vd { desired: vd, recorded: Nothing, observed })
+        stages = A.groupBy (\a b -> a.stage == b.stage) script
+      if A.null stages then log "apply: nothing to do — the rig already matches desired state."
+      else runStages 1 (map NEA.toArray stages)
+
+runStages :: Int -> Array (Array StagedCommand) -> Effect Unit
+runStages n stages = case A.uncons stages of
+  Nothing -> log "\napply: done."
+  Just { head: stage, tail: rest } -> do
+    log ("stage " <> show n <> ":")
+    ok <- runStage stage
+    if ok then runStages (n + 1) rest
+    else log "\napply: ABORTED — a command failed; dependents were not started."
+
+runStage :: Array StagedCommand -> Effect Boolean
+runStage cmds = do
+  results <- traverse runOne cmds
+  pure (A.all identity results)
+  where
+  runOne sc = case sc.command of
+    Manual note -> do
+      log ("  · skip (manual): " <> note)
+      pure true
+    command -> do
+      let line = renderCommand command
+      res <- execLine line
+      log ("  " <> (if res.ok then "✓" else "✗ (" <> show res.code <> ")") <> " " <> line)
+      when (not res.ok && res.message /= "") (log ("      " <> res.message))
+      pure res.ok
 
 -- ── bosun observe <compose> <registry> ──────────────────────────────────────
 -- |
