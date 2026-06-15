@@ -88,3 +88,21 @@ target and a backend-control harness — which is exactly what **Bosun's Chair**
 provides, so it pairs with that build. 4 (Go under load) reuses 2's harness
 against the transpiled binary. Bosun's Chair can both *drive* the chaos and
 *visualise* it, doubling as the test cockpit.
+
+## Status — all four done (2026-06-15)
+
+- **§1 PBT** ✅ `12522c5` — 5 serve properties in `PBTSpec` (partition totality,
+  rewrite faithfulness, redirect well-formedness, serveDiff reflexive +
+  complete); 66 tests green.
+- **§2 chaos** ✅ `f619402` — `scripts/chaos/monkeys.sh` (flood/killer/slow/die/
+  SIGHUP-storm) vs a live serve, all 5 held. Surfaced + fixed a real gap: the
+  node shim lacked a proxy timeout (now 504 on a hung backend, parity with Go).
+- **§3 corpus** ✅ `a195b33` — `fixtures/adversarial/` + `scripts/corpus-
+  adversarial.sh` (5 goldens via the new `serve --plan` + 200-svc huge-graph).
+- **§4 Go under load** ✅ `efa28f6` — `scripts/go-chaos.sh`: 50-concurrent flood +
+  backend-kill self-heal against the native binary under `-race`, no DATA RACE.
+  Deferred: slow-backend + SIGHUP-storm on the Go column need a registry-driven
+  Go serve (ServeMain hardcodes one fixture) — awaits the Go CLI.
+
+Open follow-on: wire the §2 monkeys to be *driven from* Bosun's Chair (the test
+cockpit) — the v1+ idea.
