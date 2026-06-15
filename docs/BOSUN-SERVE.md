@@ -150,9 +150,20 @@ it fails loudly at `serve` start.
   on a fixture, first request lazy-spawned a python backend on the internal
   port and reverse-proxied → HTTP 200; killing the backend respawned it.
   Deferred to P2: a JSON `/state` endpoint (P1 logs lifecycle to stdout).
-- **P2 — parity.** WebSocket upgrade, remote-host `421` redirect, registry
-  hot-reload (SIGHUP), an `--audit` mode (spawn-test every row — reuses
-  `observe`), `--plan`.
+- **P2 — parity. ✅ DONE (commits 004a7e9, 41fd6ed, 0092b7d, fbd953f).**
+  - **421 redirects** — a remote service is now a first-class `Redirect` (bind +
+    answer `421 Misdirected Request` → tailnet URL), not a rejection.
+  - **WebSocket** upgrade bridging on proxy routes (raw socket replay).
+  - **JSON `/state`** on :3997 (live routes with up/pid + redirects).
+  - **live-registry fetch** — `bosun serve` (no arg) reads `/api/ports` from the
+    Marginalia API; the drop-in SDI form.
+  - **SIGHUP hot-reload** via a pure, tested `serveDiff :: ServePlan -> ServePlan
+    -> ServeDiff` (unbind/rebind keyed by per-port signature); the shim applies it.
+  - **`--audit`** — one-shot spawn-test of every routable row (spawn → probe →
+    tear down), the chaos-harness spine.
+  **Verified live** on a fixture and against the real 41-service registry (24
+  admitted / 5 redirect / 12 typed-rejected); 61 tests green. (`--plan` for serve
+  folded into the existing `renderServePlan` report.)
 - **P3 — the Go column. ✅ DONE (commit 4bb0b0f; runtime fix aba781a).** The pure
   admission pipeline (`reconcile → servePlan`) transpiles via backend-go and a
   native binary IS the resident reverse proxy: `Bosun.Conformance.ServeMain` +
