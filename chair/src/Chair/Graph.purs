@@ -57,6 +57,10 @@ marginY = 36.0
 
 type Edge = { from :: String, to :: String, req :: Maybe String }
 
+-- a data/traffic edge (reverse-proxy route): proxy → backend, carrying a path.
+-- A SEPARATE graph from lifecycle deps (D-5) — never topo-sorted, own channel.
+type Route = { from :: String, to :: String, path :: String }
+
 type Node =
   { id :: String
   , x :: Number
@@ -70,6 +74,11 @@ type Node =
 edgesOf :: Array ServiceInstanceView -> Array Edge
 edgesOf = Array.concatMap \i ->
   map (\d -> { from: i.localName, to: d.to, req: d.requirement }) i.deps
+
+-- Traffic edges from the routes: (proxy → backend), with the path.
+trafficOf :: Array ServiceInstanceView -> Array Route
+trafficOf = Array.concatMap \i ->
+  map (\r -> { from: i.localName, to: r.to, path: r.path }) i.routes
 
 -- from → [to], for the longest-dependency-chain layering.
 depMapOf :: Array Edge -> Map String (Array String)
@@ -160,6 +169,11 @@ paper = SA.RGB 255 255 255
 edgeColor :: SA.Color
 edgeColor = SA.RGB 150 150 150
 
+-- traffic channel — a calm, non-source hue (the source palette owns blue/green/
+-- violet/amber/indigo/grey). Provisional pending the holistic attention pass.
+traffic :: SA.Color
+traffic = SA.RGB 90 150 165
+
 -- ── the view ─────────────────────────────────────────────────────────────────
 
 graphView :: forall act m. AnalyzeResult -> H.ComponentHTML act () m
@@ -167,6 +181,7 @@ graphView a =
   let
     insts = a.instances
     edges = edgesOf insts
+    routes = trafficOf insts
     nodes = buildNodes insts edges
     posOf id = Array.find (\n -> n.id == id) nodes
     maxX = fromMaybe 0.0 (maximum (map _.x nodes)) + nodeW + marginX
@@ -176,11 +191,14 @@ graphView a =
       [ HH.div [ cls "graph-meta" ]
           [ HH.span [ cls "muted" ]
               [ HH.text (show (Array.length nodes) <> " nodes · "
-                  <> show (Array.length edges) <> " edges · loose dependency view (left → right = boot order)") ]
+                  <> show (Array.length edges) <> " deps · "
+                  <> show (Array.length routes) <> " routes · loose view (left → right = boot order)") ]
           ]
       , SE.svg
           [ SA.viewBox 0.0 0.0 maxX maxY, SA.class_ (H.ClassName "graph-svg") ]
-          [ SE.g [ SA.class_ (H.ClassName "edges") ]
+          [ SE.g [ SA.class_ (H.ClassName "traffic") ]
+              (Array.mapMaybe (trafficLine posOf) routes)
+          , SE.g [ SA.class_ (H.ClassName "edges") ]
               (Array.mapMaybe (edgeLine posOf) edges)
           , SE.g [ SA.class_ (H.ClassName "nodes") ]
               (map nodeMark nodes)
@@ -211,6 +229,35 @@ edgeLine posOf e = do
           ]
       ] <> midpointMark mx my e.req
     )
+
+-- one traffic edge: a dashed line (proxy → backend, nudged off the lifecycle
+-- line it usually coincides with) + the route path. Calm/provisional styling.
+trafficLine
+  :: forall act m
+   . (String -> Maybe Node)
+  -> Route
+  -> Maybe (H.ComponentHTML act () m)
+trafficLine posOf rt = do
+  from <- posOf rt.from
+  to <- posOf rt.to
+  let
+    fx = from.x + nodeW / 2.0
+    fy = from.y + nodeH / 2.0 + 7.0     -- nudge below the coinciding dep edge
+    tx = to.x + nodeW / 2.0
+    ty = to.y + nodeH / 2.0 + 7.0
+    mx = (fx + tx) / 2.0
+    my = (fy + ty) / 2.0
+  pure $ SE.g [ SA.class_ (H.ClassName "route") ]
+    [ SE.line
+        [ SA.x1 fx, SA.y1 fy, SA.x2 tx, SA.y2 ty
+        , SA.stroke traffic, SA.strokeWidth 1.3, SA.strokeDashArray "6 4"
+        ]
+    , SE.text
+        [ SA.x mx, SA.y (my - 4.0), SA.textAnchor SA.AnchorMiddle
+        , SA.fontSize (SA.FontSizeLength (SA.Px 9.0)), SA.fill traffic
+        ]
+        [ HH.text rt.path ]
+    ]
 
 -- §4.3 — a single mark at the midpoint encoding the requirement gradient.
 -- fill = strength (open → bold → solid); count = coupling (one → two circles).
@@ -275,6 +322,11 @@ legend =
         [ HH.span [ cls "leg-h" ] [ HH.text "node border (source)" ]
         , leg "▮" "compose / registry / plist / systemd / overlay"
         , leg "▢" "ghost = dangling dependency"
+        ]
+    , HH.div [ cls "leg-grp" ]
+        [ HH.span [ cls "leg-h" ] [ HH.text "edges" ]
+        , leg "──" "dependency (lifecycle)"
+        , leg "╌╌" "route (traffic, labelled /path)"
         ]
     ]
   where

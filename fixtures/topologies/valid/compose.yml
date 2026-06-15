@@ -56,9 +56,19 @@ services:
       search-api: { condition: service_started }
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80/"]
+    # reverse-proxy fan-out (SCENARIOS A3) — the traffic channel, over the same
+    # nodes as the dependency DAG but a separate graph (D-5).
+    x-bosun:
+      routes:
+        - { path: /auth, to: auth-api }
+        - { path: /catalog, to: catalog-api }
+        - { path: /search, to: search-api }
 
   edge:
     build: { context: ./edge }
     ports: ["80:80"]
     depends_on:
       web: { condition: service_started }
+    x-bosun:
+      routes:
+        - { path: /, to: web }

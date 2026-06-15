@@ -17,13 +17,13 @@ module Bosun.Adapters.Compose (ingestCompose) where
 
 import Prelude
 
-import Bosun.Atoms (Port, mkHost, mkPort)
+import Bosun.Atoms (Port, mkHost, mkPort, mkRoutePath)
 import Bosun.Edge (DepOrdering(..), Gate(..), Requirement(..))
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Reachability (hostPort, noNetwork)
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Selector (Selector(..))
-import Bosun.Service (RawDep, ServiceInstance, Source(..), mkRole)
+import Bosun.Service (RawDep, RawRoute, ServiceInstance, Source(..), mkRole)
 import Data.Argonaut.Core (Json, toArray, toObject, toString)
 import Data.Array as A
 import Data.Either (Either(..))
@@ -57,7 +57,7 @@ decodeService name sj = do
     , health: { liveness: probeOf o, readiness: probeOf o, startup: Nothing }
     , restart: { base: UnlessStopped, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }
     , rawDeps: dependsOn o <> xbosunDeps o
-    , rawRoutes: []
+    , rawRoutes: xbosunRoutes o
     , selectors: map Profile (strArray o "profiles")
     , extra: Map.empty
     }
@@ -144,6 +144,22 @@ reqOf = case _ of
   "binds-to" -> BindsTo
   "part-of" -> PartOf
   _ -> Requires OnStarted
+
+-- | Reverse-proxy routes (the traffic channel, §3.6/D-5) — compose has no native
+-- | place for them, so they ride in `x-bosun.routes: [{ path, to }]`. Each is a
+-- | data/traffic edge from this (proxy) service to a backend, NOT a lifecycle
+-- | edge — kept in a separate graph.
+xbosunRoutes :: Object Json -> Array RawRoute
+xbosunRoutes o = fromMaybe [] do
+  xb <- FO.lookup "x-bosun" o >>= toObject
+  arr <- FO.lookup "routes" xb >>= toArray
+  pure (A.mapMaybe decodeRoute arr)
+  where
+  decodeRoute rj = do
+    ro <- toObject rj
+    to <- str ro "to"
+    path <- str ro "path"
+    pure { to, path: mkRoutePath path }
 
 strArray :: Object Json -> String -> Array String
 strArray o k = fromMaybe [] (FO.lookup k o >>= toArray <#> A.mapMaybe toString)
