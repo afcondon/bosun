@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exposure badges — iconography prototype</title>
+<style>
+  :root {
+    --ink:#1a1a1a; --muted:#777; --faint:#aaa; --line:#e3e3e3; --bg:#fafafa; --panel:#fff;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.5 "Helvetica Neue",Inter,system-ui,-apple-system,sans-serif; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1100px; margin:0 auto; padding:48px 32px 96px; }
+  h1 { font-size:30px; font-weight:700; letter-spacing:-0.02em; margin:0; }
+  .sub { color:var(--muted); margin:6px 0 0; font-size:14px; max-width:60ch; }
+  h2 { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em;
+    margin:48px 0 14px; border-bottom:2px solid var(--ink); padding-bottom:8px; }
+  p.note { color:var(--muted); font-size:13.5px; max-width:70ch; }
+  table { width:100%; border-collapse:collapse; margin-top:8px; }
+  th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.06em;
+    color:var(--muted); font-weight:500; padding:8px 14px 8px 0; border-bottom:1px solid var(--line); }
+  td { padding:14px 14px 14px 0; border-bottom:1px solid var(--line); vertical-align:middle; }
+  .kind { font-weight:650; font-size:14px; }
+  .kindnote { color:var(--muted); font-size:12px; margin-top:2px; max-width:30ch; }
+  .glob { font-family:"SF Mono",ui-monospace,Menlo,monospace; font-size:12px; color:var(--muted); }
+  code { font-family:"SF Mono",ui-monospace,Menlo,monospace; font-size:0.85em; background:#f0f0ee; padding:1px 5px; border-radius:3px; }
+  .ramp { display:flex; gap:0; margin:10px 0 4px; max-width:520px; }
+  .ramp div { flex:1; height:22px; display:flex; align-items:center; justify-content:center;
+    font-size:10px; color:#fff; font-weight:600; }
+  .ramplbl { display:flex; justify-content:space-between; max-width:520px; font-size:11px; color:var(--muted); }
+  .legend-cells { display:flex; gap:3px; margin:8px 0; }
+  .legend-cells .lc { width:64px; text-align:center; font-size:10px; color:var(--muted); }
+  .nodectx { font-size:11px; color:var(--faint); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Exposure badges</h1>
+  <p class="sub">Iconography prototype for the exposure spine — one address stack
+  (<code>NAME · HOST · PORT · PATH · SINK</code>), one cell highlighted by <b>position</b>
+  (which layer) and <b>colour</b> (how open). The six model kinds are just this stack with
+  different cells bound / wildcarded (<code>∗</code>) / absent. Raw SVG, for iterating before Hylograph.</p>
+
+  <h2>The openness ramp (colour of the lit cell)</h2>
+  <div class="ramp" id="ramp"></div>
+  <div class="ramplbl"><span>all-interfaces · internet</span><span>internal net</span><span>localhost · none</span></div>
+  <p class="note">Warm = wide-open inbound surface (earns attention — it's what the world can hit);
+  cool/grey = sealed. Note <code>*:8080</code> (all interfaces) and <code>127.0.0.1:9000</code> (loopback)
+  are the <i>same</i> <code>HostPort</code> kind but opposite ends of the ramp — the glob says what the enum can't.</p>
+
+  <h2>The layer stack</h2>
+  <div class="legend-cells" id="layerlegend"></div>
+
+  <h2>Design A — layer cells (expanded glob) + collapsed on-node</h2>
+  <table id="tableA">
+    <thead><tr><th style="width:200px">situation</th><th style="width:230px">model value</th>
+      <th>glob (expanded — on interrogation)</th><th>on the node (collapsed default)</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h2>Design B — track + pip (a more minimal collapsed form)</h2>
+  <p class="note">Same information, lower ink: a 5-tick rail with one lit pip at the salient layer,
+  flanked by scope (left) and value (right). Candidate for the always-on node badge if cells feel too heavy.</p>
+  <table id="tableB">
+    <thead><tr><th style="width:200px">situation</th><th>track badge</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h2>Design C — vertical stack (conserves horizontal space)</h2>
+  <p class="note">Same five-cell glob, stacked top (world) → bottom (code). Narrow footprint —
+  for when horizontal room is the scarce axis (wide-but-short nodes, dense columns).</p>
+  <table id="tableC">
+    <thead><tr><th style="width:200px">situation</th><th>vertical glob</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h2>Design D — concentric rings (conserves both axes; openness = radius of the lit ring)</h2>
+  <p class="note">The literal onion. Outer ring = world, inner = code; the <b>lit ring's radius</b> reads
+  as the exposure spine directly (outer lit = exposed, inner lit = sealed) — so "how open is this?"
+  is legible at a glance even when the detail isn't. Tiny footprint → the macro/overview glyph for
+  hundreds of nodes, with cells/track as the detail-on-interrogation forms (a level-of-detail pair).
+  The cost, as expected: which-layer and the literal value are hard to read small.</p>
+  <table id="tableD">
+    <thead><tr><th style="width:200px">situation</th><th>rings</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+const LAYERS = ["NAME","HOST","PORT","PATH","SINK"];
+const LAYERDESC = ["DNS / domain","which network","port number","/route","process · socket"];
+// openness 0..4 -> colour (sealed/cool -> open/warm)
+const RAMP = ["#b9b9b9","#4f7396","#8a8f98","#e08a1e","#c2410c"];
+
+// situations: the full range. cells: value | null(absent) | "*"(wildcard).
+const S = [
+  { kind:"PublicDomain", note:"world-facing by name (CDN/ingress)", model:'PublicDomain "hylograph.net"',
+    cells:["hylograph.net","*","443",null,"cdn"], salient:0, scope:"internet", value:"hylograph.net", open:4 },
+  { kind:"HostPort · tailnet", note:"bound to a host on the tailnet", model:'HostPort 3100  (mac-mini)',
+    cells:[null,"tailnet","3100",null,"proc"], salient:2, scope:"tailnet", value:":3100", open:3 },
+  { kind:"HostPort · all-ifaces", note:"bound to 0.0.0.0 — exposed everywhere", model:'HostPort 8080  (0.0.0.0)',
+    cells:[null,"*","8080",null,"proc"], salient:1, scope:"all-ifaces", value:"*:8080", open:4 },
+  { kind:"HostPort · localhost", note:"bound to 127.0.0.1 — nearly sealed", model:'HostPort 9000  (127.0.0.1)',
+    cells:[null,"local","9000",null,"proc"], salient:2, scope:"localhost", value:"127.0.0.1:9000", open:1 },
+  { kind:"ProxyRoute", note:"behind the edge proxy at a path", model:'ProxyRoute { edge, "/auth" }',
+    cells:["(edge)","proxy",null,"/auth","proc"], salient:3, scope:"via edge", value:"/auth", open:2 },
+  { kind:"InternalPort", note:"listens, but cluster-internal only", model:'InternalPort 5432',
+    cells:[null,"intl","5432",null,"proc"], salient:2, scope:"internal", value:":5432", open:2 },
+  { kind:"UnixSocket", note:"local filesystem socket (the rig daemons)", model:'UnixSocket "~/.es9/control.sock"',
+    cells:[null,"local",null,null,"·sock"], salient:4, scope:"localhost", value:"control.sock", open:1 },
+  { kind:"NoNetwork", note:"worker / one-shot — no inbound surface", model:'NoNetwork',
+    cells:[null,null,null,null,"proc"], salient:-1, scope:"—", value:"outbound only", open:0, outbound:true },
+  { kind:"Hybrid: proxied + internal", note:"reached via /api AND on :3000 — the enum can't say this", model:'(composite)',
+    cells:[null,"intl","3000","/api","proc"], salient:3, salient2:2, scope:"via edge", value:"/api · :3000", open:2 },
+];
+
+const CELLW=54, CELLH=22, GAP=4;
+
+function abbr(v){ if(v===null) return ""; if(v==="*") return "∗"; return v.length>8 ? v.slice(0,7)+"…" : v; }
+
+// Design A: the 5-cell stack, salient tinted by openness.
+function cellStack(s, {labels=false}={}){
+  const W = LAYERS.length*(CELLW+GAP);
+  let svg = `<svg width="${W}" height="${labels?44:28}" viewBox="0 0 ${W} ${labels?44:28}">`;
+  for(let i=0;i<LAYERS.length;i++){
+    const x=i*(CELLW+GAP);
+    const v=s.cells[i];
+    const isSal = (i===s.salient || i===s.salient2);
+    const absent = v===null;
+    const fill = absent ? "#fff" : (isSal ? "#fff" : "#f4f4f2");
+    const stroke = isSal ? RAMP[s.open] : "#ddd";
+    const sw = isSal ? 1.8 : 1;
+    svg += `<rect x="${x}" y="3" width="${CELLW}" height="${CELLH}" rx="3"
+      fill="${fill}" stroke="${stroke}" stroke-width="${sw}"
+      ${absent&&!isSal?'stroke-dasharray="2 2"':''}/>`;
+    if(isSal){ // light tint wash behind the value
+      svg += `<rect x="${x}" y="3" width="${CELLW}" height="${CELLH}" rx="3" fill="${RAMP[s.open]}" fill-opacity="0.16"/>`;
+    }
+    const txt = abbr(v);
+    if(txt){ svg += `<text x="${x+CELLW/2}" y="18" text-anchor="middle" font-size="11"
+      font-family="SF Mono,ui-monospace,Menlo,monospace"
+      fill="${isSal?RAMP[s.open]:(absent?'#bbb':'#555')}" ${isSal?'font-weight="600"':''}>${txt}</text>`; }
+    if(labels){ svg += `<text x="${x+CELLW/2}" y="40" text-anchor="middle" font-size="8.5"
+      fill="#bbb" letter-spacing="0.04em">${LAYERS[i]}</text>`; }
+  }
+  svg += `</svg>`;
+  return svg;
+}
+
+// Design A collapsed: a node rect with the salient cell + value inside.
+function onNode(s){
+  const w=210,h=46;
+  let svg=`<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`;
+  svg+=`<rect x="1" y="1" width="${w-2}" height="${h-2}" rx="6" fill="#fff" stroke="#2563eb" stroke-width="1.6"/>`;
+  svg+=`<text x="12" y="20" font-size="13.5" fill="#1a1a1a" font-weight="500">api</text>`;
+  svg+=`<text x="12" y="36" font-size="9.5" fill="#aaa">container · compose</text>`;
+  // collapsed badge, right side
+  if(s.outbound){
+    svg+=`<text x="${w-14}" y="27" text-anchor="end" font-size="11" fill="#b0b0b0">no inbound ⟶</text>`;
+  } else {
+    const c=RAMP[s.open];
+    const vx=w-12;
+    svg+=`<text x="${vx}" y="27" text-anchor="end" font-size="11"
+      font-family="SF Mono,ui-monospace,Menlo,monospace" fill="#555">${s.value}</text>`;
+    // a small lit pip + scope word to the left of the value
+    const sw = ctx.measureLen(s.value);
+    const px = vx - sw - 16;
+    svg+=`<circle cx="${px}" cy="23" r="5" fill="${c}" fill-opacity="0.18" stroke="${c}" stroke-width="1.8"/>`;
+    svg+=`<text x="${px-12}" y="27" text-anchor="end" font-size="10.5" fill="${c}">${s.scope}</text>`;
+  }
+  svg+=`</svg>`;
+  return svg;
+}
+
+// Design B: a 5-tick rail with one lit pip at the salient layer.
+function track(s){
+  const w=320,h=30, x0=78, x1=w-120, n=LAYERS.length;
+  const step=(x1-x0)/(n-1);
+  let svg=`<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`;
+  svg+=`<text x="${x0-10}" y="${h/2+4}" text-anchor="end" font-size="11" fill="${RAMP[s.open]}">${s.scope}</text>`;
+  svg+=`<line x1="${x0}" y1="${h/2}" x2="${x1}" y2="${h/2}" stroke="#ddd" stroke-width="1.4"/>`;
+  for(let i=0;i<n;i++){
+    const x=x0+i*step;
+    svg+=`<line x1="${x}" y1="${h/2-3}" x2="${x}" y2="${h/2+3}" stroke="#ccc" stroke-width="1"/>`;
+  }
+  if(!s.outbound && s.salient>=0){
+    const c=RAMP[s.open], x=x0+s.salient*step;
+    svg+=`<circle cx="${x}" cy="${h/2}" r="5.5" fill="${c}" fill-opacity="0.18" stroke="${c}" stroke-width="2"/>`;
+    if(s.salient2>=0&&s.salient2!==undefined){ const x2=x0+s.salient2*step;
+      svg+=`<circle cx="${x2}" cy="${h/2}" r="4.5" fill="${c}" fill-opacity="0.18" stroke="${c}" stroke-width="1.6"/>`; }
+  }
+  const vtxt = s.outbound ? "outbound only ⟶" : s.value;
+  svg+=`<text x="${x1+10}" y="${h/2+4}" font-size="11" font-family="SF Mono,ui-monospace,Menlo,monospace" fill="#555">${vtxt}</text>`;
+  svg+=`</svg>`;
+  return svg;
+}
+
+// Design C: vertical 5-cell stack — top=world, bottom=code. Narrow.
+function vertStack(s){
+  const cw=46, ch=20, gap=4, labelW=36, valX=labelW+46+8;
+  const W=valX+150, H=LAYERS.length*(ch+gap);
+  let svg=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
+  for(let i=0;i<LAYERS.length;i++){
+    const y=i*(ch+gap);
+    const v=s.cells[i];
+    const isSal=(i===s.salient||i===s.salient2);
+    const absent=v===null;
+    const fill=absent?"#fff":(isSal?"#fff":"#f4f4f2");
+    const stroke=isSal?RAMP[s.open]:"#ddd";
+    const sw=isSal?1.8:1;
+    svg+=`<text x="${labelW-8}" y="${y+ch/2+3}" text-anchor="end" font-size="8.5" fill="#bbb">${LAYERS[i]}</text>`;
+    svg+=`<rect x="${labelW}" y="${y}" width="${cw}" height="${ch}" rx="3" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" ${absent&&!isSal?'stroke-dasharray="2 2"':''}/>`;
+    if(isSal) svg+=`<rect x="${labelW}" y="${y}" width="${cw}" height="${ch}" rx="3" fill="${RAMP[s.open]}" fill-opacity="0.16"/>`;
+    const txt=abbr(v);
+    if(txt) svg+=`<text x="${labelW+cw/2}" y="${y+ch/2+3.5}" text-anchor="middle" font-size="10" font-family="SF Mono,ui-monospace,Menlo,monospace" fill="${isSal?RAMP[s.open]:(absent?'#bbb':'#555')}" ${isSal?'font-weight="600"':''}>${txt}</text>`;
+    if(isSal && i===s.salient && !s.outbound)
+      svg+=`<text x="${valX}" y="${y+ch/2+3.5}" font-size="10.5" font-family="SF Mono,ui-monospace,Menlo,monospace" fill="#555">${s.value}  ·  ${s.scope}</text>`;
+  }
+  if(s.outbound) svg+=`<text x="${valX}" y="${H-8}" font-size="10.5" fill="#b0b0b0">outbound only ⟶</text>`;
+  svg+=`</svg>`;
+  return svg;
+}
+
+// Design D: concentric rings — outer=world, inner=code; lit-ring radius = openness.
+function rings(s){
+  const W=230,H=64,cx=32,cy=32,Rmax=27,step=5.2;
+  let svg=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
+  for(let i=0;i<LAYERS.length;i++){
+    const r=Rmax-i*step;
+    const v=s.cells[i];
+    const isSal=(i===s.salient||i===s.salient2);
+    const absent=v===null;
+    const stroke=isSal?RAMP[s.open]:(absent?"#e8e8e8":"#cfcfcf");
+    const sw=isSal?3.2:1.3;
+    svg+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${stroke}" stroke-width="${sw}" ${absent&&!isSal?'stroke-dasharray="2 3"':''}/>`;
+  }
+  svg+=`<circle cx="${cx}" cy="${cy}" r="2" fill="#999"/>`;
+  if(s.outbound){
+    svg+=`<text x="74" y="${cy+4}" font-size="11" fill="#b0b0b0">no inbound ⟶</text>`;
+  } else {
+    const c=RAMP[s.open];
+    svg+=`<text x="74" y="${cy-3}" font-size="10.5" fill="${c}">${s.scope}</text>`;
+    svg+=`<text x="74" y="${cy+13}" font-size="11" font-family="SF Mono,ui-monospace,Menlo,monospace" fill="#555">${s.value}</text>`;
+  }
+  svg+=`</svg>`;
+  return svg;
+}
+
+// crude text width for layout
+const ctx = document.createElement("canvas").getContext("2d");
+ctx.measureLen = (t)=>{ ctx.font="11px monospace"; return ctx.measureText(t).width; };
+
+// build the ramp
+document.getElementById("ramp").innerHTML =
+  ["sealed/none","localhost","internal","tailnet","open/internet"]
+  .map((l,i)=>`<div style="background:${RAMP[i]}">${l}</div>`).join("");
+
+// layer legend
+document.getElementById("layerlegend").innerHTML =
+  LAYERS.map((l,i)=>`<div class="lc"><div style="font-weight:600;color:#555;font-size:11px">${l}</div>${LAYERDESC[i]}</div>`).join("");
+
+// table A
+document.querySelector("#tableA tbody").innerHTML = S.map(s=>`
+  <tr>
+    <td><div class="kind">${s.kind}</div><div class="kindnote">${s.note}</div></td>
+    <td class="glob">${s.model}</td>
+    <td>${cellStack(s,{labels:true})}</td>
+    <td>${onNode(s)}</td>
+  </tr>`).join("");
+
+// table B
+document.querySelector("#tableB tbody").innerHTML = S.map(s=>`
+  <tr><td><div class="kind">${s.kind}</div></td><td>${track(s)}</td></tr>`).join("");
+
+// table C (vertical)
+document.querySelector("#tableC tbody").innerHTML = S.map(s=>`
+  <tr><td><div class="kind">${s.kind}</div><div class="kindnote">${s.note}</div></td><td>${vertStack(s)}</td></tr>`).join("");
+
+// table D (rings)
+document.querySelector("#tableD tbody").innerHTML = S.map(s=>`
+  <tr><td><div class="kind">${s.kind}</div><div class="kindnote">${s.note}</div></td><td>${rings(s)}</td></tr>`).join("");
+</script>
+</body>
+</html>
