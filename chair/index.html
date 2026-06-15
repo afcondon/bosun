@@ -107,6 +107,20 @@
     .err-detail { font-size: 14px; margin: 3px 0 6px; }
     .rem { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
     .rem li { margin: 2px 0; }
+
+    /* ── editable aliases (C2) ── */
+    .edits { margin-top: 28px; background: #f6f7f8; border: 1px solid var(--line); padding: 14px 16px; }
+    .edits-lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin-bottom: 8px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 8px; font-size: 12px;
+      background: var(--panel); border: 1px solid var(--ink); padding: 3px 6px 3px 10px; border-radius: 2px;
+      font-variant-numeric: tabular-nums;
+    }
+    .chip-x { font: inherit; font-size: 12px; line-height: 1; border: none; background: none; color: var(--muted); cursor: pointer; padding: 0 2px; }
+    .chip-x:hover { color: var(--reject); }
+    .merge-form { display: flex; align-items: center; gap: 8px; }
+    .inp.sm { width: auto; flex: 1; padding: 5px 8px; font-size: 12px; }
   </style>
 </head>
 <body>

@@ -17,13 +17,13 @@ import Prelude
 import Affjax.RequestBody as RB
 import Affjax.ResponseFormat as RF
 import Affjax.Web as AX
-import Bosun.View (AliasEntry, AnalyzeRequest, AnalyzeResult, ConflictView, DeployErrorView, DivergenceView, RouteBacking, ServiceInstanceView, SvcView, ValidationView(..), analyzeRequestCodec, analyzeResultCodec)
+import Bosun.View (AliasEntry, AliasOverride(..), AnalyzeRequest, AnalyzeResult, ConflictView, DeployErrorView, DivergenceView, RouteBacking, ServiceInstanceView, SvcView, ValidationView(..), analyzeRequestCodec, analyzeResultCodec)
 import Chair.State (RedirectInfo, RejectInfo, RouteStatus, StateView, decodeStateView)
 import Data.Argonaut.Decode.Error (printJsonDecodeError)
 import Data.Array as Array
 import Data.Codec.Argonaut as CA
 import Data.Either (Either(..))
-import Data.Maybe (Maybe(..), maybe)
+import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.String as String
 import Effect (Effect)
 import Effect.Aff (Aff, Milliseconds(..), delay)
@@ -63,6 +63,10 @@ type State =
   , analysis :: Maybe AnalyzeResult
   , anaErr :: Maybe String
   , anaLoading :: Boolean
+  -- editable aliases (C2) — session-local overrides on top of the auto map
+  , overrides :: Array AliasOverride
+  , mergeName :: String
+  , mergeCanon :: String
   }
 
 data Action
@@ -76,6 +80,12 @@ data Action
   | SetRegistry String
   | LoadCorpus
   | RunAnalyze
+  -- editable aliases (C2)
+  | SetMergeName String
+  | SetMergeCanon String
+  | AddMerge
+  | SplitAlias String
+  | RemoveOverride Int
 
 main :: Effect Unit
 main = HA.runHalogenAff do
@@ -89,6 +99,7 @@ component =
         { view: Ingestion
         , cockpit: Nothing, cockErr: Nothing, ticks: 0, busy: false
         , composePath: "", registryPath: "", analysis: Nothing, anaErr: Nothing, anaLoading: false
+        , overrides: [], mergeName: "", mergeCanon: ""
         }
     , render
     , eval: H.mkEval H.defaultEval { handleAction = handleAction, initialize = Just Initialize }
@@ -109,6 +120,22 @@ handleAction = case _ of
   LoadCorpus -> H.modify_ _
     { composePath = corpusDir <> "/docker-compose.yml", registryPath = corpusDir <> "/registry.json" }
   RunAnalyze -> runAnalyze
+  SetMergeName x -> H.modify_ _ { mergeName = x }
+  SetMergeCanon x -> H.modify_ _ { mergeCanon = x }
+  AddMerge -> do
+    s <- H.get
+    when (notBlank s.mergeName && notBlank s.mergeCanon) do
+      H.modify_ \st -> st
+        { overrides = Array.snoc st.overrides (Merge { canonical: st.mergeCanon, names: [ st.mergeName ] })
+        , mergeName = "", mergeCanon = ""
+        }
+      runAnalyze
+  SplitAlias name -> do
+    H.modify_ \s -> s { overrides = Array.snoc s.overrides (Split { name }) }
+    runAnalyze
+  RemoveOverride i -> do
+    H.modify_ \s -> s { overrides = fromMaybe s.overrides (Array.deleteAt i s.overrides) }
+    runAnalyze
 
 -- ── cockpit (pillar 0) — talk to bosun serve ─────────────────────────────────
 
@@ -138,9 +165,12 @@ refresh = do
 
 mkRequest :: State -> AnalyzeRequest
 mkRequest s =
-  { compose: nonEmpty s.composePath, registry: nonEmpty s.registryPath, overrides: [] }
+  { compose: nonEmpty s.composePath, registry: nonEmpty s.registryPath, overrides: s.overrides }
   where
-  nonEmpty x = if String.null (String.trim x) then Nothing else Just x
+  nonEmpty x = if notBlank x then Just x else Nothing
+
+notBlank :: String -> Boolean
+notBlank x = not (String.null (String.trim x))
 
 runAnalyze :: forall o. H.HalogenM State Action () o Aff Unit
 runAnalyze = do
@@ -243,7 +273,7 @@ renderIngestion s =
     , maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text e ]) s.anaErr
     , case s.analysis of
         Nothing -> HH.p [ cls "muted" ] [ HH.text "point the Chair at a compose file and a registry, then analyze." ]
-        Just a -> ladder a
+        Just a -> ladder s a
     ]
   where
   field label val act =
@@ -252,8 +282,8 @@ renderIngestion s =
       , HH.input [ cls "inp", HP.value val, HE.onValueInput act, HP.placeholder "/abs/path…" ]
       ]
 
-ladder :: forall m. AnalyzeResult -> H.ComponentHTML Action () m
-ladder a =
+ladder :: forall m. State -> AnalyzeResult -> H.ComponentHTML Action () m
+ladder s a =
   HH.div_
     [ rung "①" "Ingest" "messy config strings → precise typed instances"
         "made impossible: ports out of range · non-absolute cwd · image AND build at once"
@@ -273,8 +303,9 @@ ladder a =
             [ "service", "facets" ] (map divergenceRow a.reconcile.divergences)
         , sectionTable "CROSS-SOURCE CONFLICT" (Array.length a.reconcile.conflicts)
             [ "service", "field", "claims" ] (map conflictRow a.reconcile.conflicts)
+        , aliasEdits s
         , sectionTable "ALIAS MAP (why they grouped)" (Array.length a.reconcile.aliases)
-            [ "ingested name", "→ canonical id" ] (map aliasRow a.reconcile.aliases)
+            [ "ingested name", "→ canonical id", "" ] (map aliasRow a.reconcile.aliases)
         ]
     , rung "③" "Validate" "the loose deployment → the TIGHT ValidatedDeployment"
         "made UNREPRESENTABLE: dangling deps · cycles · unbacked routes · uncheckable gates · selector not closed"
@@ -330,7 +361,39 @@ conflictRow c =
     ]
 
 aliasRow :: forall m. AliasEntry -> H.ComponentHTML Action () m
-aliasRow al = HH.tr_ [ td al.from, td al.to ]
+aliasRow al =
+  HH.tr_
+    [ td al.from
+    , td al.to
+    , HH.td_ [ HH.button [ cls "btn sm", HE.onClick \_ -> SplitAlias al.from ] [ HH.text "split" ] ]
+    ]
+
+-- ── editable aliases (C2): active overrides + a merge form ───────────────────
+
+overrideLabel :: AliasOverride -> String
+overrideLabel = case _ of
+  Merge m -> "merge " <> String.joinWith "+" m.names <> " → " <> m.canonical
+  Split sp -> "split " <> sp.name
+
+aliasEdits :: forall m. State -> H.ComponentHTML Action () m
+aliasEdits s =
+  HH.div [ cls "edits" ]
+    [ HH.div [ cls "edits-lbl" ] [ HH.text "alias edits (session-local)" ]
+    , if Array.null s.overrides then HH.span [ cls "muted" ] [ HH.text "no overrides — showing the auto-derived map" ]
+      else HH.div [ cls "chips" ] (Array.mapWithIndex chip s.overrides)
+    , HH.div [ cls "merge-form" ]
+        [ HH.input [ cls "inp sm", HP.value s.mergeName, HE.onValueInput SetMergeName, HP.placeholder "ingested name" ]
+        , HH.span [ cls "muted" ] [ HH.text "→" ]
+        , HH.input [ cls "inp sm", HP.value s.mergeCanon, HE.onValueInput SetMergeCanon, HP.placeholder "canonical id" ]
+        , HH.button [ cls "btn sm", HE.onClick \_ -> AddMerge ] [ HH.text "merge" ]
+        ]
+    ]
+  where
+  chip i ov =
+    HH.span [ cls "chip" ]
+      [ HH.text (overrideLabel ov)
+      , HH.button [ cls "chip-x", HE.onClick \_ -> RemoveOverride i ] [ HH.text "✕" ]
+      ]
 
 stageRow :: forall m. Int -> Array String -> H.ComponentHTML Action () m
 stageRow n svcs = HH.tr_ [ td (show (n + 1)), td (String.joinWith ", " svcs) ]

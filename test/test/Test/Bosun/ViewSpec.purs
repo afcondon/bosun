@@ -5,8 +5,8 @@ import Prelude
 import Bosun.Atoms (mkServiceId)
 import Bosun.Error (DeployError(..))
 import Bosun.View
-  ( AnalyzeResult, ReconcileView, ServiceInstanceView, ValidatedView, ValidationView(..)
-  , analyzeResultCodec, errKind, reconcileViewCodec, remediation, serviceInstanceViewCodec
+  ( AliasOverride(..), AnalyzeRequest, AnalyzeResult, ReconcileView, ServiceInstanceView, ValidatedView, ValidationView(..)
+  , analyzeRequestCodec, analyzeResultCodec, errKind, reconcileViewCodec, remediation, serviceInstanceViewCodec
   , validatedViewCodec, validationViewCodec
   )
 import Data.Array.NonEmpty as NEA
@@ -70,6 +70,16 @@ sampleValid =
 sampleInvalid :: ValidationView
 sampleInvalid = Invalid [ { kind: "DependencyCycle", detail: "cycle: a → b → a", remediation: [ "Break the cycle." ] } ]
 
+sampleRequest :: AnalyzeRequest
+sampleRequest =
+  { compose: Just "/abs/compose.yml"
+  , registry: Just "http://andrews-mac-mini:3100/api/ports"
+  , overrides:
+      [ Merge { canonical: "tidal:frontend", names: [ "tidal-frontend", "trf" ] }
+      , Split { name: "ee-backend" }
+      ]
+  }
+
 spec :: Spec Unit
 spec = describe "Bosun.View" do
   describe "codec round-trips (decode ∘ encode = id — the shared wire contract)" do
@@ -89,6 +99,8 @@ spec = describe "Bosun.View" do
       rt analyzeResultCodec ({ instances: [ sampleInstance, bareInstance ], reconcile: sampleReconcile, result: Valid sampleValid } :: AnalyzeResult) `shouldEqual` true
     it "AnalyzeResult — whole envelope, failure" do
       rt analyzeResultCodec ({ instances: [ sampleInstance ], reconcile: sampleReconcile, result: sampleInvalid } :: AnalyzeResult) `shouldEqual` true
+    it "AnalyzeRequest — with both AliasOverride constructors (the editable-alias contract)" do
+      rt analyzeRequestCodec (sampleRequest :: AnalyzeRequest) `shouldEqual` true
 
   describe "DeployError projection (workstream D)" do
     it "errKind names the variant" do
