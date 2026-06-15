@@ -7,6 +7,7 @@
 module Bosun.CLI.IO
   ( readYamlFile
   , readJsonFile
+  , readJsonUrl
   , argv
   ) where
 
@@ -16,6 +17,7 @@ import Effect.Uncurried (EffectFn1, runEffectFn1)
 
 foreign import readYamlImpl :: EffectFn1 String Json
 foreign import readJsonImpl :: EffectFn1 String Json
+foreign import readJsonUrlImpl :: EffectFn1 String Json
 foreign import argv :: Effect (Array String)
 
 readYamlFile :: String -> Effect Json
@@ -23,3 +25,6 @@ readYamlFile = runEffectFn1 readYamlImpl
 
 readJsonFile :: String -> Effect Json
 readJsonFile = runEffectFn1 readJsonImpl
+
+readJsonUrl :: String -> Effect Json
+readJsonUrl = runEffectFn1 readJsonUrlImpl

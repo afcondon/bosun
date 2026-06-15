@@ -13,16 +13,19 @@
 -- | cross to JS with no decoding) and never returns — it is the resident loop.
 module Bosun.CLI.Serve
   ( runServe
+  , runServeLive
+  , registryUrl
   ) where
 
 import Prelude
 
 import Bosun.Adapters.Registry (ingestRegistry)
-import Bosun.CLI.IO (readJsonFile)
+import Bosun.CLI.IO (readJsonFile, readJsonUrl)
 import Bosun.Reconcile (reconcile)
 import Bosun.Report (renderServePlan)
 import Bosun.Serve (Redirect, Route, servePlan)
 import Bosun.Version (version)
+import Data.Argonaut.Core (Json)
 import Data.Array as A
 import Data.Map as Map
 import Effect (Effect)
@@ -49,18 +52,29 @@ foreign import serveImpl :: EffectFn1 ServeConfig Unit
 statusPort :: Int
 statusPort = 3997
 
--- | `bosun serve <registry.json>` — ingest the registry, reconcile, run
--- | admission control (`servePlan`), print the report, then hand the plan to the
--- | resident shim. Rejected services are reported and not bound; the router
--- | still comes up for everything routable or redirectable.
+-- | The live Marginalia registry endpoint — the same `/api/ports` SDI reads.
+registryUrl :: String
+registryUrl = "http://andrews-mac-mini:3100/api/ports"
+
+-- | `bosun serve <registry.json>` — ingest a registry dump from a file.
 runServe :: String -> Effect Unit
-runServe registryPath = do
-  registryJson <- readJsonFile registryPath
+runServe path = readJsonFile path >>= serveFrom ("serve " <> path)
+
+-- | `bosun serve` (no arg) — fetch the LIVE registry from the Marginalia API and
+-- | serve it, the drop-in SDI replacement.
+runServeLive :: Effect Unit
+runServeLive = readJsonUrl registryUrl >>= serveFrom ("serve " <> registryUrl <> " (live)")
+
+-- | ingest → reconcile → admission control (`servePlan`) → print the report →
+-- | hand the plan to the resident shim. Rejected services are reported and not
+-- | bound; the router still comes up for everything routable or redirectable.
+serveFrom :: String -> Json -> Effect Unit
+serveFrom label registryJson = do
   let
     insts = ingestRegistry registryJson
     r = reconcile Map.empty insts
     plan = servePlan r.deployment
-  log ("bosun " <> version <> " — serve " <> registryPath)
+  log ("bosun " <> version <> " — " <> label)
   log ""
   log (renderServePlan plan)
   log ""
