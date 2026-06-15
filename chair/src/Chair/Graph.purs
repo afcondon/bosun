@@ -23,7 +23,7 @@ import Prelude
 import Bosun.View (AnalyzeResult, ServiceInstanceView)
 import Data.Array as Array
 import Data.Foldable (foldl, maximum)
-import Data.Int (toNumber)
+import Data.Int (round, toNumber)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
@@ -51,7 +51,7 @@ marginX :: Number
 marginX = 36.0
 
 marginY :: Number
-marginY = 36.0
+marginY = 52.0   -- headroom for the labelled dependency axis
 
 -- ── derived model ────────────────────────────────────────────────────────────
 
@@ -68,6 +68,7 @@ type Node =
   , ghost :: Boolean        -- a dangling dep target no source defines
   , source :: String
   , mech :: String
+  , depth :: Number         -- 0..1 dependency layer (retained channel for pivots)
   }
 
 -- Edges from the loose deps: (dependent → dependency), with the requirement label.
@@ -138,6 +139,7 @@ buildNodes insts edges =
            , ghost: maybe true (const false) meta
            , source: maybe "" _.source meta
            , mech: maybe "" _.executor.mechanism meta
+           , depth: toNumber l / toNumber (max 1 maxLayer)
            }
     in
       { x: acc.x + toNumber subcols * colW + 40.0
@@ -174,6 +176,15 @@ edgeColor = SA.RGB 150 150 150
 traffic :: SA.Color
 traffic = SA.RGB 90 150 165
 
+-- node fill = dependency depth, a calm light sequential ramp (lighter = starts
+-- earlier). A RETAINED channel (Andrew, 2026-06-15): it survives a layout pivot
+-- to force/etc. where left→right no longer encodes boot order, so depth stays
+-- legible across views — continuity without animation.
+layerRamp :: Number -> SA.Color
+layerRamp f =
+  let lerp hi lo = round (hi - f * (hi - lo))
+  in SA.RGB (lerp 248.0 206.0) (lerp 250.0 216.0) (lerp 252.0 230.0)
+
 -- ── the view ─────────────────────────────────────────────────────────────────
 
 graphView :: forall act m. AnalyzeResult -> H.ComponentHTML act () m
@@ -196,7 +207,8 @@ graphView a =
           ]
       , SE.svg
           [ SA.viewBox 0.0 0.0 maxX maxY, SA.class_ (H.ClassName "graph-svg") ]
-          [ SE.g [ SA.class_ (H.ClassName "traffic") ]
+          [ axisLayer maxX
+          , SE.g [ SA.class_ (H.ClassName "traffic") ]
               (Array.mapMaybe (trafficLine posOf) routes)
           , SE.g [ SA.class_ (H.ClassName "edges") ]
               (Array.mapMaybe (edgeLine posOf) edges)
@@ -229,6 +241,21 @@ edgeLine posOf e = do
           ]
       ] <> midpointMark mx my e.req
     )
+
+-- the labelled dependency axis (§ pivot-table): when the layout IS the boot
+-- order, left→right carries meaning, so name it — "depended on by →". (Under a
+-- force pivot this is dropped and direction moves onto the edges as arrowheads.)
+axisLayer :: forall act m. Number -> H.ComponentHTML act () m
+axisLayer maxX =
+  let xr = maxX - marginX
+  in SE.g [ SA.class_ (H.ClassName "axis") ]
+    [ SE.line [ SA.x1 marginX, SA.y1 26.0, SA.x2 xr, SA.y2 26.0, SA.stroke faint, SA.strokeWidth 1.0 ]
+    , SE.line [ SA.x1 (xr - 9.0), SA.y1 22.0, SA.x2 xr, SA.y2 26.0, SA.stroke faint, SA.strokeWidth 1.0 ]
+    , SE.line [ SA.x1 (xr - 9.0), SA.y1 30.0, SA.x2 xr, SA.y2 26.0, SA.stroke faint, SA.strokeWidth 1.0 ]
+    , SE.text
+        [ SA.x marginX, SA.y 18.0, SA.fontSize (SA.FontSizeLength (SA.Px 10.5)), SA.fill faint ]
+        [ HH.text "depended on by" ]
+    ]
 
 -- one traffic edge: a dashed line (proxy → backend, nudged off the lifecycle
 -- line it usually coincides with) + the route path. Calm/provisional styling.
@@ -286,7 +313,7 @@ nodeMark n =
   SE.g [ SA.class_ (H.ClassName (if n.ghost then "node ghost" else "node")) ]
     [ SE.rect
         [ SA.x n.x, SA.y n.y, SA.width nodeW, SA.height nodeH, SA.rx 5.0
-        , SA.fill paper
+        , SA.fill (if n.ghost then paper else layerRamp n.depth)
         , SA.fillOpacity (if n.ghost then 0.4 else 1.0)
         , SA.stroke (if n.ghost then faint else srcColor n.source)
         , SA.strokeWidth (if n.ghost then 1.0 else 1.8)
@@ -321,6 +348,7 @@ legend =
     , HH.div [ cls "leg-grp" ]
         [ HH.span [ cls "leg-h" ] [ HH.text "node border (source)" ]
         , leg "▮" "compose / registry / plist / systemd / overlay"
+        , leg "▒" "fill = boot depth (lighter starts earlier)"
         , leg "▢" "ghost = dangling dependency"
         ]
     , HH.div [ cls "leg-grp" ]
