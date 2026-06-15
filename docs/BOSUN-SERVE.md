@@ -140,9 +140,16 @@ it fails loudly at `serve` start.
 
 ## 5. Phasing
 
-- **P1 — MVP, node column.** `bosun serve`: ingest→validate→bind valid local
-  ports; lazy-spawn via the apply-one-service path; `httputil.ReverseProxy`;
-  per-service single-flight; idle-reap; `/state`. Build/iterate on node first.
+- **P1 — MVP, node column. ✅ DONE (commit aa5bc39).** `Bosun.Serve.servePlan`
+  (pure admission control: admitted `Route` with public→internal port rewrite,
+  or typed `Rejection` reusing `SdiViolation`); `renderServePlan` (the startup
+  report); `Bosun.CLI.Serve` + `.js` (the resident reverse-proxy shim — bind /
+  lazy-spawn / `waitForPort` / proxy / per-service single-flight / idle-reap,
+  mirroring `router.mjs`). `bosun serve <registry.json>`. `ServeSpec` (6
+  admit/reject cases); 56 tests green. **Verified live**: admits 1 / rejects 3
+  on a fixture, first request lazy-spawned a python backend on the internal
+  port and reverse-proxied → HTTP 200; killing the backend respawned it.
+  Deferred to P2: a JSON `/state` endpoint (P1 logs lifecycle to stdout).
 - **P2 — parity.** WebSocket upgrade, remote-host `421` redirect, registry
   hot-reload (SIGHUP), an `--audit` mode (spawn-test every row — reuses
   `observe`), `--plan`.
