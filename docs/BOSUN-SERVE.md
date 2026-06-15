@@ -153,9 +153,16 @@ it fails loudly at `serve` start.
 - **P2 — parity.** WebSocket upgrade, remote-host `421` redirect, registry
   hot-reload (SIGHUP), an `--audit` mode (spawn-test every row — reuses
   `observe`), `--plan`.
-- **P3 — the Go column.** Transpile `serve` via backend-go with the `sync.Once`
-  thunk runtime; concurrency-harden; run under `-race`; **replace the SDI
-  launchd agent on the mbp.** This is the flagship concurrent purescript-go app.
+- **P3 — the Go column. ✅ DONE (commit 4bb0b0f; runtime fix aba781a).** The pure
+  admission pipeline (`reconcile → servePlan`) transpiles via backend-go and a
+  native binary IS the resident reverse proxy: `Bosun.Conformance.ServeMain` +
+  the Go shim `conformance/go/bosun_serve_foreign.go` (`httputil.ReverseProxy` +
+  lazy-spawn + single-flight + idle-reap + **serve-layer timeouts**). The
+  `sync.Once` thunk fix is upstream in backend-go's `runtime.go`; `go-race.sh` is
+  the regression guard. **Verified**: `scripts/go-serve.sh` — native binary
+  routed 8 concurrent requests → HTTP 200, clean under `-race`. Still TODO in
+  P3: replace the actual SDI launchd agent on the mbp (the cutover, with
+  `--audit` parity — needs the live-registry fetch + P2's hot-reload first).
 - **P4 — optional hand-off.** Socket-activation for opt-in hot-path services.
 
 ## 6. Migration / compatibility
@@ -170,8 +177,10 @@ it fails loudly at `serve` start.
 ## Open questions
 - **Single binary or sibling?** Recommend a `serve` subcommand of `bosun`
   (shares `bosun-core`), not a separate app — same model, different lifetime.
-- **Upstream the `sync.Once` thunk fix** into backend-go runtime.go? It gates
-  the Go column and helps every concurrent purescript-go program.
+- ~~**Upstream the `sync.Once` thunk fix** into backend-go runtime.go?~~ DONE
+  (aba781a) — it's app-agnostic runtime correctness, so it belongs in backend-go
+  (vs the app-specific proxy foreign, which stays in Bosun). The degenerate
+  eager-cycle deadlock it introduces is owned at the serve layer via timeouts.
 - **Make our demos routable?** The python demos hardcode their port; a `$PORT`
   convention would let `serve` rewrite + route them instead of leaving them
   standalone.
