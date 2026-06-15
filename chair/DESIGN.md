@@ -6,6 +6,51 @@ watch from. **Bosun's Chair** is the cockpit for `bosun serve`: a dashboard to
 watching + controlling processes under load is exactly what stress-testing
 needs, it doubles as the test harness for the chaos suite (STRESS-TEST-PLAN.md).
 
+## North-star vision (Andrew, 2026-06-15)
+
+The serve cockpit (below) is the **first facet** of a much larger ambition. The
+Chair is to become the full **Bosun workbench** — a direct-manipulation surface
+over the whole deployment model, in the Hylograph/Minard cartography tradition
+(operate on the *elements of the system and their inter-relationships*, not a
+text file). Three pillars:
+
+1. **Ingestion made visible — config sources → the unified form.** Show each
+   config source (docker-compose, the Marginalia registry `/api/ports`, plists,
+   the `.deploy` overlay) and the *translation* Bosun performs: raw source →
+   parsed `ServiceInstance`s → reconciled facets (with cross-source drift /
+   divergence surfaced) → the validated `Deployment`. You *see* the "many
+   heterogeneous sources collapse into one typed model" thesis happen.
+   - **MISU** = Andrew's term for that canonical **unified typed form** (the
+     `ServiceInstance → ValidatedDeployment` IR). *(Confirm the exact expansion
+     of the acronym on resume — recorded here as "the unified/canonical Bosun
+     form.")*
+
+2. **Edit the deploy EDSL.** A live editor for Bosun's deployment DSL (the
+   `.deploy` description of *desired* state): edit, validate live against the `V
+   (Array DeployError)` ledger, and feed `plan`/`apply`. A CodeMirror-style
+   modal in the spirit of Calypso's editor; round-trips with the ingested form
+   (read a rig in, edit it as EDSL, plan the delta).
+
+3. **Hylograph deployment graph — future-proof.** Render *arbitrarily complex*
+   deployments as an interactive **Hylograph** visualization, not tables: the
+   service DAG; typed edges (`BindsTo` / `Requires` / `PartOf` / routes); hosts
+   as grouping; boot-order stages as layers; live status (up/down/redirect)
+   overlaid from `/state`. The explicit goal is to **outrun the current tool** —
+   to graphically handle deployments *vastly* more complex than Bosun addresses
+   today (multi-host, rollouts, secrets, large graphs), so the view scales as
+   Bosun grows. Tables are the v0 scaffold; the Hylograph graph is the
+   destination. (Andrew will give it a "Minard-style hylograph makeover" — the
+   tables now are deliberate, iterating in honest forms first.)
+
+So the Chair has (at least) four views over the *same* `bosun-core` model:
+**ingestion** (pillar 1), **EDSL editor** (pillar 2), **graph** (pillar 3), and
+the **runtime cockpit** (the serve dashboard below — pillar 0, already built).
+All share the typed core; none re-derives the model.
+
+---
+
+## Serve cockpit (built — v0 watch, v1 control)
+
 ## What it shows / does
 
 Bosun `serve` already exposes a read-only JSON `/state` (P2) — the live route
