@@ -9,6 +9,7 @@ import Test.Bosun.AtomsSpec as AtomsSpec
 import Test.Bosun.PBTSpec as PBTSpec
 import Test.Bosun.PlanSpec as PlanSpec
 import Test.Bosun.ReconcileSpec as ReconcileSpec
+import Test.Bosun.ServeSpec as ServeSpec
 import Test.Bosun.ValidateSpec as ValidateSpec
 import Test.Spec (describe)
 import Test.Spec.Reporter.Spec (specReporter)
@@ -26,4 +27,5 @@ main = runSpecAndExitProcess [specReporter] do
     ReconcileSpec.spec
     PlanSpec.spec
     ApplySpec.spec
+    ServeSpec.spec
     PBTSpec.spec

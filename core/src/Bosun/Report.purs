@@ -17,6 +17,7 @@ module Bosun.Report
   , renderStatus
   , renderScript
   , renderCommand
+  , renderServePlan
   ) where
 
 import Prelude
@@ -28,6 +29,7 @@ import Bosun.Error (DeployError(..), SdiViolation(..))
 import Bosun.Plan (Change(..), Plan, Reason(..), Status(..), planSteps)
 import Bosun.Reconcile (Divergence(..), FacetKey)
 import Bosun.Selector (Selector)
+import Bosun.Serve (RejectReason(..), Rejection, Route, ServePlan)
 import Bosun.Service (unServiceRef)
 import Data.Array (filter, groupBy, length, mapWithIndex, null, sortWith)
 import Data.Array.NonEmpty as NEA
@@ -181,6 +183,42 @@ renderCommand = case _ of
   Shell s -> maybe "" (\c -> "cd " <> c <> " && ") s.cwd <> s.line
   Ssh target inner -> "ssh " <> target <> " '" <> renderCommand inner <> "'"
   Manual note -> "# MANUAL: " <> note
+
+-- ── the `bosun serve` admission report ────────────────────────────────────────
+
+-- | Render a `ServePlan` (BOSUN-SERVE.md §4) — the typed admission control the
+-- | resident router prints at startup: which services it will bind and lazy-
+-- | spawn, and which it refuses, each with a reason. The headline difference
+-- | from SDI is that the rejections are *visible and typed*, not silent skips.
+-- | Display, not `Show` (entry 73).
+renderServePlan :: ServePlan -> String
+renderServePlan plan =
+  intercalate "\n\n" (filter (_ /= "") [ admitted, refused ])
+  where
+  admitted = case plan.routes of
+    [] -> "ADMITTED: none — no routable services in this registry."
+    rs -> "ADMITTED — " <> show (length rs) <> " routable service(s):\n"
+            <> intercalate "\n" (map (("  - " <> _) <<< renderRoute) rs)
+
+  refused = case plan.rejected of
+    [] -> ""
+    rs -> "REJECTED — " <> show (length rs) <> " not routable:\n"
+            <> intercalate "\n" (map (("  - " <> _) <<< renderRejection) rs)
+
+renderRoute :: Route -> String
+renderRoute r =
+  show r.publicPort <> " → " <> r.serviceId
+    <> " (backend on " <> show r.internalPort <> ")"
+
+renderRejection :: Rejection -> String
+renderRejection r = r.serviceId <> ": " <> renderReject r.reason
+
+renderReject :: RejectReason -> String
+renderReject = case _ of
+  NotLocal host -> "runs on " <> host <> " (P1 is local-only; remote redirect is P2)"
+  NoHostPort -> "no host port to bind"
+  NotAProcess -> "not a Process launch (P1 spawns local processes only)"
+  Sdi why -> "SDI contract — " <> sdiLabel why
 
 -- ── small label helpers (display, not Show) ──────────────────────────────────
 

@@ -1,0 +1,48 @@
+{
+  "servers": [
+    {
+      "id": 1,
+      "role": "site",
+      "projectName": "serve-demo",
+      "projectSlug": "serve-demo",
+      "port": 8190,
+      "host": "mbp",
+      "startCommand": "cd /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/serve/site && python3 -m http.server 8190",
+      "url": "http://localhost:8190",
+      "description": "A routable Process: abs cwd + the literal public port in the command. ADMITTED."
+    },
+    {
+      "id": 2,
+      "role": "frontend",
+      "projectName": "no-cd-row",
+      "projectSlug": "no-cd-row",
+      "port": 8091,
+      "host": "mbp",
+      "startCommand": "python3 -m flask run -p 8091",
+      "url": "http://localhost:8091",
+      "description": "No `cd /abs` anchor — the SDI footgun. REJECTED (NoAbsoluteCwd)."
+    },
+    {
+      "id": 3,
+      "role": "api",
+      "projectName": "port-not-in-cmd",
+      "projectSlug": "port-not-in-cmd",
+      "port": 8092,
+      "host": "mbp",
+      "startCommand": "cd /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/serve/site && python3 -m http.server",
+      "url": "http://localhost:8092",
+      "description": "Abs cwd, but the literal port is absent — the rewrite has nowhere to land. REJECTED (PortNotInStartCommand)."
+    },
+    {
+      "id": 4,
+      "role": "frontend",
+      "projectName": "minard",
+      "projectSlug": "minard",
+      "port": 3001,
+      "host": "macmini",
+      "startCommand": "cd /srv/minard && npx serve -p 3001",
+      "url": "http://andrews-mac-mini:3001",
+      "description": "Runs on macmini — REJECTED in P1 (NotLocal; P2 answers with a 421 redirect)."
+    }
+  ]
+}

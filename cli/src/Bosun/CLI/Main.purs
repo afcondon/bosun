@@ -7,6 +7,12 @@
 -- |     service's build context — same directory basename ⇒ same logical
 -- |     service (so the native and containerised facets group).
 -- |
+-- |   bosun serve <registry.json>
+-- |     the typed lazy-spawn router (replacing SDI): ingest → reconcile →
+-- |     admission control (servePlan) → bind valid ports → lazy-spawn + reverse-
+-- |     proxy on first request, idle-reap. Prints the admission report (what it
+-- |     will and won't route, with typed reasons) then stays resident.
+-- |
 -- |   bosun            (no args) — the built-in §7 fixture demo.
 module Bosun.CLI.Main where
 
@@ -19,6 +25,7 @@ import Bosun.Atoms (AbsPath, Port, ServiceId, mkAbsPath, mkHost, mkPort, mkProje
 import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (argv, readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeSnapshot)
+import Bosun.CLI.Serve (runServe)
 import Bosun.Edge (Gate(..), Requirement(..))
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Exposure (Exposure(..))
@@ -55,6 +62,7 @@ main = do
     [ "plan", composePath, registryPath ] -> runPlan composePath registryPath Nothing
     [ "plan", composePath, registryPath, snapshotPath ] -> runPlan composePath registryPath (Just snapshotPath)
     [ "observe", composePath, registryPath ] -> runObserve composePath registryPath
+    [ "serve", registryPath ] -> runServe registryPath
     [ "apply", "--dry-run", composePath, registryPath ] -> runApplyDryRun composePath registryPath Nothing
     [ "apply", "--dry-run", composePath, registryPath, snapshotPath ] -> runApplyDryRun composePath registryPath (Just snapshotPath)
     [ "apply", composePath, registryPath ] -> runApply composePath registryPath Nothing
