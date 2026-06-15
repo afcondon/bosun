@@ -37,11 +37,14 @@
             "either",
             "foldable-traversable",
             "halogen",
+            "halogen-svg-elems",
             "http-methods",
             "integers",
             "maybe",
+            "ordered-collections",
             "prelude",
             "strings",
+            "tuples",
             "web-html"
           ]
         },
@@ -1419,6 +1422,23 @@
         "refs",
         "safe-coerce",
         "unsafe-reference"
+      ]
+    },
+    "halogen-svg-elems": {
+      "type": "registry",
+      "version": "8.0.0",
+      "integrity": "sha256-Qt5bQm6CmqinstHajIn/o4eNTNpZVOODBgMlWTC8P24=",
+      "dependencies": [
+        "arrays",
+        "halogen",
+        "maybe",
+        "newtype",
+        "prelude",
+        "safe-coerce",
+        "strings",
+        "tuples",
+        "typelevel-prelude",
+        "web-uievents"
       ]
     },
     "halogen-vdom": {

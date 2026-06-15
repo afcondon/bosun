@@ -18,6 +18,7 @@ import Affjax.RequestBody as RB
 import Affjax.ResponseFormat as RF
 import Affjax.Web as AX
 import Bosun.View (AliasEntry, AliasOverride(..), AnalyzeRequest, AnalyzeResult, ConflictView, DeployErrorView, DivergenceView, RouteBacking, ServiceInstanceView, SvcView, ValidationView(..), analyzeRequestCodec, analyzeResultCodec)
+import Chair.Graph (graphView)
 import Chair.State (RedirectInfo, RejectInfo, RouteStatus, StateView, decodeStateView)
 import Data.Argonaut.Decode.Error (printJsonDecodeError)
 import Data.Array as Array
@@ -47,7 +48,7 @@ pollMs = 1500.0
 corpusDir :: String
 corpusDir = "/Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/polyglot-2026-06-14"
 
-data View = Cockpit | Ingestion
+data View = Cockpit | Ingestion | Graph
 derive instance Eq View
 
 type State =
@@ -194,18 +195,21 @@ render s =
         , HH.p [ cls "sub" ] [ HH.text subtitle ]
         , HH.div [ cls "nav" ]
             [ navBtn Ingestion "Ingestion"
+            , navBtn Graph "Graph"
             , navBtn Cockpit "Cockpit"
             ]
         ]
     , case s.view of
         Cockpit -> renderCockpit s
         Ingestion -> renderIngestion s
+        Graph -> renderGraphView s
     , HH.footer [ cls "foot" ] [ HH.text ("refresh #" <> show s.ticks) ]
     ]
   where
   subtitle = case s.view of
     Cockpit -> "cockpit for bosun serve · polling localhost:3997/state"
     Ingestion -> "ingestion ladder · POST localhost:3022/analyze"
+    Graph -> "deployment graph · loose dependency view (Pillar 3, increment 1)"
   navBtn v label =
     HH.button
       [ cls (if s.view == v then "btn active" else "btn"), HE.onClick \_ -> Goto v ]
@@ -281,6 +285,22 @@ renderIngestion s =
       [ HH.span [ cls "field-lbl" ] [ HH.text label ]
       , HH.input [ cls "inp", HP.value val, HE.onValueInput act, HP.placeholder "/abs/path…" ]
       ]
+
+-- ── graph view (pillar 3) — a new render of the same AnalyzeResult ───────────
+
+renderGraphView :: forall m. State -> H.ComponentHTML Action () m
+renderGraphView s =
+  HH.div_
+    [ HH.div [ cls "toolbar" ]
+        [ HH.button [ cls "btn", HE.onClick \_ -> RunAnalyze, HP.disabled s.anaLoading ] [ HH.text "analyze ▶" ]
+        , HH.button [ cls "btn sm", HE.onClick \_ -> LoadCorpus ] [ HH.text "load frozen corpus" ]
+        , if s.anaLoading then HH.span [ cls "muted" ] [ HH.text "analysing…" ] else HH.text ""
+        ]
+    , maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text e ]) s.anaErr
+    , case s.analysis of
+        Nothing -> HH.p [ cls "muted" ] [ HH.text "load the frozen corpus (then analyze), or analyze a compose+registry in the Ingestion view — the graph renders the same response here." ]
+        Just a -> graphView a
+    ]
 
 ladder :: forall m. State -> AnalyzeResult -> H.ComponentHTML Action () m
 ladder s a =

@@ -15,6 +15,9 @@ package:
     - foldable-traversable
     - integers
     - halogen
+    - halogen-svg-elems
+    - ordered-collections
+    - tuples
     - web-html
     - affjax
     - affjax-web
