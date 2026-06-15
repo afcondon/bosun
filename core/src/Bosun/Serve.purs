@@ -22,6 +22,7 @@
 -- | P2/P3 (BOSUN-SERVE.md §5).
 module Bosun.Serve
   ( Route
+  , Redirect
   , RejectReason(..)
   , Rejection
   , ServePlan
@@ -39,7 +40,8 @@ import Bosun.Executor (Executor(..))
 import Bosun.Exposure (Exposure(..))
 import Bosun.Service (Deployment, LooseService, deploymentServices)
 import Data.Array as A
-import Data.Either (Either(..), either, hush)
+import Data.Either (Either(..))
+import Data.Foldable (foldr)
 import Data.Generic.Rep (class Generic)
 import Data.Maybe (Maybe(..))
 import Data.Show.Generic (genericShow)
@@ -83,9 +85,8 @@ type Route =
 -- | two are P1-scope limits; the `Sdi` cases are genuine contract violations
 -- | that SDI would silently skip.
 data RejectReason
-  = NotLocal String       -- runs on another host; P1 is local-only (P2: 421 redirect)
-  | NoHostPort            -- no host port to bind / route
-  | NotAProcess           -- container/CDN/systemd/launchd — P1 spawns Processes only
+  = NoHostPort            -- no host port to bind / route
+  | NotAProcess           -- container/CDN/systemd/launchd — serve spawns Processes only
   | Sdi SdiViolation      -- PortNotInStartCommand / NoAbsoluteCwd
 derive instance Eq RejectReason
 derive instance Generic RejectReason _
@@ -95,55 +96,87 @@ instance Show RejectReason where show = genericShow
 
 type Rejection = { serviceId :: String, reason :: RejectReason }
 
--- | The admission decision over a whole deployment: the bound routes and the
--- | rejected services (each with its typed reason — the report makes both
--- | visible, so nothing is silently dropped).
-type ServePlan = { routes :: Array Route, rejected :: Array Rejection }
+-- | A remote service (P2): the router can't spawn it here, but it CAN bind the
+-- | public port and answer with a `421 Misdirected Request` pointing at where
+-- | the service actually lives — SDI's "runs on <host>, try <tailscale-url>"
+-- | behaviour, made a first-class outcome rather than a silent skip.
+type Redirect =
+  { serviceId  :: String
+  , publicPort :: Int
+  , host       :: String
+  , target     :: String  -- the tailnet URL the client should use instead
+  }
+
+-- | The admission decision over a whole deployment: routes to bind+lazy-spawn,
+-- | redirects to bind+421, and rejections (each with its typed reason). All
+-- | three are reported, so nothing is silently dropped.
+type ServePlan =
+  { routes    :: Array Route
+  , redirects :: Array Redirect
+  , rejected  :: Array Rejection
+  }
+
+-- | The per-service verdict (internal; partitioned into the `ServePlan`).
+data Admission = Admit Route | Redir Redirect | Reject Rejection
 
 servePlan :: Deployment -> ServePlan
 servePlan dep =
-  { routes: A.mapMaybe hush decided
-  , rejected: A.mapMaybe (either Just (const Nothing)) decided
-  }
+  foldr classify { routes: [], redirects: [], rejected: [] } (map admit (deploymentServices dep))
   where
-  decided = map admit (deploymentServices dep)
+  classify adm acc = case adm of
+    Admit r -> acc { routes = A.cons r acc.routes }
+    Redir d -> acc { redirects = A.cons d acc.redirects }
+    Reject x -> acc { rejected = A.cons x acc.rejected }
 
--- | Admit one service or reject it with a reason. The order of checks matters
--- | only for which single reason a doubly-disqualified service reports; each is
--- | the most specific applicable.
-admit :: LooseService -> Either Rejection Route
-admit s = case localHost s.host of
-  Left other -> reject (NotLocal other)
-  Right _ -> case s.exposure of
-    HostPort p -> case s.launch.executor of
-      Process pr
-        | String.contains (Pattern (show (unPort p))) pr.command ->
-            let public = unPort p in
-            Right
-              { serviceId: unServiceId s.id
-              , publicPort: public
-              , internalPort: internalPort public
-              , cwd: unAbsPath pr.cwd
-              , launchCommand: rewritePort public (internalPort public) pr.command
-              , idleTimeoutMs: defaultIdleMs
-              }
-        | otherwise -> reject (Sdi PortNotInStartCommand)
-      -- A `cd`-less registry row parses to `Unmanaged` (StartCommand.purs): it
-      -- has no absolute cwd, the SDI footgun. Report it as such.
-      Unmanaged _ -> reject (Sdi NoAbsoluteCwd)
-      _ -> reject NotAProcess
-    _ -> reject NoHostPort
+-- | Classify one service. A `HostPort` on a remote host becomes a `Redirect`;
+-- | on this machine it must be a launchable `Process` with the literal port in
+-- | its command (so the public→internal rewrite lands). Everything else is a
+-- | typed `Rejection`.
+admit :: LooseService -> Admission
+admit s = case s.exposure of
+  HostPort p ->
+    let public = unPort p in
+    case classifyHost s.host of
+      Left host ->
+        Redir { serviceId: sid, publicPort: public, host, target: redirectTarget host public }
+      Right _ -> case s.launch.executor of
+        Process pr
+          | String.contains (Pattern (show public)) pr.command ->
+              Admit
+                { serviceId: sid
+                , publicPort: public
+                , internalPort: internalPort public
+                , cwd: unAbsPath pr.cwd
+                , launchCommand: rewritePort public (internalPort public) pr.command
+                , idleTimeoutMs: defaultIdleMs
+                }
+          | otherwise -> reject (Sdi PortNotInStartCommand)
+        -- A `cd`-less registry row parses to `Unmanaged` (StartCommand.purs): it
+        -- has no absolute cwd, the SDI footgun. Report it as such.
+        Unmanaged _ -> reject (Sdi NoAbsoluteCwd)
+        _ -> reject NotAProcess
+  _ -> reject NoHostPort
   where
-  reject r = Left { serviceId: unServiceId s.id, reason: r }
+  sid = unServiceId s.id
+  reject r = Reject { serviceId: sid, reason: r }
 
--- | P1 serves mbp-local (and host-less) services on this machine; a remote host
--- | is rejected with its name (P2 answers those with SDI's 421 "runs on <host>,
--- | try <tailscale-url>" redirect).
-localHost :: Maybe Host -> Either String Unit
-localHost mh = case map unHost mh of
+-- | Local (this machine) vs remote: `mbp` and host-less are local; any other
+-- | host is remote, returned by name for the redirect.
+classifyHost :: Maybe Host -> Either String Unit
+classifyHost mh = case map unHost mh of
   Nothing -> Right unit
   Just "mbp" -> Right unit
   Just other -> Left other
+
+-- | Where a remote service actually lives, as a tailnet URL on the same port.
+-- | (`macmini` is the one named node today; other hosts pass through verbatim.)
+redirectTarget :: String -> Int -> String
+redirectTarget host port = "http://" <> tailscaleAddr host <> ":" <> show port
+
+tailscaleAddr :: String -> String
+tailscaleAddr = case _ of
+  "macmini" -> "andrews-mac-mini"
+  other -> other
 
 -- | Move the backend off the public port: replace the literal public port with
 -- | the internal port throughout the command (SDI's `rewriteCommand`). The

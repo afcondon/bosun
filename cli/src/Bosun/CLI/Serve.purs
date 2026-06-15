@@ -21,7 +21,7 @@ import Bosun.Adapters.Registry (ingestRegistry)
 import Bosun.CLI.IO (readJsonFile)
 import Bosun.Reconcile (reconcile)
 import Bosun.Report (renderServePlan)
-import Bosun.Serve (Route, servePlan)
+import Bosun.Serve (Redirect, Route, servePlan)
 import Bosun.Version (version)
 import Data.Array as A
 import Data.Map as Map
@@ -29,16 +29,30 @@ import Effect (Effect)
 import Effect.Console (log)
 import Effect.Uncurried (EffectFn1, runEffectFn1)
 
--- The resident reverse-proxy loop. Binds each route's public port and, on first
--- request, spawns the backend (rewritten onto the internal port), waits for it
--- to listen, then proxies. Idle backends are SIGTERMed and respawned on the
--- next request. Does not return.
-foreign import serveImpl :: EffectFn1 (Array Route) Unit
+-- | What the resident shim binds: proxy `routes` (lazy-spawn + reverse-proxy,
+-- | WebSocket-aware), `redirects` (bind + answer 421 → tailnet URL), and a
+-- | read-only JSON `/state` endpoint on `statusPort`.
+type ServeConfig =
+  { routes     :: Array Route
+  , redirects  :: Array Redirect
+  , statusPort :: Int
+  }
+
+-- The resident loop. Binds every public port and, on first request to a proxy
+-- route, spawns the backend (rewritten onto the internal port), waits for it to
+-- listen, then proxies (HTTP + WebSocket upgrade). Idle backends are SIGTERMed
+-- and respawned on the next request. Does not return.
+foreign import serveImpl :: EffectFn1 ServeConfig Unit
+
+-- | The read-only JSON status endpoint, off the public-port range and clear of
+-- | SDI's own :3998.
+statusPort :: Int
+statusPort = 3997
 
 -- | `bosun serve <registry.json>` — ingest the registry, reconcile, run
--- | admission control (`servePlan`), print the report, then hand the admitted
--- | routes to the resident shim. A rejected service is reported and simply not
--- | bound; the router still comes up for everything that *is* routable.
+-- | admission control (`servePlan`), print the report, then hand the plan to the
+-- | resident shim. Rejected services are reported and not bound; the router
+-- | still comes up for everything routable or redirectable.
 runServe :: String -> Effect Unit
 runServe registryPath = do
   registryJson <- readJsonFile registryPath
@@ -50,9 +64,13 @@ runServe registryPath = do
   log ""
   log (renderServePlan plan)
   log ""
-  if A.null plan.routes then
-    log "serve: no routable services — nothing to bind. Exiting."
+  if A.null plan.routes && A.null plan.redirects then
+    log "serve: nothing to bind (no routable or redirectable services). Exiting."
   else do
-    log ("serve: binding " <> show (A.length plan.routes) <> " port(s); lazy-spawn on first request. Ctrl-C to stop.")
+    log
+      ( "serve: binding " <> show (A.length plan.routes) <> " proxy + "
+          <> show (A.length plan.redirects) <> " redirect port(s); /state on :"
+          <> show statusPort <> ". Lazy-spawn on first request. Ctrl-C to stop."
+      )
     log ""
-    runEffectFn1 serveImpl plan.routes
+    runEffectFn1 serveImpl { routes: plan.routes, redirects: plan.redirects, statusPort }

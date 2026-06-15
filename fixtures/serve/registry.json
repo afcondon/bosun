@@ -38,11 +38,11 @@
       "role": "frontend",
       "projectName": "minard",
       "projectSlug": "minard",
-      "port": 3001,
+      "port": 8193,
       "host": "macmini",
-      "startCommand": "cd /srv/minard && npx serve -p 3001",
-      "url": "http://andrews-mac-mini:3001",
-      "description": "Runs on macmini — REJECTED in P1 (NotLocal; P2 answers with a 421 redirect)."
+      "startCommand": "cd /srv/minard && npx serve -p 8193",
+      "url": "http://andrews-mac-mini:8193",
+      "description": "Runs on macmini — P2 binds :8193 locally and answers 421 → the tailnet URL."
     }
   ]
 }

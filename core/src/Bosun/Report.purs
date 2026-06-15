@@ -29,7 +29,7 @@ import Bosun.Error (DeployError(..), SdiViolation(..))
 import Bosun.Plan (Change(..), Plan, Reason(..), Status(..), planSteps)
 import Bosun.Reconcile (Divergence(..), FacetKey)
 import Bosun.Selector (Selector)
-import Bosun.Serve (RejectReason(..), Rejection, Route, ServePlan)
+import Bosun.Serve (RejectReason(..), Redirect, Rejection, Route, ServePlan)
 import Bosun.Service (unServiceRef)
 import Data.Array (filter, groupBy, length, mapWithIndex, null, sortWith)
 import Data.Array.NonEmpty as NEA
@@ -193,12 +193,17 @@ renderCommand = case _ of
 -- | Display, not `Show` (entry 73).
 renderServePlan :: ServePlan -> String
 renderServePlan plan =
-  intercalate "\n\n" (filter (_ /= "") [ admitted, refused ])
+  intercalate "\n\n" (filter (_ /= "") [ admitted, redirected, refused ])
   where
   admitted = case plan.routes of
     [] -> "ADMITTED: none — no routable services in this registry."
     rs -> "ADMITTED — " <> show (length rs) <> " routable service(s):\n"
             <> intercalate "\n" (map (("  - " <> _) <<< renderRoute) rs)
+
+  redirected = case plan.redirects of
+    [] -> ""
+    rs -> "REDIRECT (421) — " <> show (length rs) <> " remote service(s):\n"
+            <> intercalate "\n" (map (("  - " <> _) <<< renderRedirect) rs)
 
   refused = case plan.rejected of
     [] -> ""
@@ -210,14 +215,18 @@ renderRoute r =
   show r.publicPort <> " → " <> r.serviceId
     <> " (backend on " <> show r.internalPort <> ")"
 
+renderRedirect :: Redirect -> String
+renderRedirect r =
+  show r.publicPort <> " → " <> r.serviceId
+    <> " (runs on " <> r.host <> "; 421 → " <> r.target <> ")"
+
 renderRejection :: Rejection -> String
 renderRejection r = r.serviceId <> ": " <> renderReject r.reason
 
 renderReject :: RejectReason -> String
 renderReject = case _ of
-  NotLocal host -> "runs on " <> host <> " (P1 is local-only; remote redirect is P2)"
   NoHostPort -> "no host port to bind"
-  NotAProcess -> "not a Process launch (P1 spawns local processes only)"
+  NotAProcess -> "not a Process launch (serve spawns local processes only)"
   Sdi why -> "SDI contract — " <> sdiLabel why
 
 -- ── small label helpers (display, not Show) ──────────────────────────────────

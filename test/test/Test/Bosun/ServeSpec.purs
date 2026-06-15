@@ -68,10 +68,16 @@ spec = describe "Bosun.Serve.servePlan" do
     p.routes `shouldEqual` []
     map _.reason p.rejected `shouldEqual` [ Sdi NoAbsoluteCwd ]
 
-  it "rejects a remote (macmini) service as not-local in P1" do
+  it "redirects a remote (macmini) service with a 421 to its tailnet URL" do
     let p = servePlan (mkDeployment [ procSvc "web" 3050 "macmini" "/srv/web" "npx serve -p 3050" ])
     p.routes `shouldEqual` []
-    map _.reason p.rejected `shouldEqual` [ NotLocal "macmini" ]
+    p.rejected `shouldEqual` []
+    case head p.redirects of
+      Nothing -> fail "expected one redirect"
+      Just d -> do
+        d.publicPort `shouldEqual` 3050
+        d.host `shouldEqual` "macmini"
+        d.target `shouldEqual` "http://andrews-mac-mini:3050"
 
   it "rejects a service with no host port to bind" do
     let
