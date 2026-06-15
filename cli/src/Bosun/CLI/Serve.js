@@ -3,12 +3,13 @@
 // Mechanical half — bind / spawn / poll / proxy / idle-reap — driven entirely by
 // the pure ServePlan computed in PureScript. Mirrors SDI's router.mjs +
 // spawner.mjs; the *decisions* (routability, port rewrite, idle policy, 421
-// targets) were already made upstream. P2 adds: 421 redirects for remote
-// services, WebSocket upgrade bridging, and a read-only JSON /state endpoint.
-// P3 replaces this file with a Go shim reading the identical route records.
+// targets, what-changed-on-reload) were already made upstream. P2 features:
+// 421 redirects, WebSocket bridging, JSON /state, and SIGHUP hot-reload driven
+// by the pure serveDiff. P3 replaces this file with a Go shim reading the same
+// records.
 //
-// Date.now / timers / event callbacks live here, at the edge, never in the
-// pure core.
+// Date.now / timers / signal + event callbacks live here, at the edge, never in
+// the pure core.
 
 import http from "node:http";
 import net from "node:net";
@@ -21,12 +22,13 @@ const WAIT_POLL_MS = 100;
 
 // EffectFn1: uncurried — the effect runs on serveImpl(config).
 export const serveImpl = (config) => {
-  const states = [];
+  const states = [];            // proxy-route states, for /state
+  const redirects = new Map();  // publicPort -> { serviceId, host, target }, for /state
+  const listeners = new Map();  // publicPort -> { server, state? }
 
-  for (const route of config.routes) {
+  const bindRoute = (route) => {
     const state = { route, child: null, ready: null, idleTimer: null };
     states.push(state);
-
     const server = http.createServer((req, res) => handle(state, req, res));
     server.on("upgrade", (req, socket, head) => bridgeUpgrade(state, req, socket, head));
     server.on("clientError", (_e, sock) => { try { sock.end("HTTP/1.1 400 Bad Request\r\n\r\n"); } catch (_) {} });
@@ -34,9 +36,10 @@ export const serveImpl = (config) => {
       console.error(`  ✗ cannot bind :${route.publicPort} (${err.code || err.message}) — ${route.serviceId} unserved`));
     server.listen(route.publicPort, INTERNAL_HOST, () =>
       console.log(`  bound :${route.publicPort} → ${route.serviceId} (idle ${Math.round(route.idleTimeoutMs / 1000)}s)`));
-  }
+    listeners.set(route.publicPort, { server, state });
+  };
 
-  for (const rd of config.redirects) {
+  const bindRedirect = (rd) => {
     const server = http.createServer((req, res) => {
       res.writeHead(421, { "content-type": "text/plain", location: rd.target + (req.url || "") });
       res.end(`bosun serve: ${rd.serviceId} runs on ${rd.host}. Use ${rd.target}${req.url || ""}\n`);
@@ -45,7 +48,31 @@ export const serveImpl = (config) => {
       console.error(`  ✗ cannot bind redirect :${rd.publicPort} (${err.code || err.message})`));
     server.listen(rd.publicPort, INTERNAL_HOST, () =>
       console.log(`  bound :${rd.publicPort} → 421 → ${rd.target} (${rd.serviceId} on ${rd.host})`));
-  }
+    redirects.set(rd.publicPort, { serviceId: rd.serviceId, host: rd.host, target: rd.target });
+    listeners.set(rd.publicPort, { server });
+  };
+
+  // Close a listener (and kill any backend behind it). Resolves once the port is
+  // actually released, so a same-port rebind in the same reload can't EADDRINUSE.
+  const unbindPort = (port) => new Promise((resolve) => {
+    const l = listeners.get(port);
+    if (!l) return resolve();
+    listeners.delete(port);
+    redirects.delete(port);
+    if (l.state) {
+      killBackend(l.state);
+      const i = states.indexOf(l.state);
+      if (i >= 0) states.splice(i, 1);
+    }
+    console.log(`  ⊘ unbound :${port}`);
+    let done = false;
+    const fin = () => { if (!done) { done = true; resolve(); } };
+    try { l.server.close(fin); } catch (_) { fin(); }
+    setTimeout(fin, 1000); // safety net if a lingering connection stalls close()
+  });
+
+  for (const route of config.routes) bindRoute(route);
+  for (const rd of config.redirects) bindRedirect(rd);
 
   if (config.statusPort) {
     const status = http.createServer((_req, res) => {
@@ -57,9 +84,7 @@ export const serveImpl = (config) => {
           up: !!s.child,
           pid: s.child ? s.child.pid : null,
         })),
-        redirects: config.redirects.map((r) => ({
-          serviceId: r.serviceId, publicPort: r.publicPort, host: r.host, target: r.target,
-        })),
+        redirects: [...redirects.entries()].map(([publicPort, r]) => ({ publicPort, ...r })),
       };
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(body, null, 2) + "\n");
@@ -67,6 +92,21 @@ export const serveImpl = (config) => {
     status.on("error", (err) => console.error(`  ✗ /state :${config.statusPort} (${err.code || err.message})`));
     status.listen(config.statusPort, INTERNAL_HOST, () => console.log(`  /state on :${config.statusPort}`));
   }
+
+  // SIGHUP: re-read+re-plan in PureScript (config.reload), then apply the typed
+  // diff — unbind removed/changed ports (awaiting release), then (re)bind.
+  process.on("SIGHUP", () => {
+    let diff;
+    try { diff = config.reload(); }
+    catch (e) { console.error(`  ✗ reload failed: ${e && e.message ? e.message : e}`); return; }
+    Promise.all(diff.unbind.map(unbindPort)).then(() => {
+      diff.bindRoutes.forEach(bindRoute);
+      diff.bindRedirects.forEach(bindRedirect);
+      console.log(
+        `  ↻ reload applied: -${diff.unbind.length} unbound, ` +
+        `+${diff.bindRoutes.length} proxy, +${diff.bindRedirects.length} redirect`);
+    });
+  });
   // resident: this Effect never returns; the process lives until Ctrl-C.
 };
 
@@ -95,7 +135,6 @@ function spawnBackend(state) {
   const logFile = `/tmp/bosun-serve-${sanitize(route.serviceId)}.log`;
   const out = fs.openSync(logFile, "a");
   console.log(`  ⟳ spawn ${route.serviceId}: ${route.launchCommand}  (cwd ${route.cwd}, log ${logFile})`);
-  // detached so we can SIGTERM the whole process group on idle.
   const child = spawn("bash", ["-c", route.launchCommand], { cwd: route.cwd, stdio: ["ignore", out, out], detached: true });
   state.child = child;
   child.on("exit", (code, signal) => {
@@ -157,6 +196,16 @@ function bridgeUpgrade(state, req, socket, head) {
     up.on("error", kill);
     socket.on("error", kill);
   }).catch(() => { try { socket.destroy(); } catch (_) {} });
+}
+
+function killBackend(state) {
+  clearIdle(state);
+  if (state.child) {
+    try { process.kill(-state.child.pid, "SIGTERM"); }
+    catch (_) { try { state.child.kill("SIGTERM"); } catch (_) {} }
+  }
+  state.child = null;
+  state.ready = null;
 }
 
 function bumpIdle(state) {

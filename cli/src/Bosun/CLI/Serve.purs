@@ -23,28 +23,33 @@ import Bosun.Adapters.Registry (ingestRegistry)
 import Bosun.CLI.IO (readJsonFile, readJsonUrl)
 import Bosun.Reconcile (reconcile)
 import Bosun.Report (renderServePlan)
-import Bosun.Serve (Redirect, Route, servePlan)
+import Bosun.Serve (Redirect, Route, ServeDiff, ServePlan, serveDiff, servePlan)
 import Bosun.Version (version)
 import Data.Argonaut.Core (Json)
 import Data.Array as A
 import Data.Map as Map
 import Effect (Effect)
 import Effect.Console (log)
+import Effect.Ref as Ref
 import Effect.Uncurried (EffectFn1, runEffectFn1)
 
 -- | What the resident shim binds: proxy `routes` (lazy-spawn + reverse-proxy,
 -- | WebSocket-aware), `redirects` (bind + answer 421 → tailnet URL), and a
--- | read-only JSON `/state` endpoint on `statusPort`.
+-- | read-only JSON `/state` endpoint on `statusPort`. `reload` is the SIGHUP
+-- | hook: the shim calls it to re-read+re-plan the registry and get back the
+-- | typed `ServeDiff` to apply (bind/unbind/rebind).
 type ServeConfig =
   { routes     :: Array Route
   , redirects  :: Array Redirect
   , statusPort :: Int
+  , reload     :: Effect ServeDiff
   }
 
 -- The resident loop. Binds every public port and, on first request to a proxy
 -- route, spawns the backend (rewritten onto the internal port), waits for it to
 -- listen, then proxies (HTTP + WebSocket upgrade). Idle backends are SIGTERMed
--- and respawned on the next request. Does not return.
+-- and respawned on the next request. On SIGHUP it calls `reload` and applies the
+-- diff. Does not return.
 foreign import serveImpl :: EffectFn1 ServeConfig Unit
 
 -- | The read-only JSON status endpoint, off the public-port range and clear of
@@ -58,22 +63,25 @@ registryUrl = "http://andrews-mac-mini:3100/api/ports"
 
 -- | `bosun serve <registry.json>` — ingest a registry dump from a file.
 runServe :: String -> Effect Unit
-runServe path = readJsonFile path >>= serveFrom ("serve " <> path)
+runServe path = serveFrom ("serve " <> path) (readJsonFile path)
 
 -- | `bosun serve` (no arg) — fetch the LIVE registry from the Marginalia API and
 -- | serve it, the drop-in SDI replacement.
 runServeLive :: Effect Unit
-runServeLive = readJsonUrl registryUrl >>= serveFrom ("serve " <> registryUrl <> " (live)")
+runServeLive = serveFrom ("serve " <> registryUrl <> " (live)") (readJsonUrl registryUrl)
+
+planOf :: Json -> ServePlan
+planOf json = servePlan (reconcile Map.empty (ingestRegistry json)).deployment
 
 -- | ingest → reconcile → admission control (`servePlan`) → print the report →
--- | hand the plan to the resident shim. Rejected services are reported and not
--- | bound; the router still comes up for everything routable or redirectable.
-serveFrom :: String -> Json -> Effect Unit
-serveFrom label registryJson = do
-  let
-    insts = ingestRegistry registryJson
-    r = reconcile Map.empty insts
-    plan = servePlan r.deployment
+-- | hand the plan to the resident shim. `reread` is the (repeatable) source read,
+-- | so SIGHUP can re-run it; the shim's `reload` diffs the fresh plan against the
+-- | last one (held in a `Ref`) and applies the change. Rejected services are
+-- | reported and not bound; the router still comes up for everything routable or
+-- | redirectable.
+serveFrom :: String -> Effect Json -> Effect Unit
+serveFrom label reread = do
+  plan <- planOf <$> reread
   log ("bosun " <> version <> " — " <> label)
   log ""
   log (renderServePlan plan)
@@ -84,7 +92,15 @@ serveFrom label registryJson = do
     log
       ( "serve: binding " <> show (A.length plan.routes) <> " proxy + "
           <> show (A.length plan.redirects) <> " redirect port(s); /state on :"
-          <> show statusPort <> ". Lazy-spawn on first request. Ctrl-C to stop."
+          <> show statusPort <> ". SIGHUP to reload. Lazy-spawn on first request. Ctrl-C to stop."
       )
     log ""
-    runEffectFn1 serveImpl { routes: plan.routes, redirects: plan.redirects, statusPort }
+    ref <- Ref.new plan
+    let
+      reload = do
+        log "serve: SIGHUP — re-reading the registry"
+        fresh <- planOf <$> reread
+        previous <- Ref.read ref
+        Ref.write fresh ref
+        pure (serveDiff previous fresh)
+    runEffectFn1 serveImpl { routes: plan.routes, redirects: plan.redirects, statusPort, reload }

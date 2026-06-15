@@ -27,6 +27,8 @@ module Bosun.Serve
   , Rejection
   , ServePlan
   , servePlan
+  , ServeDiff
+  , serveDiff
   , internalOffset
   , internalPort
   , defaultIdleMs
@@ -43,10 +45,13 @@ import Data.Array as A
 import Data.Either (Either(..))
 import Data.Foldable (foldr)
 import Data.Generic.Rep (class Generic)
+import Data.Map (Map)
+import Data.Map as Map
 import Data.Maybe (Maybe(..))
 import Data.Show.Generic (genericShow)
 import Data.String (Pattern(..), Replacement(..))
 import Data.String as String
+import Data.Tuple (Tuple(..))
 
 -- | The internal-port convention carried over from SDI unchanged: the router
 -- | owns the *public* port and moves the backend onto `public + 20000`
@@ -184,3 +189,42 @@ tailscaleAddr = case _ of
 rewritePort :: Int -> Int -> String -> String
 rewritePort from to =
   String.replaceAll (Pattern (show from)) (Replacement (show to))
+
+-- | What changed between two `ServePlan`s, for SIGHUP hot-reload (registry
+-- | edited while resident). Keyed by public port: `unbind` is the ports whose
+-- | listener must be torn down (the service was removed, or changed and will be
+-- | rebound); `bindRoutes` / `bindRedirects` are the ones to (re)bind (added, or
+-- | changed). A port whose service flips proxy↔redirect counts as changed, so it
+-- | appears in both `unbind` and the matching bind list. The pure diff the
+-- | resident shim applies — so hot-reload is conformance-testable, not ad hoc.
+type ServeDiff =
+  { unbind        :: Array Int
+  , bindRoutes    :: Array Route
+  , bindRedirects :: Array Redirect
+  }
+
+serveDiff :: ServePlan -> ServePlan -> ServeDiff
+serveDiff old new =
+  { unbind: A.filter changed (A.fromFoldable (Map.keys oldSig))
+  , bindRoutes: A.filter (changed <<< _.publicPort) new.routes
+  , bindRedirects: A.filter (changed <<< _.publicPort) new.redirects
+  }
+  where
+  oldSig = sigMap old
+  newSig = sigMap new
+  -- present-but-identical ⇒ Just s == Just s; removed/added ⇒ one side Nothing;
+  -- mutated ⇒ Just s /= Just s'. All three reduce to inequality of the lookups.
+  changed port = Map.lookup port oldSig /= Map.lookup port newSig
+
+-- A signature per bound public port: enough to detect a meaningful change
+-- (command/cwd/internal-port for a proxy; target for a redirect) and a
+-- proxy↔redirect flip (the tag prefix).
+sigMap :: ServePlan -> Map Int String
+sigMap plan =
+  Map.fromFoldable
+    ( map (\r -> Tuple r.publicPort (routeSig r)) plan.routes
+        <> map (\d -> Tuple d.publicPort (redirectSig d)) plan.redirects
+    )
+  where
+  routeSig r = "proxy|" <> r.cwd <> "|" <> r.launchCommand <> "|" <> show r.internalPort
+  redirectSig d = "redir|" <> d.target

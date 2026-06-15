@@ -13,7 +13,7 @@ import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkHost, mkPort)
 import Bosun.Error (SdiViolation(..))
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Exposure (Exposure(..))
-import Bosun.Serve (RejectReason(..), servePlan)
+import Bosun.Serve (RejectReason(..), serveDiff, servePlan)
 import Bosun.Service (LooseService, mkDeployment)
 import Data.Array (head)
 import Data.Either (Either(..))
@@ -102,3 +102,44 @@ spec = describe "Bosun.Serve.servePlan" do
       p = servePlan (mkDeployment [ svc ])
     p.routes `shouldEqual` []
     map _.reason p.rejected `shouldEqual` [ NotAProcess ]
+
+  describe "serveDiff (SIGHUP hot-reload)" do
+    let planOf = servePlan <<< mkDeployment
+
+    it "identical plans → no changes" do
+      let p = planOf [ procSvc "a" 3050 "mbp" "/srv/a" "run -p 3050" ]
+      let d = serveDiff p p
+      d.unbind `shouldEqual` []
+      map _.publicPort d.bindRoutes `shouldEqual` []
+
+    it "added route → bind it, nothing to unbind" do
+      let d = serveDiff (planOf []) (planOf [ procSvc "a" 3050 "mbp" "/srv/a" "run -p 3050" ])
+      d.unbind `shouldEqual` []
+      map _.publicPort d.bindRoutes `shouldEqual` [ 3050 ]
+
+    it "removed route → unbind its port" do
+      let d = serveDiff (planOf [ procSvc "a" 3050 "mbp" "/srv/a" "run -p 3050" ]) (planOf [])
+      d.unbind `shouldEqual` [ 3050 ]
+      map _.publicPort d.bindRoutes `shouldEqual` []
+
+    it "changed command at the same port → unbind + rebind" do
+      let
+        old = planOf [ procSvc "a" 3050 "mbp" "/srv/a" "run -p 3050" ]
+        new = planOf [ procSvc "a" 3050 "mbp" "/srv/a" "run --fast -p 3050" ]
+        d = serveDiff old new
+      d.unbind `shouldEqual` [ 3050 ]
+      map _.publicPort d.bindRoutes `shouldEqual` [ 3050 ]
+
+    it "untouched port alongside a change is left bound (not in the diff)" do
+      let
+        old = planOf
+          [ procSvc "a" 3050 "mbp" "/srv/a" "run -p 3050"
+          , procSvc "b" 3051 "mbp" "/srv/b" "run -p 3051"
+          ]
+        new = planOf
+          [ procSvc "a" 3050 "mbp" "/srv/a" "run -p 3050"
+          , procSvc "b" 3051 "mbp" "/srv/b" "run --fast -p 3051"
+          ]
+        d = serveDiff old new
+      d.unbind `shouldEqual` [ 3051 ]
+      map _.publicPort d.bindRoutes `shouldEqual` [ 3051 ]
