@@ -13,7 +13,7 @@ DATE="$(date +%Y-%m-%d)"
 
 # Reading order: colleague-facing intro first, then the design narrative,
 # then the receipts, then the spike as an appendix.
-DOCS=(FOR-DEVOPS PRINCIPLES DESIGN SCENARIOS DECISIONS PRIOR-ART)
+DOCS=(FOR-DEVOPS PRINCIPLES DESIGN SCENARIOS DECISIONS PRIOR-ART GRAPH-GRAMMAR)
 
 {
   # ── Cover ──────────────────────────────────────────────────────────
