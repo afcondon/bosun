@@ -41,6 +41,18 @@ text file). Three pillars:
    Bosun grows. Tables are the v0 scaffold; the Hylograph graph is the
    destination. (Andrew will give it a "Minard-style hylograph makeover" — the
    tables now are deliberate, iterating in honest forms first.)
+   - **Its own dedicated session, done maximally comprehensively** (Andrew,
+     2026-06-15). Ground the design in `site/bosun-design.html`'s deep
+     analysis (the full cross-tool panoply / type design), and explicitly aim
+     to render deployments *much more complicated than Bosun currently
+     handles* — multi-host, rollouts, secrets, large graphs — so the view is
+     future-proof as the engine grows. The data is already on the wire: a
+     `/analyze` `AnalyzeResult` carries services, deps, routes, hosts, facets
+     and the proven-acyclic boot-order stages, so the Graph tab is a *new
+     render of the same response* (built on `hylograph-graph` /
+     `-simulation`, per CodeExplorer/CLAUDE.md's simulation rules). The loose
+     graph (pre-validate) always renders; the tight one appears when the
+     deployment validates.
 
 So the Chair has (at least) four views over the *same* `bosun-core` model:
 **ingestion** (pillar 1), **EDSL editor** (pillar 2), **graph** (pillar 3), and
