@@ -13,11 +13,13 @@ module Test.Bosun.PBTSpec where
 
 import Prelude
 
-import Bosun.Atoms (ServiceId, mkHost)
+import Bosun.Atoms (AbsPath, ServiceId, mkAbsPath, mkHost)
 import Bosun.Edge (Requirement(..), Gate(..))
 import Bosun.Error (DeployError)
+import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Exposure (Exposure(..))
 import Bosun.Health (Probe(..))
+import Bosun.Serve (internalOffset, serveDiff, servePlan)
 import Bosun.Service (Deployment, LooseDep, LooseService, deploymentServices, mkDeployment, unBootOrder, unServiceRef, unValidatedDeployment)
 import Bosun.Validate (validate)
 import Data.Array (all, filter, length, mapWithIndex, modifyAt, range, zip)
@@ -26,10 +28,14 @@ import Data.Either (Either(..))
 import Data.Foldable (any)
 import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Maybe (Maybe(..), fromJust, fromMaybe)
+import Data.Set as Set
+import Data.String (Pattern(..))
+import Data.String as String
 import Data.Traversable (traverse)
 import Data.Tuple (Tuple(..), fst, snd)
 import Data.Validation.Semigroup (isValid, toEither)
+import Partial.Unsafe (unsafePartial)
 import Test.Bosun.ValidateSpec
   ( errsOf, isDangling, isDependencyCycle, isPortCollision, isUncheckableGate
   , leaf, port_, requires, requiresGate
@@ -139,19 +145,119 @@ prop_inject minN inject isErr label = do
   dep <- genLegal minN
   pure (any isErr (errsOf (validate (inject dep))) <?> label)
 
+-- ── serve admission, property-based (STRESS-TEST-PLAN §1) ────────────────────
+
+-- | A registry of 1..8 services, each one of six kinds spanning every `admit`
+-- | branch — so all three buckets (route / redirect / reject) get populated and
+-- | the partition properties bite. Distinct public port per service (keeps the
+-- | port-keyed `serveDiff` well-defined). No rule-knowledge in the generator: it
+-- | just emits shapes; `servePlan` does the classifying.
+genServeRegistry :: Gen Deployment
+genServeRegistry = do
+  n <- chooseInt 1 8
+  svcs <- traverse serveSvc (range 0 (n - 1))
+  pure (mkDeployment svcs)
+
+serveSvc :: Int -> Gen LooseService
+serveSvc i = build <$> chooseInt 0 5
+  where
+  name = "s" <> show i
+  port = 3000 + i
+  proc h cmd = (leaf name)
+    { host = Just (mkHost h)
+    , exposure = HostPort (port_ port)
+    , launch = { executor: Process { cwd: absPath ("/srv/" <> name), command: cmd, env: [] }, localName: name }
+    }
+  build = case _ of
+    0 -> proc "mbp" ("run -p " <> show port)                 -- ADMIT (local, port in cmd)
+    1 -> proc "macmini" ("run -p " <> show port)             -- REDIRECT (remote)
+    2 -> proc "mbp" "run without a numeric flag"             -- REJECT (port not in command)
+    3 -> (leaf name) { host = Just (mkHost "mbp"), exposure = HostPort (port_ port) } -- REJECT (Unmanaged ⇒ no abs cwd)
+    4 -> (proc "mbp" ("run -p " <> show port)) { exposure = NoNetwork }               -- REJECT (no host port)
+    _ -> (leaf name)
+      { host = Just (mkHost "mbp")
+      , exposure = HostPort (port_ port)
+      , launch = { executor: Container (ContainerSpec { source: Left (ImageRef name), internalPort: Nothing, publish: Nothing }), localName: name }
+      } -- REJECT (not a Process)
+
+absPath :: String -> AbsPath
+absPath s = unsafePartial (fromJust (mkAbsPath s))
+
+-- every service lands in exactly one bucket
+prop_servePartition :: Gen Result
+prop_servePartition = do
+  dep <- genServeRegistry
+  let p = servePlan dep
+  pure ((length p.routes + length p.redirects + length p.rejected == length (deploymentServices dep))
+    <?> "servePlan partition did not cover every service exactly once")
+
+-- every admitted route moved its backend to public+offset and the rewrite landed
+prop_rewriteLanded :: Gen Result
+prop_rewriteLanded = do
+  dep <- genServeRegistry
+  let p = servePlan dep
+  pure (all sound p.routes <?> "an admitted route's port rewrite did not land")
+  where
+  sound r = r.internalPort == r.publicPort + internalOffset
+    && String.contains (Pattern (show r.internalPort)) r.launchCommand
+
+-- every redirect points at a tailnet URL carrying its public port
+prop_redirectFormat :: Gen Result
+prop_redirectFormat = do
+  dep <- genServeRegistry
+  let p = servePlan dep
+  pure (all ok p.redirects <?> "a redirect target was not a well-formed URL")
+  where
+  ok d = String.contains (Pattern "http://") d.target
+    && String.contains (Pattern (show d.publicPort)) d.target
+
+-- diffing a plan against itself is a no-op (reflexive)
+prop_diffReflexive :: Gen Result
+prop_diffReflexive = do
+  dep <- genServeRegistry
+  let p = servePlan dep
+      d = serveDiff p p
+  pure ((length d.unbind == 0 && length d.bindRoutes == 0 && length d.bindRedirects == 0)
+    <?> "serveDiff of a plan against itself was not empty")
+
+-- applying serveDiff old→new to old's bound port-set yields new's port-set
+prop_diffComplete :: Gen Result
+prop_diffComplete = do
+  oldP <- servePlan <$> genServeRegistry
+  newP <- servePlan <$> genServeRegistry
+  let
+    d = serveDiff oldP newP
+    bound = Set.fromFoldable (map _.publicPort d.bindRoutes <> map _.publicPort d.bindRedirects)
+    applied = Set.union (Set.difference (boundPorts oldP) (Set.fromFoldable d.unbind)) bound
+  pure ((applied == boundPorts newP) <?> "applying serveDiff did not reproduce the new port-set")
+  where
+  boundPorts p = Set.fromFoldable (map _.publicPort p.routes <> map _.publicPort p.redirects)
+
 -- ── the suite ─────────────────────────────────────────────────────────────────
 
 spec :: Spec Unit
-spec = describe "Bosun.Validate (property-based)" do
-  it "legal-by-construction deployments validate (coverage)" $
-    quickCheck prop_legalValidates
-  it "hard deps precede their dependents in BootOrder (topological)" $
-    quickCheck prop_topoCorrect
-  it "addBackEdge -> DependencyCycle (B1 population)" $
-    quickCheck (prop_inject 2 injectBackEdge isDependencyCycle "back edge did not produce a cycle")
-  it "injectDangle -> DanglingDependency (B2 population)" $
-    quickCheck (prop_inject 1 injectDangle isDangling "dangling dep was not caught")
-  it "injectCollide -> PortCollision (B3 population)" $
-    quickCheck (prop_inject 2 injectCollide isPortCollision "port collision was not caught")
-  it "injectDropGatedProbe -> UncheckableGate (B5 population)" $
-    quickCheck (prop_inject 2 injectDropGatedProbe isUncheckableGate "uncheckable gate was not caught")
+spec = do
+  describe "Bosun.Validate (property-based)" do
+    it "legal-by-construction deployments validate (coverage)" $
+      quickCheck prop_legalValidates
+    it "hard deps precede their dependents in BootOrder (topological)" $
+      quickCheck prop_topoCorrect
+    it "addBackEdge -> DependencyCycle (B1 population)" $
+      quickCheck (prop_inject 2 injectBackEdge isDependencyCycle "back edge did not produce a cycle")
+    it "injectDangle -> DanglingDependency (B2 population)" $
+      quickCheck (prop_inject 1 injectDangle isDangling "dangling dep was not caught")
+    it "injectCollide -> PortCollision (B3 population)" $
+      quickCheck (prop_inject 2 injectCollide isPortCollision "port collision was not caught")
+    it "injectDropGatedProbe -> UncheckableGate (B5 population)" $
+      quickCheck (prop_inject 2 injectDropGatedProbe isUncheckableGate "uncheckable gate was not caught")
+  describe "Bosun.Serve (property-based)" do
+    it "servePlan partitions every service exactly once" $
+      quickCheck prop_servePartition
+    it "admitted routes rewrite public→internal and the rewrite lands in the command" $
+      quickCheck prop_rewriteLanded
+    it "redirects carry a well-formed tailnet URL" $
+      quickCheck prop_redirectFormat
+    it "serveDiff is reflexive (a plan vs itself is empty)" $
+      quickCheck prop_diffReflexive
+    it "applying serveDiff old→new reproduces the new port-set (completeness)" $
+      quickCheck prop_diffComplete
