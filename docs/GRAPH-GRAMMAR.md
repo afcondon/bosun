@@ -296,7 +296,18 @@ and the discipline is *one channel per phenomenon*:
 - **border hue / texture** ← provenance (which source), §2.9.
 - **size** ← a chosen scalar (replica count, or `loc`-style weight, or "blast
   radius") — *optional*, off by default to avoid lying with area.
-- **cardinality badge** ← multiplicity (×3), §2.5.
+- **cardinality — the "deck of cards"** ← multiplicity (§2.5). A replicated node
+  renders as a *stacked deck* with a corner `×N` badge — already house style in
+  the Hylograph HATS documentation (the `G ×5`, `Circle ×5`, `Text ×5` stacked
+  cards in the tree-rendering graphic). It is discrete, local, and costs almost
+  no plane. Recoloured to the Swiss-light palette here, the mechanic transfers
+  verbatim. **Colouring the individual cards in the deck** then carries a second
+  fact for free: tint each card by its **failure domain / location**, and a deck
+  shows "replicated across three different AZs" *without* drawing those AZs as
+  containment at all (§8) — the spread check, read off one glyph. Caveat
+  (Andrew, 2026-06-15): the deck only makes sense when multiplicity is
+  *incidental* to the current pivot; when the pivot **is** placement, the deck
+  explodes into real nodes in their cells (§7).
 
 Libs: marks are plain HATS elements (`elem Circle/Rect …`) bound via `forEach`
 over the node array — `✓`. The channels are just attribute closures.
@@ -329,26 +340,72 @@ hierarchy layouts directly:
 
 ### 4.3 Lifecycle edges (dependency + requirement gradient)
 
-A directed edge in the dependency DAG (§2.2), styled by the requirement
-gradient (§2.3). The binding:
+A directed edge in the dependency DAG (§2.2), carrying the requirement gradient
+(§2.3). The first draft of this design followed the UML/ER convention —
+distinguish requirement strength by **arrowhead shape + tail decoration + stroke
+style**. Andrew's objection (2026-06-15), worth stating as a principle because
+it generalizes:
 
-| Requirement | stroke | arrowhead | meaning |
-|---|---|---|---|
-| `Wants` | thin, dashed | open | soft; absence is fine |
-| `Requires OnStarted/OnReady/OnHealthy` | solid, weight ∝ gate strength | filled | hard; *waits* |
-| `Requisite` | solid + a small "∅-start" tick | filled, hollow tail | must pre-exist; we never start it |
-| `BindsTo` | **double / heavy** | filled + crash glyph | crash-coupled (the 3am edge) |
-| `PartOf` | solid, **reverse chevron** | reversed | stop/restart propagates backward |
+> **Locality of edge semantics.** An edge whose meaning is spread across its two
+> ends *and* its line style forces the reader to scan and integrate three
+> separated regions to decode one fact. That is hard to do visually (the UML
+> arrowhead-zoo problem), and it gets worse as edges cross and crowd. Prefer
+> meaning the eye can take in at **a single fixation** — and the natural single
+> fixation on an edge is its **midpoint.**
 
-Ordering (`StartAfter`/`StartBefore`) is encoded by **layout direction** (the
-layered DAG, §4.8), not by a second arrow — ordering and requirement are
-orthogonal axes (a product, per the IR), and conflating them is exactly the
-mistake the IR refuses to make. Provenance of the edge (`Declared` vs
-`Inferred DataRef`) is a faint vs firm stroke.
+So the requirement gradient is carried by **one mark at the midpoint of the
+arrow**, a monotonic ramp of visual weight:
 
-Libs: edges are HATS `Line`/`Path` over the link array (`✓`); the gradient is
-attribute closures. Curved/bundled routing via `…EdgeBundle` (`△`, radial
-only).
+| Requirement | midpoint mark | reading |
+|---|---|---|
+| `Wants` | ○ empty circle | soft; one-way; absence is fine |
+| `Requires` (gate) | ◉ bold-stroke circle | hard, one-way; *waits* on the gate |
+| `Requisite` | ● solid circle | hardest one-way; must already exist (we never start it) |
+| `BindsTo` | ○○ two empty circles | crash-coupled: shared fate (the 3am edge) |
+| `PartOf` | ●● two solid circles | shared fate + reverse-propagating lifecycle |
+
+What makes this a *code* rather than five symbols to memorize: it is **two
+orthogonal sub-readings in one local mark** —
+
+- **fill / weight = strength** of the requirement (empty → bold → solid);
+- **count = coupling** (one circle = a one-way dependency; two circles = a
+  two-way shared fate, where the upstream's failure reaches back down the edge).
+
+You can half-read it without the legend — *filled means serious, doubled means
+they live and die together* — which is exactly Tufte's "smallest effective
+difference" (§0.1). The arrow itself still carries **direction** (who depends on
+whom), so direction and strength are read from different, non-competing places:
+the line for direction, one glyph for burden.
+
+Three details the single glyph deliberately does **not** try to absorb (to
+protect the locality win — 5 levels × 4 gates × 2 directions would rebuild the
+zoo):
+
+- the **gate** within `Requires` (`OnStarted`/`OnReady`/`OnHealthy`/
+  `OnCompleted`) is a *secondary* detail — on hover/label, or at most a small
+  fill-arc on the `◉`, never a distinct primary glyph;
+- **ordering** (`StartAfter`/`StartBefore`) stays encoded by **layout
+  direction** (the layered DAG, §4.8) — ordering ⟂ requirement is a product in
+  the IR and the view keeps them on separate channels;
+- **provenance** (`Declared` vs `Inferred DataRef`) stays a faint-vs-firm
+  property of the *line*, not the glyph.
+
+The midpoint mark also becomes the natural **affordance**: click it for the
+gate, the provenance, and the "why does killing X take down Y" explanation that
+`BindsTo`/`PartOf` encode.
+
+Two things to verify on screen (§6.1 trial-and-error frontier, not derivable):
+(a) the **count boundary monotonicity** — does `○○` read as "more burden" than
+`●`? By count yes, by ink no; if a strict 1-D ramp matters more than the
+2-axis reading, darken the coupled pair. (b) `PartOf`'s **reverse direction** is
+the one case where direction-of-*effect* runs opposite the arrow; nudging the
+`●●` toward the upstream end may hint it, or leave it to legend + the known
+semantics.
+
+Libs: edges are HATS `Line`/`Path` over the link array, the midpoint mark a
+small `Circle`/`Circle`-pair placed at the segment midpoint (`✓`, trivial).
+Curved/bundled routing via `…EdgeBundle` (`△`, radial only); the glyph rides the
+path midpoint either way.
 
 ### 4.4 Traffic channel (data/routes)
 
@@ -413,27 +470,40 @@ light hull (§4.2) when a scope is pinned.
 
 ### 4.8 Layout (the spatial substrate)
 
-Two layouts, chosen by whether the deployment validates — the visual form of
-open-ingest/closed-validate:
+**The resting states are structured, not force.** The mental model is graphs and
+trees — layered DAGs, treemaps, circle-packs, sunbursts, Sankey, the
+decomposition skeleton (Andrew, 2026-06-15) — because a structured layout puts a
+node *where its meaning says it goes*, which is the whole data-density argument
+(§0.1). Force-directed layout is **a tool in the arsenal, not the default
+aesthetic**: it earns its place in exactly two roles, below.
 
-- **Loose / always-on — force layout.** Draw the dependency graph from the loose
-  `instances[].deps` (raw string targets, may dangle, may cycle). Force-directed
-  (`Hylograph.ForceEngine`), because the loose graph is not provably acyclic and
-  has no canonical layering. Dangling deps point at a "ghost" placeholder
-  (that's the `DanglingDependency` finding, *seen*); cycles are visible loops
-  (that's `DependencyCycle`, *seen*). This is the messy truth, and it always
-  renders. (`✓`)
-- **Tight / on-proof — layered DAG.** When `result` is `Valid`, the
-  `bootOrder :: Array (Array String)` *is* a Sugiyama layering, computed and
-  certified by the engine. Render it with `Data.Graph.Layout`'s `dagLayout` /
-  layered tree (`△` — exists, no edge-crossing minimization yet), one rank per
-  boot stage, independent-within-stage nodes side by side (the Go-concurrency
-  seam, drawn as such). The tight graph is the *reward* for validating; its
-  clean layering is visibly the payoff of MISU.
+The primary structural choice is the visual form of open-ingest/closed-validate:
 
-The transition loose→tight is an **animated relayout** (force settles into
-layers) — the most satisfying single moment in the tool, and the literal
-picture of "your config became provably correct."
+- **Tight / on-proof — layered DAG (preferred whenever it exists).** When
+  `result` is `Valid`, the `bootOrder :: Array (Array String)` *is* a Sugiyama
+  layering, computed and certified by the engine. Render it with
+  `Data.Graph.Layout`'s `dagLayout` / layered tree (`△` — no edge-crossing
+  minimization yet), one rank per boot stage, independent-within-stage nodes
+  side by side (the Go-concurrency seam, drawn as such). The clean layering is
+  visibly the payoff of MISU. Containment views (treemap/pack/sunburst, §4.2)
+  are likewise structured resting states.
+- **Loose / always-on — force, *because here there is no structure to honour*.**
+  The loose dependency graph (`instances[].deps`, raw string targets, may dangle,
+  may cycle) is not provably acyclic and has no canonical layering, so a
+  force layout (`Hylograph.ForceEngine`) is the honest rendering of "we don't yet
+  know the shape." Dangling deps point at a "ghost" placeholder (the
+  `DanglingDependency` finding, *seen*); cycles are visible loops (the
+  `DependencyCycle` finding, *seen*). It always renders — the messy truth before
+  validation. This is force's *first* legitimate role: the genuinely
+  unstructured graph.
+
+Force's **second** legitimate role is as a **transition engine** (§6.1): a
+simulation **warm-started from the marks' current positions** relaxes one
+structured layout toward another with minimal, coherent motion — far better
+continuity than teleporting. The loose→tight moment (force settling into the
+boot-order layers) is the showcase case; but the technique generalises to any
+relayout, and its success is governed entirely by the §6.1 motion law, not by
+force being "nice" in itself.
 
 ---
 
@@ -538,6 +608,85 @@ relayout of persistent marks**, never a cut to a fresh diagram.
 > tuning has a fast loop. Expect strong opinions here only once it's on screen —
 > that is the correct order.
 
+There is one transferable law, though, hard-won from doing this before (Andrew,
+2026-06-15):
+
+> **The motion law: the more elements move, the fewer *directions* they may move
+> in — or it reads as chaos.** A few marks can scatter every which way and the
+> eye follows fine; a hundred marks must move *congruently* (parallel, or in a
+> few coherent flows) or the transition looks like a startled flock. This is
+> the Gestalt **common-fate** principle as an animation budget: coherent
+> direction is the resource you spend, and it is scarcer the more marks move.
+
+Practical corollaries, all of which fall out of that law:
+
+- **Warm-start every relayout from the current positions** (initial positions
+  dominate whether a transition reads — a force relax from where things *are*
+  moves them little; a cold layout teleports). This is force's transition role
+  (§4.8).
+- **Prefer transitions where most marks stay put** and only a subset moves — a
+  bee-swarm splitting into a few layers reads well because each layer moves as
+  one congruent group; a graph dissolving into an arbitrary grid reads badly
+  because every node picks its own direction.
+- **Stagger** when you can't make motion parallel — move groups in sequence so
+  the eye only tracks one coherent flow at a time.
+- The same transform (tree→graph, say) can read as elegant or as chaos *purely*
+  on initial positions and motion-direction count — so this is a thing you
+  *tune*, per the trial-and-error note above, not a thing you get right on
+  paper.
+
+### 6.2 Coordinated views & brushing — the *spatial* alternative to the pivot
+
+The pivot (§6.1) multiplexes the multidimensional story **in time**: one surface
+re-projected, oriented by *object constancy* (animation). Andrew's complementary
+intuition (2026-06-15): often **two semantically related diagrams shown at once,
+sharing marks and colours, tell the multidimensional story better than any
+single diagram can** — multiplexing **in space**, oriented by *object
+correspondence* (the same node is recognisably the same node in both), with
+**brushing / intelligent hover** as the live link between them. This is the
+established *coordinated multiple views* / *brushing-and-linking* technique
+(Roberts), and it is small multiples (§0.1, Tufte) made interactive.
+
+The two are duals, and they keep the viewer oriented by the two available means:
+
+- **Pivot** — one view, re-projected over time; oriented by **animation** (the
+  marks *move* and you follow them).
+- **Coordinated views** — several projections at once; oriented by
+  **correspondence + brushing** (the marks *don't* move; hovering one lights its
+  twin in the other).
+
+Crucially, coordinated views may be the **easier** answer to the §5 hard problem,
+because they sidestep its core risk entirely: you never *lose* the old
+projection — it is still on screen. Hover a service in the logical DAG and watch
+its cell light up in the physical-placement treemap; that tells the
+logical-vs-physical story (the multi-hierarchy, §2.1) with no animated swap to
+get wrong. So §5's spatial-pivot and §6.2's linked views are **two tools for one
+problem**; lead with whichever reads better on the day (§6.1 trial-and-error).
+
+The enabling fact is already true here and costs almost nothing: **every view
+derives from the one `bosun-core` model and shares `ServiceId` identity plus the
+§4 channel encodings** (provenance hue, status fill, mechanism shape). So
+"common marks and colours" is *structural*, not a thing to bolt on — the same
+node is the same colour and shape everywhere by construction. Brushing is then
+just **one shared `focused :: Set ServiceId` signal** that every view reads and
+restyles against; no new geometry, no per-pair wiring. Worked pairings:
+
+- **logical DAG ↔ physical treemap** — the multi-hierarchy story (§2.1) without
+  the pivot.
+- **dependency graph ↔ Sankey / adjacency-matrix** of the *same* edges — the
+  hairball and its legible re-expression, brushed in lockstep (§4.4, §9).
+- **boot-stage list ↔ failure-domain banding** — brush a stage, watch which AZs
+  light; the spread / anti-affinity check (§8) *becomes* a brush.
+
+And the same mechanism is how the Graph tab links to the **other three pillars**
+— the doc already calls the graph the "spatial index over the other pillars"
+(§11); that *is* a coordinated-views relationship. Brush a node in the graph and
+its ingestion-ladder row (Pillar 1), its facets, and its cockpit controls
+(Pillar 0) all highlight. So linked-brushing is not a new subsystem — it is the
+generalisation of the spatial-index idea to **unify all four pillars** under one
+shared-selection signal. (One caveat from the simulation rules: two force-laid
+views are two independently-managed simulations; static layouts pair freely.)
+
 ---
 
 ## 7. Multiplicity & semantic zoom — collapse and explode
@@ -551,10 +700,16 @@ app-level discipline we design here:
   counts and roll-up status (`k8s sum/count` on the hierarchy gives the
   aggregates, `✓`). Descend → enclosures open, child nodes appear, detail
   channels (traffic, config refs) switch on.
-- **Multiplicity collapses by default.** `replicas: 3` is one node ×3, not three
-  nodes — until you explode it (or until one replica's status diverges, which
-  *auto-explodes* so the unhealthy one is visible). Same mechanism as facet
-  explode (§4.7) and the active-active equivalence hull (§8).
+- **Multiplicity collapses to a deck by default.** `replicas: 3` is one
+  deck-of-cards node ×3 (§4.1), not three nodes — until you explode it (or until
+  one replica's status diverges, which *auto-explodes* so the unhealthy one is
+  visible). **Whether it collapses or explodes is pivot-dependent**, not a fixed
+  choice: when the current pivot is logical/structural, replicas are incidental
+  and stay a deck (cards tinted by location to keep the spread visible, §4.1);
+  when the pivot **is** physical placement, the deck explodes so each card lands
+  in its real host/AZ cell — the same fact, told the way the current question
+  needs. Same collapse/explode mechanism as facet explode (§4.7) and the
+  active-active equivalence hull (§8).
 - **Elision is never silent.** Anything collapsed or capped (top-N, "+42 more")
   is labelled, per the house rule that a view which hides work reads as "covered
   everything." A count badge is a promise, not a lie.
@@ -590,10 +745,13 @@ designed so the engine can grow into them.)
    goes amber at exactly ⌊N/2⌋+1 and red below. *Maps:* etcd, Raft, ZooKeeper,
    Consul.
 
-4. **Spread / anti-affinity.** An equivalence set whose members carry a mutual
-   **repulsion constraint** (force sim pushes them apart) and a **failure-domain
-   banding** overlay (§5); the *check* — and the visual alarm — is two members
-   landing in the same band. *Maps:* `podAntiAffinity`, AWS spread placement
+4. **Spread / anti-affinity.** Two renderings of the same check, pick by pivot:
+   *(a, local)* the **coloured deck** (§4.1) — replicas as one stacked node whose
+   cards are tinted by failure domain; all-one-colour = not spread (alarm),
+   multi-coloured = spread, read off a single glyph with no domains drawn at all.
+   *(b, spatial)* the exploded set with a mutual **repulsion constraint** (force
+   pushes members apart) over **failure-domain banding** (§5); the alarm is two
+   members in the same band. *Maps:* `podAntiAffinity`, AWS spread placement
    groups, "one replica per rack."
 
 5. **Autoscaling group.** A multiplicity node (§2.5) with a *range* badge
