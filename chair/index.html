@@ -55,6 +55,58 @@
     .btn.sm { padding: 3px 11px; font-size: 12px; border-color: var(--line); color: var(--muted); }
     .btn.sm:hover { background: var(--ink); color: #fff; border-color: var(--ink); }
     .foot { margin-top: 48px; color: var(--muted); font-size: 12px; }
+
+    /* ── top nav (view switch) ── */
+    .nav { margin-top: 18px; display: flex; gap: 8px; }
+    .btn.active { background: var(--ink); color: #fff; }
+
+    /* ── ingestion: source picker ── */
+    .picker { margin-top: 28px; background: var(--panel); border: 1px solid var(--line); padding: 18px 20px; }
+    .field { display: block; margin-bottom: 12px; }
+    .field-lbl { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 5px; }
+    .inp {
+      width: 100%; font: inherit; font-size: 13px; padding: 8px 10px;
+      border: 1px solid var(--line); background: #fcfcfc; color: var(--ink);
+      font-variant-numeric: tabular-nums;
+    }
+    .inp:focus { outline: none; border-color: var(--ink); }
+
+    /* ── ingestion: the ladder rungs ── */
+    .rung { margin-top: 44px; padding-top: 4px; border-top: 3px solid var(--ink); }
+    .rung-cap { display: flex; align-items: baseline; gap: 10px; margin-top: 10px; }
+    .rung-num { font-size: 22px; font-weight: 700; }
+    .rung-title { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+    .rung-gloss { color: var(--muted); font-size: 14px; }
+    .rung-misu {
+      margin: 6px 0 4px; font-size: 12px; color: var(--accent);
+      background: #f1f1ef; border-left: 3px solid var(--down); padding: 7px 12px;
+    }
+
+    /* ── source badges + facet pills ── */
+    .badge {
+      display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+      padding: 2px 8px; border-radius: 2px; text-transform: lowercase;
+    }
+    .src-compose { background: #e7f0fb; color: #1f5bb5; }
+    .src-registry { background: #eef3e7; color: #4a7320; }
+    .src-plist, .src-systemd, .src-k8s, .src-overlay { background: #f0eef6; color: #5b4a9a; }
+    .mech { font-weight: 600; }
+    .detail { font-size: 12px; }
+    .pill {
+      display: inline-block; font-size: 12px; padding: 1px 8px; border: 1px solid var(--line);
+      border-radius: 10px; background: #fcfcfc;
+    }
+
+    /* ── validate rung: ok / err panels ── */
+    .ok-panel { border-left: 3px solid var(--up); padding: 4px 0 4px 16px; margin-top: 8px; }
+    .ok-head { color: var(--up); font-weight: 600; font-size: 14px; margin: 8px 0 0; }
+    .err-panel { border-left: 3px solid var(--reject); padding: 4px 0 4px 16px; margin-top: 8px; }
+    .err-head { color: var(--reject); font-weight: 600; font-size: 14px; margin: 8px 0 14px; }
+    .err-card { background: #fdeceb; border: 1px solid #f3c9c5; padding: 12px 14px; margin-bottom: 12px; }
+    .err-kind { font-weight: 700; font-size: 13px; color: var(--reject); }
+    .err-detail { font-size: 14px; margin: 3px 0 6px; }
+    .rem { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+    .rem li { margin: 2px 0; }
   </style>
 </head>
 <body>

@@ -21,6 +21,8 @@ package:
     - http-methods
     - argonaut-core
     - argonaut-codecs
+    - codec-argonaut
+    - strings
     - bosun-core
   bundle:
     module: Chair.Main
