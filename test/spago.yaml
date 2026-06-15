@@ -16,6 +16,7 @@ package:
       - aff
       - arrays
       - argonaut-core
+      - codec-argonaut
       - either
       - maybe
       - ordered-collections

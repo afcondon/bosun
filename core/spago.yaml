@@ -15,4 +15,6 @@ package:
     - foldable-traversable
     - strings
     - argonaut-core
+    - codec
+    - codec-argonaut
     - validation

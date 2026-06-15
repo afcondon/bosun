@@ -11,6 +11,7 @@ import Test.Bosun.PlanSpec as PlanSpec
 import Test.Bosun.ReconcileSpec as ReconcileSpec
 import Test.Bosun.ServeSpec as ServeSpec
 import Test.Bosun.ValidateSpec as ValidateSpec
+import Test.Bosun.ViewSpec as ViewSpec
 import Test.Spec (describe)
 import Test.Spec.Reporter.Spec (specReporter)
 import Test.Spec.Runner.Node (runSpecAndExitProcess)
@@ -28,4 +29,5 @@ main = runSpecAndExitProcess [specReporter] do
     PlanSpec.spec
     ApplySpec.spec
     ServeSpec.spec
+    ViewSpec.spec
     PBTSpec.spec
