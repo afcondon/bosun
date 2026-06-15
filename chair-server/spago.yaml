@@ -1,0 +1,28 @@
+# Bosun's Chair analysis backend (MVP-PLAN workstream B). An HTTPurple
+# server, sibling of the CLI: another Effect-edge host of the pure
+# bosun-core. It reads config files at its edge, runs the pure
+# ingest -> reconcile -> validate ladder (Bosun.Analyze), and serves the
+# AnalyzeResult as JSON via the Bosun.View codecs. READ-ONLY analysis —
+# distinct from `bosun serve`, which owns process authority. Dev port 3022.
+package:
+  name: bosun-chair-server
+  description: "HTTPurple analysis backend for Bosun's Chair: POST /analyze runs the loose->tight ladder."
+  dependencies:
+    - prelude
+    - effect
+    - aff
+    - console
+    - either
+    - maybe
+    - arrays
+    - strings
+    - foldable-traversable
+    - argonaut-core
+    - argonaut-codecs
+    - codec-argonaut
+    - httpurple
+    - routing-duplex
+    - bosun-core
+    - bosun-adapters
+  run:
+    main: Bosun.ChairServer.Main

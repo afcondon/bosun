@@ -16,7 +16,7 @@ module Bosun.View where
 
 import Prelude
 
-import Bosun.Atoms (unAbsPath, unDomain, unEnvVar, unHost, unPort, unProjectSlug, unRoutePath, unServiceId)
+import Bosun.Atoms (mkServiceId, unAbsPath, unDomain, unEnvVar, unHost, unPort, unProjectSlug, unRoutePath, unServiceId)
 import Bosun.Edge (DepOrdering(..), Gate(..), Requirement(..))
 import Bosun.Error (DeployError(..), SdiViolation(..))
 import Bosun.Executor (BuildContext(..), CDNProvider(..), ContainerSpec(..), Executor(..), ExecutorMechanism(..), ImageRef(..), RemoteVia(..), SystemdScope(..), mechanism)
@@ -30,11 +30,13 @@ import Data.Codec.Argonaut as CA
 import Data.Codec.Argonaut.Compat as CAC
 import Data.Codec.Argonaut.Record as CAR
 import Data.Either (Either(..))
+import Data.Foldable (foldl, foldr)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), maybe)
 import Data.Profunctor (dimap)
 import Data.String (joinWith)
 import Data.Tuple (Tuple(..))
+import Data.Validation.Semigroup (V, toEither)
 
 -- ── view types (the wire shapes) ─────────────────────────────────────────────
 
@@ -239,8 +241,8 @@ validatedView vd =
         (Map.toUnfoldable r.routes)
     }
 
-validationView :: Either (Array DeployError) ValidatedDeployment -> ValidationView
-validationView = case _ of
+validationView :: V (Array DeployError) ValidatedDeployment -> ValidationView
+validationView v = case toEither v of
   Left errs -> Invalid (map deployErrorView errs)
   Right vd -> Valid (validatedView vd)
 
@@ -412,4 +414,55 @@ analyzeResultCodec = CAR.object "AnalyzeResult"
   { instances: CA.array serviceInstanceViewCodec
   , reconcile: reconcileViewCodec
   , result: validationViewCodec
+  }
+
+-- ── the request contract (frontend → chair-server) ───────────────────────────
+
+-- | A user correction to the auto-derived alias map (MVP-PLAN #3, the editable
+-- | half). `Merge` says "these ingested names are one service" (the fix for
+-- | under-grouping); `Split` removes a name from the map so it falls back to
+-- | its own identity (the fix for an over-eager auto-merge).
+data AliasOverride
+  = Merge { canonical :: String, names :: Array String }
+  | Split { name :: String }
+derive instance Eq AliasOverride
+
+-- | What the Chair POSTs to `/analyze`. `compose` / `registry` are source
+-- | locators the server resolves at its edge (a file path, or for the registry
+-- | an http(s) URL). MVP scope: compose + registry only (MVP-PLAN #5).
+type AnalyzeRequest =
+  { compose   :: Maybe String
+  , registry  :: Maybe String
+  , overrides :: Array AliasOverride
+  }
+
+-- | Apply the user overrides on top of the default `buildAliases` map.
+applyOverrides :: Array AliasOverride -> AliasMap -> AliasMap
+applyOverrides ovs m0 = foldl step m0 ovs
+  where
+  step m = case _ of
+    Merge x -> foldr (\n -> Map.insert n (mkServiceId x.canonical)) m x.names
+    Split x -> Map.delete x.name m
+
+type OverrideWire = { op :: String, canonical :: String, names :: Array String, name :: String }
+
+aliasOverrideCodec :: CA.JsonCodec AliasOverride
+aliasOverrideCodec = dimap toWire fromWire wireCodec
+  where
+  wireCodec = CAR.object "AliasOverride"
+    { op: CA.string, canonical: CA.string, names: CA.array CA.string, name: CA.string }
+  toWire :: AliasOverride -> OverrideWire
+  toWire = case _ of
+    Merge m -> { op: "merge", canonical: m.canonical, names: m.names, name: "" }
+    Split s -> { op: "split", canonical: "", names: [], name: s.name }
+  fromWire :: OverrideWire -> AliasOverride
+  fromWire w = case w.op of
+    "merge" -> Merge { canonical: w.canonical, names: w.names }
+    _ -> Split { name: w.name }
+
+analyzeRequestCodec :: CA.JsonCodec AnalyzeRequest
+analyzeRequestCodec = CAR.object "AnalyzeRequest"
+  { compose: CAC.maybe CA.string
+  , registry: CAC.maybe CA.string
+  , overrides: CA.array aliasOverrideCodec
   }

@@ -7,7 +7,8 @@
   "scripts": {
     "build": "spago build",
     "test": "spago test",
-    "bosun": "spago run -p bosun-cli"
+    "bosun": "spago run -p bosun-cli",
+    "chair-server": "spago build && node chair-server/run.js"
   },
   "dependencies": {
     "js-yaml": "^4.1.0"
