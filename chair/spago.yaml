@@ -1,0 +1,29 @@
+# Bosun's Chair (Marginalia #236) — the Halogen dashboard cockpit for
+# `bosun serve`. A package in the bosun workspace so it shares bosun-core; polls
+# serve's /state and renders the three-way admission picture + live route table.
+# Swiss / International Typographic, light theme. See chair/DESIGN.md.
+package:
+  name: bosun-chair
+  description: "Halogen dashboard for `bosun serve`: watch /state, control the router."
+  dependencies:
+    - prelude
+    - effect
+    - aff
+    - maybe
+    - either
+    - arrays
+    - foldable-traversable
+    - integers
+    - halogen
+    - web-html
+    - affjax
+    - affjax-web
+    - http-methods
+    - argonaut-core
+    - argonaut-codecs
+    - bosun-core
+  bundle:
+    module: Chair.Main
+    outfile: app.js
+    platform: browser
+    type: app

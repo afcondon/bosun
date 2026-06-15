@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bosun's Chair</title>
+  <style>
+    :root {
+      --ink: #1a1a1a; --muted: #777; --line: #e3e3e3; --bg: #fafafa; --panel: #fff;
+      --up: #1a7f37; --down: #9a9a9a; --redirect: #b06a00; --reject: #b3261e; --accent: #1a1a1a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 15px/1.5 "Helvetica Neue", Inter, system-ui, -apple-system, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .chair { max-width: 880px; margin: 0 auto; padding: 56px 32px 80px; }
+    .head h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+    .head .sub { color: var(--muted); margin: 4px 0 0; font-size: 14px; }
+    .error {
+      margin: 24px 0 0; padding: 12px 16px; background: #fdeceb;
+      border-left: 3px solid var(--reject); color: var(--reject); font-size: 14px;
+    }
+    .muted { color: var(--muted); font-size: 14px; }
+    .stats { display: flex; gap: 16px; margin: 32px 0 8px; }
+    .stat {
+      flex: 1; background: var(--panel); border: 1px solid var(--line); padding: 16px 18px;
+    }
+    .stat-val { font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
+    .stat-lbl { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 4px; }
+    .sec { margin-top: 40px; }
+    .sec h2 {
+      font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em;
+      color: var(--accent); margin: 0 0 12px; border-bottom: 2px solid var(--ink); padding-bottom: 8px;
+    }
+    .sec h2 .count { color: var(--muted); font-weight: 400; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th {
+      text-align: left; font-weight: 500; color: var(--muted); font-size: 11px;
+      text-transform: uppercase; letter-spacing: 0.06em; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line);
+    }
+    td { padding: 9px 12px 9px 0; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+    .dot { font-size: 13px; font-weight: 500; }
+    .dot::before { content: "●"; margin-right: 6px; }
+    .dot.up { color: var(--up); }
+    .dot.down { color: var(--down); }
+    .foot { margin-top: 48px; color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <script src="./app.js"></script>
+</body>
+</html>

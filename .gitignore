@@ -11,3 +11,6 @@ node_modules/
 
 # spec-node failure-rerun cache
 .spec-results
+
+# Bosun's Chair bundle (build artifact: spago bundle -p bosun-chair)
+chair/app.js
