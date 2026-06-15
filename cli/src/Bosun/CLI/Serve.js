@@ -19,6 +19,7 @@ import fs from "node:fs";
 const INTERNAL_HOST = "127.0.0.1";
 const WAIT_TIMEOUT_MS = 30000; // how long to wait for a spawned backend to listen
 const WAIT_POLL_MS = 100;
+const PROXY_TIMEOUT_MS = 8000; // a bound-but-hung backend → 504, not a wedge
 
 // EffectFn1: uncurried — the effect runs on serveImpl(config).
 export const serveImpl = (config) => {
@@ -228,6 +229,15 @@ function proxy(state, req, res) {
     { host: INTERNAL_HOST, port: route.internalPort, method: req.method, path: req.url, headers: req.headers },
     (upRes) => { bumpIdle(state); res.writeHead(upRes.statusCode || 502, upRes.headers); upRes.pipe(res); }
   );
+  // serve-layer timeout (parity with the Go foreign): a backend that bound but
+  // hangs on the request must not wedge the proxy — 504 and move on.
+  upstream.setTimeout(PROXY_TIMEOUT_MS, () => {
+    if (!res.headersSent) {
+      res.writeHead(504, { "content-type": "text/plain" });
+      res.end(`bosun serve: ${route.serviceId} timed out after ${PROXY_TIMEOUT_MS}ms\n`);
+    }
+    upstream.destroy();
+  });
   upstream.on("error", (err) => {
     if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain" });
     res.end(`bosun serve: proxy error for ${route.serviceId}: ${err.message}\n`);
