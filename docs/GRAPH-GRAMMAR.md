@@ -164,8 +164,8 @@ LB→target-group, DNS, security-group allow-rules, service-mesh virtual
 services. Bosun's `RouteEdge` is the v0 member. Shape: a **multigraph**, often
 **weighted** (traffic split 90/10 for a canary; LB across N backends), and
 crucially **never a lifecycle edge** (D-5). It deserves its own visual channel
-and, at scale, a flow/ribbon geometry (Sankey-like), which the libs do **not**
-have yet (§4.4, §9).
+and, at scale, a flow/ribbon geometry — which the libs already supply
+(`DataViz.Layout.Sankey.*`, cycle-aware and capacity-weighted; §4.4, §9).
 
 ### 2.5 Multiplicity — one declaration, N runtime instances
 
