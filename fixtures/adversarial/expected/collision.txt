@@ -1,0 +1,3 @@
+ADMITTED — 2 routable service(s):
+  - 3050 → svc-a:a (backend on 23050)
+  - 3050 → svc-b:b (backend on 23050)

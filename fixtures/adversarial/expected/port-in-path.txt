@@ -1,0 +1,4 @@
+ADMITTED: none — no routable services in this registry.
+
+REJECTED — 1 not routable:
+  - app:frontend: SDI contract — the literal public port is missing from the start command

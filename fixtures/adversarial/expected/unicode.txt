@@ -1,0 +1,2 @@
+ADMITTED — 1 routable service(s):
+  - 3070 → café-🚀:frontend (backend on 23070)

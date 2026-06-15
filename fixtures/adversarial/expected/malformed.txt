@@ -1,0 +1,5 @@
+ADMITTED: none — no routable services in this registry.
+
+REJECTED — 2 not routable:
+  - no-cmd:x: SDI contract — start command has no absolute cwd anchor (cd /abs)
+  - no-port:y: no host port to bind

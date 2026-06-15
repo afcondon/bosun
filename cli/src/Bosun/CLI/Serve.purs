@@ -14,6 +14,7 @@
 module Bosun.CLI.Serve
   ( runServe
   , runServeLive
+  , runServePlan
   , registryUrl
   ) where
 
@@ -28,6 +29,7 @@ import Bosun.Version (version)
 import Data.Argonaut.Core (Json)
 import Data.Array as A
 import Data.Map as Map
+import Data.Maybe (Maybe, maybe)
 import Effect (Effect)
 import Effect.Console (log)
 import Effect.Ref as Ref
@@ -75,6 +77,15 @@ runServe path = serveFrom ("serve " <> path) (readJsonFile path)
 -- | serve it, the drop-in SDI replacement.
 runServeLive :: Effect Unit
 runServeLive = serveFrom ("serve " <> registryUrl <> " (live)") (readJsonUrl registryUrl)
+
+-- | `bosun serve --plan [registry]` — print the admission report and exit
+-- | (non-resident). The report-only view: inspect what serve WOULD bind / 421 /
+-- | reject without holding any ports. Deterministic output (just the report),
+-- | which the adversarial corpus golden-diffs.
+runServePlan :: Maybe String -> Effect Unit
+runServePlan src = do
+  json <- maybe (readJsonUrl registryUrl) readJsonFile src
+  log (renderServePlan (planOf json))
 
 planOf :: Json -> ServePlan
 planOf json = servePlan (reconcile Map.empty (ingestRegistry json)).deployment

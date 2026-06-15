@@ -28,7 +28,7 @@ import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (argv, readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeSnapshot)
 import Bosun.CLI.Audit (runAudit)
-import Bosun.CLI.Serve (runServe, runServeLive)
+import Bosun.CLI.Serve (runServe, runServeLive, runServePlan)
 import Bosun.Edge (Gate(..), Requirement(..))
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Exposure (Exposure(..))
@@ -65,6 +65,8 @@ main = do
     [ "plan", composePath, registryPath ] -> runPlan composePath registryPath Nothing
     [ "plan", composePath, registryPath, snapshotPath ] -> runPlan composePath registryPath (Just snapshotPath)
     [ "observe", composePath, registryPath ] -> runObserve composePath registryPath
+    [ "serve", "--plan" ] -> runServePlan Nothing
+    [ "serve", "--plan", registryPath ] -> runServePlan (Just registryPath)
     [ "serve", "--audit" ] -> runAudit Nothing
     [ "serve", "--audit", registryPath ] -> runAudit (Just registryPath)
     [ "serve" ] -> runServeLive
