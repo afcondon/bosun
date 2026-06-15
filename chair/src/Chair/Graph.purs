@@ -215,15 +215,19 @@ edgeLine posOf e = do
 -- §4.3 — a single mark at the midpoint encoding the requirement gradient.
 -- fill = strength (open → bold → solid); count = coupling (one → two circles).
 midpointMark :: forall act m. Number -> Number -> Maybe String -> Array (H.ComponentHTML act () m)
+-- MONOCHROME by design: fill/weight = strength, count = coupling. Colour is the
+-- *source* channel (node borders) — the mark must never borrow it (the §4.3
+-- "one channel per phenomenon" rule; an earlier pale-blue `requires` fill
+-- collided with compose=blue and read as provenance).
 midpointMark mx my = case _ of
-  Nothing -> [ dot mx my 2.0 faint faint 0.0 ]               -- unspecified: faint pip
+  Nothing -> [ dot mx my 2.0 faint faint 0.0 ]                 -- unspecified: faint pip
   Just r
-    | r == "wants" -> [ dot mx my 5.0 paper edgeColor 1.2 ]  -- ○ open
-    | take 8 r == "requires" -> [ dot mx my 5.0 (SA.RGB 230 236 250) ink 2.2 ] -- ◉ bold
-    | r == "requisite" -> [ dot mx my 5.0 ink ink 1.0 ]      -- ● solid
-    | r == "binds-to" -> [ dot (mx - 5.5) my 4.5 paper ink 1.6, dot (mx + 5.5) my 4.5 paper ink 1.6 ] -- ○○
-    | r == "part-of" -> [ dot (mx - 5.5) my 4.5 ink ink 1.0, dot (mx + 5.5) my 4.5 ink ink 1.0 ]       -- ●●
-    | otherwise -> [ dot mx my 5.0 paper edgeColor 1.2 ]
+    | r == "wants" -> [ dot mx my 5.0 paper faint 1.3 ]        -- ○ thin grey open (soft)
+    | take 8 r == "requires" -> [ dot mx my 5.5 paper ink 2.8 ] -- ◎ bold black ring (hard, waits)
+    | r == "requisite" -> [ dot mx my 5.0 ink ink 1.0 ]        -- ● solid (must pre-exist)
+    | r == "binds-to" -> [ dot (mx - 5.5) my 4.5 paper ink 1.9, dot (mx + 5.5) my 4.5 paper ink 1.9 ] -- ○○ coupled, soft
+    | r == "part-of" -> [ dot (mx - 5.5) my 4.5 ink ink 1.0, dot (mx + 5.5) my 4.5 ink ink 1.0 ]       -- ●● coupled, hard
+    | otherwise -> [ dot mx my 5.0 paper faint 1.3 ]
   where
   dot x y rad fill strk sw =
     SE.circle [ SA.cx x, SA.cy y, SA.r rad, SA.fill fill, SA.stroke strk, SA.strokeWidth sw ]
