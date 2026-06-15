@@ -27,6 +27,7 @@ module Bosun.Reconcile
   , ReconcileResult
   , AliasMap
   , reconcile
+  , buildAliases
   , exposureLabel
   ) where
 
@@ -34,20 +35,23 @@ import Prelude
 
 import Bosun.Atoms (Host, ServiceId, mkServiceId, unAbsPath, unDomain, unPort, unProjectSlug, unRoutePath)
 import Bosun.Error (DeployError(..))
-import Bosun.Executor (ExecutorMechanism, mechanism)
+import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ExecutorMechanism, mechanism)
 import Bosun.Exposure (Exposure(..))
 import Bosun.Health (Probe(..))
 import Bosun.Service
   ( Deployment, LooseDep, LooseRoute, LooseService, RawDep, RawRoute
-  , ServiceInstance, mkDeployment, unRole
+  , ServiceInstance, Source(..), mkDeployment, unRole
   )
 import Data.Array as A
 import Data.Array.NonEmpty (NonEmptyArray)
 import Data.Array.NonEmpty as NEA
+import Data.Either (Either(..))
 import Data.Foldable (foldr)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.String (Pattern(..))
+import Data.String as String
 import Data.Tuple (Tuple(..), fst, snd, uncurry)
 
 -- | localName (or registry slug) → the canonical `ServiceId` it belongs to.
@@ -149,3 +153,45 @@ exposureLabel = case _ of
   PublicDomain d -> "domain:" <> unDomain d
   UnixSocket s -> "socket:" <> unAbsPath s
   NoNetwork -> "none"
+
+-- | DEFAULT cross-source alias derivation (moved here from the CLI in A0 so
+-- | both the `bosun` CLI and the Chair's analysis backend derive the *same*
+-- | default aliases; the Chair then merges user overrides on top — MVP-PLAN
+-- | decision #3). Bridges compose ↔ registry by shared directory basename (the
+-- | registry row's startCommand cwd vs the compose service's build context):
+-- | same directory basename ⇒ same logical service, so the native and
+-- | containerised facets group. DECISIONS "alias-map for MVP" — derived rather
+-- | than hand-maintained.
+buildAliases :: Array ServiceInstance -> AliasMap
+buildAliases insts =
+  Map.fromFoldable (insts # A.mapMaybe aliasFor)
+  where
+  canon :: Map String ServiceId
+  canon = Map.fromFoldable (insts # A.mapMaybe registryKey)
+
+  registryKey si = case si.source of
+    FromRegistry -> (\k -> Tuple k (canonId si)) <$> dirKey si
+    _ -> Nothing
+
+  aliasFor si = case si.source of
+    FromCompose -> do
+      k <- dirKey si
+      cid <- Map.lookup k canon
+      pure (Tuple si.localName cid)
+    _ -> Nothing
+
+canonId :: ServiceInstance -> ServiceId
+canonId si = case si.project of
+  Just slug -> mkServiceId (unProjectSlug slug <> ":" <> unRole si.role)
+  Nothing -> mkServiceId si.localName
+
+dirKey :: ServiceInstance -> Maybe String
+dirKey si = case si.executor of
+  Process p -> Just (basename (unAbsPath p.cwd))
+  Container (ContainerSpec cs) -> case cs.source of
+    Right (BuildContext b) -> Just (basename b.context)
+    _ -> Nothing
+  _ -> Nothing
+
+basename :: String -> String
+basename p = fromMaybe p (A.last (A.filter (_ /= "") (String.split (Pattern "/") p)))

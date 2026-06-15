@@ -23,20 +23,20 @@ import Prelude
 import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.Adapters.Registry (ingestRegistry)
 import Bosun.Apply (Command(..), StagedCommand, applyScript)
-import Bosun.Atoms (AbsPath, Port, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkServiceId, unAbsPath, unProjectSlug, unServiceId)
+import Bosun.Atoms (AbsPath, Port, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkServiceId, unServiceId)
 import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (argv, readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeSnapshot)
 import Bosun.CLI.Audit (runAudit)
 import Bosun.CLI.Serve (runServe, runServeLive, runServePlan)
 import Bosun.Edge (Gate(..), Requirement(..))
-import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ImageRef(..))
+import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Exposure (Exposure(..))
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Plan (Reason(..), Snapshot, Status(..), plan)
-import Bosun.Reconcile (AliasMap, reconcile)
+import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderCommand, renderPlan, renderReport, renderScript)
-import Bosun.Service (ServiceInstance, Source(..), mkRole, unRole)
+import Bosun.Service (ServiceInstance, Source(..), mkRole)
 import Bosun.Validate (validate)
 import Bosun.Version (version)
 import Data.Argonaut.Core (Json, toObject, toString)
@@ -44,11 +44,8 @@ import Data.Array as A
 import Data.Array.NonEmpty as NEA
 import Data.Either (Either(..), either)
 import Data.Foldable (intercalate)
-import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromJust, fromMaybe, maybe)
-import Data.String (Pattern(..))
-import Data.String as String
 import Data.Traversable (traverse)
 import Data.Tuple (Tuple(..))
 import Data.Validation.Semigroup (toEither)
@@ -251,43 +248,6 @@ statusOf = case _ of
   "down" -> Down
   "completed-ok" -> CompletedOk
   other -> Unknown (ProbeUnreachable other)
-
--- Bridge compose ↔ registry by shared directory basename (the registry row's
--- cwd vs the compose service's build context). DECISIONS "alias-map for MVP",
--- derived rather than hand-maintained.
-buildAliases :: Array ServiceInstance -> AliasMap
-buildAliases insts =
-  Map.fromFoldable (insts # A.mapMaybe aliasFor)
-  where
-  canon :: Map String ServiceId
-  canon = Map.fromFoldable (insts # A.mapMaybe registryKey)
-
-  registryKey si = case si.source of
-    FromRegistry -> (\k -> Tuple k (canonId si)) <$> dirKey si
-    _ -> Nothing
-
-  aliasFor si = case si.source of
-    FromCompose -> do
-      k <- dirKey si
-      cid <- Map.lookup k canon
-      pure (Tuple si.localName cid)
-    _ -> Nothing
-
-canonId :: ServiceInstance -> ServiceId
-canonId si = case si.project of
-  Just slug -> mkServiceId (unProjectSlug slug <> ":" <> unRole si.role)
-  Nothing -> mkServiceId si.localName
-
-dirKey :: ServiceInstance -> Maybe String
-dirKey si = case si.executor of
-  Process p -> Just (basename (unAbsPath p.cwd))
-  Container (ContainerSpec cs) -> case cs.source of
-    Right (BuildContext b) -> Just (basename b.context)
-    _ -> Nothing
-  _ -> Nothing
-
-basename :: String -> String
-basename p = fromMaybe p (A.last (A.filter (_ /= "") (String.split (Pattern "/") p)))
 
 -- ── built-in §7 fixture demo (no args) ──────────────────────────────────────
 
