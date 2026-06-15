@@ -85,8 +85,9 @@ export const serveImpl = (config) => {
           pid: s.child ? s.child.pid : null,
         })),
         redirects: [...redirects.entries()].map(([publicPort, r]) => ({ publicPort, ...r })),
+        rejected: config.rejected,
       };
-      res.writeHead(200, { "content-type": "application/json" });
+      res.writeHead(200, { "content-type": "application/json", "access-control-allow-origin": "*" });
       res.end(JSON.stringify(body, null, 2) + "\n");
     });
     status.on("error", (err) => console.error(`  ✗ /state :${config.statusPort} (${err.code || err.message})`));

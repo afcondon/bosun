@@ -22,7 +22,7 @@ import Prelude
 import Bosun.Adapters.Registry (ingestRegistry)
 import Bosun.CLI.IO (readJsonFile, readJsonUrl)
 import Bosun.Reconcile (reconcile)
-import Bosun.Report (renderServePlan)
+import Bosun.Report (renderReject, renderServePlan)
 import Bosun.Serve (Redirect, Route, ServeDiff, ServePlan, serveDiff, servePlan)
 import Bosun.Version (version)
 import Data.Argonaut.Core (Json)
@@ -38,9 +38,15 @@ import Effect.Uncurried (EffectFn1, runEffectFn1)
 -- | read-only JSON `/state` endpoint on `statusPort`. `reload` is the SIGHUP
 -- | hook: the shim calls it to re-read+re-plan the registry and get back the
 -- | typed `ServeDiff` to apply (bind/unbind/rebind).
+-- | A rejected service, rendered for /state (Bosun's Chair shows the full
+-- | three-way; rejections aren't bound, so they only appear here, not as a
+-- | listener). Static from the initial plan — a reload refreshes routes/redirects.
+type RejectInfo = { serviceId :: String, reason :: String }
+
 type ServeConfig =
   { routes     :: Array Route
   , redirects  :: Array Redirect
+  , rejected   :: Array RejectInfo
   , statusPort :: Int
   , reload     :: Effect ServeDiff
   }
@@ -103,4 +109,5 @@ serveFrom label reread = do
         previous <- Ref.read ref
         Ref.write fresh ref
         pure (serveDiff previous fresh)
-    runEffectFn1 serveImpl { routes: plan.routes, redirects: plan.redirects, statusPort, reload }
+      rejected = plan.rejected <#> \r -> { serviceId: r.serviceId, reason: renderReject r.reason }
+    runEffectFn1 serveImpl { routes: plan.routes, redirects: plan.redirects, rejected, statusPort, reload }

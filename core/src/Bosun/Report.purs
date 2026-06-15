@@ -18,6 +18,7 @@ module Bosun.Report
   , renderScript
   , renderCommand
   , renderServePlan
+  , renderReject
   ) where
 
 import Prelude
