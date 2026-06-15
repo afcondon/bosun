@@ -18,18 +18,24 @@ import Effect.Aff (Aff, Milliseconds(..), delay)
 import Halogen as H
 import Halogen.Aff as HA
 import Halogen.HTML as HH
+import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.VDom.Driver (runUI)
 
+base :: String
+base = "http://localhost:3997"
+
 stateUrl :: String
-stateUrl = "http://localhost:3997/state"
+stateUrl = base <> "/state"
 
 pollMs :: Number
 pollMs = 1500.0
 
-type State = { view :: Maybe StateView, error :: Maybe String, ticks :: Int }
+type State = { view :: Maybe StateView, error :: Maybe String, ticks :: Int, busy :: Boolean }
 
-data Action = Initialize | Refresh
+-- Watch (Refresh, on a timer) + control (Reload the registry; Spawn/Stop one
+-- backend by public port). Control POSTs to serve's /control/* then refreshes.
+data Action = Initialize | Refresh | Reload | Spawn Int | Stop Int
 
 main :: Effect Unit
 main = HA.runHalogenAff do
@@ -39,7 +45,7 @@ main = HA.runHalogenAff do
 component :: forall q i o. H.Component q i o Aff
 component =
   H.mkComponent
-    { initialState: \_ -> { view: Nothing, error: Nothing, ticks: 0 }
+    { initialState: \_ -> { view: Nothing, error: Nothing, ticks: 0, busy: false }
     , render
     , eval: H.mkEval H.defaultEval { handleAction = handleAction, initialize = Just Initialize }
     }
@@ -50,6 +56,18 @@ handleAction = case _ of
     refresh
     void (H.fork pollLoop)
   Refresh -> refresh
+  Reload -> control "/control/reload"
+  Spawn port -> control ("/control/spawn?port=" <> show port)
+  Stop port -> control ("/control/stop?port=" <> show port)
+
+-- POST a control verb to serve, then refresh. `busy` gates the buttons + shows a
+-- pending hint while a spawn (which awaits readiness) is in flight.
+control :: forall o. String -> H.HalogenM State Action () o Aff Unit
+control path = do
+  H.modify_ _ { busy = true }
+  _ <- H.liftAff (AX.post RF.ignore (base <> path) Nothing)
+  H.modify_ _ { busy = false }
+  refresh
 
 pollLoop :: forall o. H.HalogenM State Action () o Aff Unit
 pollLoop = do
@@ -74,6 +92,11 @@ render s =
     [ HH.header [ cls "head" ]
         [ HH.h1_ [ HH.text "Bosun’s Chair" ]
         , HH.p [ cls "sub" ] [ HH.text "cockpit for bosun serve · polling localhost:3997/state" ]
+        , HH.div [ cls "toolbar" ]
+            [ HH.button [ cls "btn", HE.onClick \_ -> Reload, HP.disabled s.busy ]
+                [ HH.text "⟳ reload registry" ]
+            , if s.busy then HH.span [ cls "muted" ] [ HH.text "working…" ] else HH.text ""
+            ]
         ]
     , maybe (HH.text "") errorBanner s.error
     , case s.view of
@@ -93,7 +116,7 @@ viewBody v =
         , stat "rejected" (show (Array.length v.rejected))
         ]
     , sectionTable "ADMITTED" (Array.length v.routes)
-        [ "port", "service", "state", "backend", "pid" ]
+        [ "port", "service", "state", "backend", "pid", "" ]
         (map routeRow v.routes)
     , sectionTable "REDIRECT (421)" (Array.length v.redirects)
         [ "port", "service", "host", "→ target" ]
@@ -111,6 +134,11 @@ routeRow r =
     , HH.td_ [ HH.span [ cls (if r.up then "dot up" else "dot down") ] [ HH.text (if r.up then "up" else "down") ] ]
     , td (show r.internalPort)
     , td (maybe "—" show r.pid)
+    , HH.td_
+        [ HH.button
+            [ cls "btn sm", HE.onClick \_ -> (if r.up then Stop else Spawn) r.publicPort ]
+            [ HH.text (if r.up then "stop" else "spawn") ]
+        ]
     ]
 
 redirectRow :: forall m. RedirectInfo -> H.ComponentHTML Action () m

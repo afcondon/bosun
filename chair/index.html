@@ -45,6 +45,15 @@
     .dot::before { content: "●"; margin-right: 6px; }
     .dot.up { color: var(--up); }
     .dot.down { color: var(--down); }
+    .toolbar { margin-top: 20px; display: flex; align-items: center; gap: 12px; }
+    .btn {
+      font: inherit; font-size: 13px; padding: 7px 14px; background: var(--panel);
+      border: 1px solid var(--ink); color: var(--ink); cursor: pointer; letter-spacing: 0.01em;
+    }
+    .btn:hover { background: var(--ink); color: #fff; }
+    .btn:disabled { opacity: 0.4; cursor: default; }
+    .btn.sm { padding: 3px 11px; font-size: 12px; border-color: var(--line); color: var(--muted); }
+    .btn.sm:hover { background: var(--ink); color: #fff; border-color: var(--ink); }
     .foot { margin-top: 48px; color: var(--muted); font-size: 12px; }
   </style>
 </head>

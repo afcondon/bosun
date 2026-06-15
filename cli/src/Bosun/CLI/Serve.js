@@ -74,42 +74,100 @@ export const serveImpl = (config) => {
   for (const route of config.routes) bindRoute(route);
   for (const rd of config.redirects) bindRedirect(rd);
 
-  if (config.statusPort) {
-    const status = http.createServer((_req, res) => {
-      const body = {
-        routes: states.map((s) => ({
-          serviceId: s.route.serviceId,
-          publicPort: s.route.publicPort,
-          internalPort: s.route.internalPort,
-          up: !!s.child,
-          pid: s.child ? s.child.pid : null,
-        })),
-        redirects: [...redirects.entries()].map(([publicPort, r]) => ({ publicPort, ...r })),
-        rejected: config.rejected,
-      };
-      res.writeHead(200, { "content-type": "application/json", "access-control-allow-origin": "*" });
-      res.end(JSON.stringify(body, null, 2) + "\n");
-    });
-    status.on("error", (err) => console.error(`  ✗ /state :${config.statusPort} (${err.code || err.message})`));
-    status.listen(config.statusPort, INTERNAL_HOST, () => console.log(`  /state on :${config.statusPort}`));
-  }
+  const stateBody = () => ({
+    routes: states.map((s) => ({
+      serviceId: s.route.serviceId,
+      publicPort: s.route.publicPort,
+      internalPort: s.route.internalPort,
+      up: !!s.child,
+      pid: s.child ? s.child.pid : null,
+    })),
+    redirects: [...redirects.entries()].map(([publicPort, r]) => ({ publicPort, ...r })),
+    rejected: config.rejected,
+  });
 
-  // SIGHUP: re-read+re-plan in PureScript (config.reload), then apply the typed
-  // diff — unbind removed/changed ports (awaiting release), then (re)bind.
-  process.on("SIGHUP", () => {
-    let diff;
-    try { diff = config.reload(); }
-    catch (e) { console.error(`  ✗ reload failed: ${e && e.message ? e.message : e}`); return; }
-    Promise.all(diff.unbind.map(unbindPort)).then(() => {
+  // Re-read+re-plan in PureScript (config.reload → a typed ServeDiff), then apply
+  // it: unbind removed/changed ports (awaiting release) before (re)binding. Shared
+  // by SIGHUP and POST /control/reload.
+  const applyReload = () => {
+    const diff = config.reload();
+    return Promise.all(diff.unbind.map(unbindPort)).then(() => {
       diff.bindRoutes.forEach(bindRoute);
       diff.bindRedirects.forEach(bindRedirect);
       console.log(
         `  ↻ reload applied: -${diff.unbind.length} unbound, ` +
         `+${diff.bindRoutes.length} proxy, +${diff.bindRedirects.length} redirect`);
+      return diff;
     });
+  };
+
+  if (config.statusPort) {
+    const status = http.createServer((req, res) => controlRouter(req, res, { states, listeners, stateBody, applyReload }));
+    status.on("error", (err) => console.error(`  ✗ /state :${config.statusPort} (${err.code || err.message})`));
+    status.listen(config.statusPort, INTERNAL_HOST, () =>
+      console.log(`  /state + /control on :${config.statusPort}`));
+  }
+
+  // SIGHUP — same reload as POST /control/reload.
+  process.on("SIGHUP", () => {
+    try { applyReload(); }
+    catch (e) { console.error(`  ✗ reload failed: ${e && e.message ? e.message : e}`); }
   });
   // resident: this Effect never returns; the process lives until Ctrl-C.
 };
+
+const CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET,POST,OPTIONS",
+  "access-control-allow-headers": "*",
+};
+
+const sendJSON = (res, code, obj) => {
+  res.writeHead(code, { "content-type": "application/json", ...CORS });
+  res.end(JSON.stringify(obj, null, 2) + "\n");
+};
+
+// GET /state · POST /control/reload · POST /control/spawn?port= · POST
+// /control/stop?port=. The control verbs map to machinery serve already owns:
+// reload→applyReload (serveDiff), spawn→ensureBackend, stop→killBackend.
+function controlRouter(req, res, ctx) {
+  const u = new URL(req.url, "http://localhost");
+  if (req.method === "OPTIONS") { res.writeHead(204, CORS); res.end(); return; }
+
+  if (req.method === "GET" && (u.pathname === "/state" || u.pathname === "/")) {
+    sendJSON(res, 200, ctx.stateBody());
+    return;
+  }
+
+  if (req.method === "POST" && u.pathname === "/control/reload") {
+    Promise.resolve().then(ctx.applyReload).then((diff) =>
+      sendJSON(res, 200, {
+        ok: true,
+        unbound: diff.unbind,
+        boundRoutes: diff.bindRoutes.map((r) => r.publicPort),
+        boundRedirects: diff.bindRedirects.map((r) => r.publicPort),
+      })
+    ).catch((e) => sendJSON(res, 500, { ok: false, error: String((e && e.message) || e) }));
+    return;
+  }
+
+  if (req.method === "POST" && (u.pathname === "/control/spawn" || u.pathname === "/control/stop")) {
+    const port = Number(u.searchParams.get("port"));
+    const l = ctx.listeners.get(port);
+    if (!l || !l.state) { sendJSON(res, 404, { ok: false, error: `no proxy route on :${port}` }); return; }
+    if (u.pathname === "/control/stop") {
+      killBackend(l.state);
+      sendJSON(res, 200, { ok: true, serviceId: l.state.route.serviceId, up: false });
+      return;
+    }
+    ensureBackend(l.state)
+      .then(() => sendJSON(res, 200, { ok: true, serviceId: l.state.route.serviceId, up: true }))
+      .catch((e) => sendJSON(res, 502, { ok: false, error: String((e && e.message) || e) }));
+    return;
+  }
+
+  sendJSON(res, 404, { ok: false, error: "not found" });
+}
 
 function handle(state, req, res) {
   bumpIdle(state);
