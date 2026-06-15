@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# BUILD-PLAN Phase 7 spike — probe backend-go thunk thread-safety (the gating
-# unknown for `bosun serve`, the concurrent router). Transpiles the RaceSpike
-# harness, builds it with the Go race detector, and runs it: a shared CAF forced
-# from 16 goroutines. Expect BREAKAGE on the stock runtime (a data race and/or a
-# spurious "cyclic strict initialization" panic) — that's the finding.
+# BUILD-PLAN Phase 7 — backend-go thunk thread-safety REGRESSION GUARD.
 #
-# Pass `--fixed` to build against a sync.Once-patched copy of runtime.go (the
-# proposed fix) and show it run clean.
+# Originally a spike to PROVE the roadblock (stock `_force` was a data race that
+# could spuriously panic "cyclic strict initialization"). The fix — a per-thunk
+# sync.Once in `_force` — is now UPSTREAM in backend-go/runtime.go (#20), so this
+# script's job has flipped: it transpiles the RaceSpike harness, builds it with
+# the Go race detector, forces one shared CAF from 16 goroutines, and asserts it
+# runs CLEAN (exit 0, no race report). If this ever goes red again, the runtime
+# regressed. (`scripts/race-fix.py` documents the diff that was upstreamed; the
+# `--stock` flag below reverts it on a build-dir COPY to re-demonstrate the
+# original breakage on demand — the source stays fixed.)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,7 +17,7 @@ BOSUN="$(cd "$HERE/.." && pwd)"
 BACKEND_GO="${BACKEND_GO:-$BOSUN/../../purescript-backends/purescript-go/backend-go}"
 MAIN="Bosun.Conformance.RaceSpike"
 OUT="${OUT:-/tmp/bosun-go-race}"
-FIXED="${1:-}"
+STOCK="${1:-}"
 
 echo "==> build bosun (corefn)"
 ( cd "$BOSUN" && spago build >/dev/null 2>&1 )
@@ -25,9 +28,9 @@ rm -rf "$OUT"
 cp "$BACKEND_GO/runtime.go" "$OUT/runtime.go"
 cp "$BOSUN/conformance/go/bosun_race_foreign.go" "$OUT/bosun_race_foreign.go"
 
-if [ "$FIXED" = "--fixed" ]; then
-  echo "==> applying the sync.Once fix to the runtime COPY (source runtime.go untouched)"
-  python3 "$HERE/race-fix.py" "$OUT/runtime.go"
+if [ "$STOCK" = "--stock" ]; then
+  echo "==> --stock: reverting the sync.Once fix on the build COPY (source untouched) to re-show the original breakage"
+  python3 "$HERE/race-fix.py" --revert "$OUT/runtime.go"
 fi
 
 echo "==> go build -race + run (16 goroutines forcing one CAF)"

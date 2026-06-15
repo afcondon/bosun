@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
-"""Patch a COPY of backend-go's runtime.go with the sync.Once thunk fix.
+"""The backend-go thunk thread-safety diff — now UPSTREAM, kept as documentation.
 
-The proposed fix for the Phase-7 thunk thread-safety roadblock: make `_force`
-thread-safe (and double-eval-proof) via a per-thunk sync.Once. Applied only to
-the build-dir copy by go-race.sh --fixed; the source runtime.go is untouched.
+The fix for the Phase-7 thunk thread-safety roadblock: make `_force` thread-safe
+(and double-eval-proof) via a per-thunk sync.Once. As of #20 this is committed in
+backend-go/runtime.go, so this script no longer patches the source. It documents
+the exact diff that was upstreamed, and supports `--revert` to apply the INVERSE
+on a build-dir COPY — reverting to the old unsynchronized `done/forcing` thunk so
+`scripts/go-race.sh --stock` can re-demonstrate the original data race / spurious
+"cyclic strict initialization" panic on demand. The source stays fixed.
 
-Tradeoff: sync.Once replaces the eager-cycle `panic("cyclic strict
-initialization")` — a genuine self-referential strict cycle would deadlock
-rather than panic. backend-go's legit cyclic typeclass-dict clusters break their
-cycles with deferred lazy `\\_ -> dict` edges (no synchronous re-force), so they
-are unaffected; the lost diagnostic only matters for a real eager value cycle.
+    race-fix.py <runtime.go>            # forward: old -> sync.Once (legacy; source is already fixed)
+    race-fix.py --revert <runtime.go>   # inverse: sync.Once -> old (re-create the breakage on a copy)
+
+Tradeoff of the upstreamed fix: sync.Once replaces the eager-cycle
+`panic("cyclic strict initialization")` — a genuine self-referential strict cycle
+deadlocks rather than panics. backend-go does not emit such cycles (cyclic
+typeclass-dict clusters break their cycles with deferred lazy `\\_ -> dict` edges,
+no synchronous re-force), and the resident-server hung-goroutine case is owned at
+the serve layer via request/handler timeouts.
 """
 import sys
 
-path = sys.argv[1]
-src = open(path).read()
-
-repls = [
-    # 1. add the sync import
+# (old_unsynchronized, new_sync_once) pairs — forward applies old->new.
+PAIRS = [
+    # 1. the sync import
     ('import (\n\t"fmt"\n\t"math"\n\t"os"\n\t"strconv"\n\t"strings"\n)',
      'import (\n\t"fmt"\n\t"math"\n\t"os"\n\t"strconv"\n\t"strings"\n\t"sync"\n)'),
     # 2. thunk struct: forcing/done flags -> a sync.Once
@@ -31,10 +37,19 @@ repls = [
      '\tt.once.Do(func() {\n\t\tt.val = t.fn()\n\t\tt.fn = nil\n\t})\n\treturn t.val\n}'),
 ]
 
-for old, new in repls:
-    if old not in src:
-        sys.exit(f"race-fix: pattern not found (runtime.go shape changed?):\n{old[:80]}...")
-    src = src.replace(old, new, 1)
+args = sys.argv[1:]
+revert = "--revert" in args
+paths = [a for a in args if not a.startswith("--")]
+if len(paths) != 1:
+    sys.exit("usage: race-fix.py [--revert] <runtime.go>")
+path = paths[0]
+
+src = open(path).read()
+for old, new in PAIRS:
+    frm, to = (new, old) if revert else (old, new)
+    if frm not in src:
+        sys.exit(f"race-fix: pattern not found (runtime.go shape changed, or already in target state?):\n{frm[:80]}...")
+    src = src.replace(frm, to, 1)
 
 open(path, "w").write(src)
-print("race-fix: applied sync.Once thunk fix to", path)
+print(f"race-fix: {'reverted to old unsynchronized thunk' if revert else 'applied sync.Once fix'} on", path)
