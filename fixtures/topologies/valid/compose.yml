@@ -1,0 +1,64 @@
+# Fabricated topology fixture — VALID (realises SCENARIOS A2 three-tier,
+# A3 fan-out, C3 fan-in). A coherent multi-tier web stack with a real
+# dependency DAG so the Pillar-3 graph shows genuine left→right boot-order
+# layers, fan-in, and a diamond — the structure the frozen polyglot corpus
+# lacks (it has 1 edge across 54 nodes). Acyclic, all gates checkable
+# (service_healthy targets carry healthchecks), distinct host ports — so it
+# VALIDATES, which later exercises the tight boot-order DAG too.
+#
+#   layer 0:  postgres   redis
+#   layer 1:  auth-api  catalog-api  search-api  migrate   (fan-in on the stores)
+#   layer 2:  web                                          (diamond over the apis)
+#   layer 3:  edge
+services:
+  postgres:
+    build: { context: ./postgres }
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+  redis:
+    build: { context: ./redis }
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+
+  auth-api:
+    build: { context: ./auth }
+    ports: ["3001:3001"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+  catalog-api:
+    build: { context: ./catalog }
+    ports: ["3002:3002"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+  search-api:
+    build: { context: ./search }
+    ports: ["3003:3003"]
+    depends_on:
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+  migrate:
+    build: { context: ./migrate }
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  web:
+    build: { context: ./web }
+    ports: ["8080:80"]
+    depends_on:
+      auth-api: { condition: service_started }
+      catalog-api: { condition: service_started }
+      search-api: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+
+  edge:
+    build: { context: ./edge }
+    ports: ["80:80"]
+    depends_on:
+      web: { condition: service_started }

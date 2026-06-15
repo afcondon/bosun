@@ -1,0 +1,48 @@
+# Fabricated topology fixture — FAULTS (realises SCENARIOS B1 cycle,
+# B2 dangling, B3 port-collision, B5 uncheckable-gate). The same kind of
+# stack as ../valid, but deliberately broken so the Pillar-3 loose graph
+# shows what it's built to surface: GHOST nodes for dangling targets and
+# visible BACK-EDGES for cycles (the loose view always renders), and the
+# ingestion view reports the matching DeployError families.
+services:
+  postgres:
+    build: { context: ./postgres }
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+
+  # B2 — dangling dependency: ghost-queue is defined by no source → ghost node.
+  api:
+    build: { context: ./api }
+    ports: ["3000:3000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      ghost-queue: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+
+  # B5 — uncheckable gate: waits on `cache` to be healthy, but cache has no
+  # healthcheck (no readiness signal to gate on).
+  cache:
+    build: { context: ./cache }
+  worker:
+    build: { context: ./worker }
+    depends_on:
+      cache: { condition: service_healthy }
+
+  # B1 — dependency cycle: ping ⇄ pong (a visible back-edge in the graph).
+  ping:
+    build: { context: ./ping }
+    depends_on:
+      pong: { condition: service_started }
+  pong:
+    build: { context: ./pong }
+    depends_on:
+      ping: { condition: service_started }
+
+  # B3 — port collision: both publish host port 9090.
+  metrics-a:
+    build: { context: ./metrics-a }
+    ports: ["9090:9090"]
+  metrics-b:
+    build: { context: ./metrics-b }
+    ports: ["9090:9090"]

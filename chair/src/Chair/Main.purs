@@ -48,6 +48,10 @@ pollMs = 1500.0
 corpusDir :: String
 corpusDir = "/Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/polyglot-2026-06-14"
 
+-- Fabricated topology fixtures (rich dependency structure for the graph view).
+fixturesDir :: String
+fixturesDir = "/Users/afc/work/afc-work/ShapedSteer/bosun/fixtures"
+
 data View = Cockpit | Ingestion | Graph
 derive instance Eq View
 
@@ -80,6 +84,7 @@ data Action
   | SetCompose String
   | SetRegistry String
   | LoadCorpus
+  | LoadPaths String String   -- set compose+registry paths, then analyze
   | RunAnalyze
   -- editable aliases (C2)
   | SetMergeName String
@@ -120,6 +125,9 @@ handleAction = case _ of
   SetRegistry s -> H.modify_ _ { registryPath = s }
   LoadCorpus -> H.modify_ _
     { composePath = corpusDir <> "/docker-compose.yml", registryPath = corpusDir <> "/registry.json" }
+  LoadPaths c r -> do
+    H.modify_ _ { composePath = c, registryPath = r }
+    runAnalyze
   RunAnalyze -> runAnalyze
   SetMergeName x -> H.modify_ _ { mergeName = x }
   SetMergeCanon x -> H.modify_ _ { mergeCanon = x }
@@ -292,13 +300,15 @@ renderGraphView :: forall m. State -> H.ComponentHTML Action () m
 renderGraphView s =
   HH.div_
     [ HH.div [ cls "toolbar" ]
-        [ HH.button [ cls "btn", HE.onClick \_ -> RunAnalyze, HP.disabled s.anaLoading ] [ HH.text "analyze ▶" ]
-        , HH.button [ cls "btn sm", HE.onClick \_ -> LoadCorpus ] [ HH.text "load frozen corpus" ]
+        [ HH.span [ cls "muted" ] [ HH.text "load:" ]
+        , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/valid/compose.yml") (fixturesDir <> "/topologies/valid/registry.json") ] [ HH.text "topology ✓ (valid)" ]
+        , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/faults/compose.yml") (fixturesDir <> "/topologies/faults/registry.json") ] [ HH.text "topology ✗ (faults)" ]
+        , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (corpusDir <> "/docker-compose.yml") (corpusDir <> "/registry.json") ] [ HH.text "frozen corpus" ]
         , if s.anaLoading then HH.span [ cls "muted" ] [ HH.text "analysing…" ] else HH.text ""
         ]
     , maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text e ]) s.anaErr
     , case s.analysis of
-        Nothing -> HH.p [ cls "muted" ] [ HH.text "load the frozen corpus (then analyze), or analyze a compose+registry in the Ingestion view — the graph renders the same response here." ]
+        Nothing -> HH.p [ cls "muted" ] [ HH.text "load a fixture above — the graph renders the same AnalyzeResult the Ingestion view uses." ]
         Just a -> graphView a
     ]
 
