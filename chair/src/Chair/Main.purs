@@ -303,6 +303,7 @@ renderGraphView s =
         [ HH.span [ cls "muted" ] [ HH.text "load:" ]
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/valid/compose.yml") (fixturesDir <> "/topologies/valid/registry.json") ] [ HH.text "topology ✓ (valid)" ]
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/faults/compose.yml") (fixturesDir <> "/topologies/faults/registry.json") ] [ HH.text "topology ✗ (faults)" ]
+        , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/gradient/compose.yml") (fixturesDir <> "/topologies/gradient/registry.json") ] [ HH.text "gradient (all 5 marks)" ]
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (corpusDir <> "/docker-compose.yml") (corpusDir <> "/registry.json") ] [ HH.text "frozen corpus" ]
         , if s.anaLoading then HH.span [ cls "muted" ] [ HH.text "analysing…" ] else HH.text ""
         ]

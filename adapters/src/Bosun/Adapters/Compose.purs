@@ -56,7 +56,7 @@ decodeService name sj = do
     , reachability: maybe noNetwork hostPort (publishPort o)
     , health: { liveness: probeOf o, readiness: probeOf o, startup: Nothing }
     , restart: { base: UnlessStopped, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }
-    , rawDeps: dependsOn o
+    , rawDeps: dependsOn o <> xbosunDeps o
     , rawRoutes: []
     , selectors: map Profile (strArray o "profiles")
     , extra: Map.empty
@@ -116,6 +116,34 @@ gateOf cj = case toObject cj >>= str' "condition" of
   _ -> OnStarted
   where
   str' k ob = FO.lookup k ob >>= toString
+
+-- | The full requirement gradient compose can't natively express, carried in a
+-- | service's `x-bosun.requires:` map (target -> kind). compose `x-` keys are
+-- | the sanctioned home for "the stuff that has no other format" (the overlay
+-- | philosophy, applied inline). Each entry adds a typed dependency edge:
+-- |
+-- |   web:
+-- |     x-bosun:
+-- |       requires:
+-- |         logger-sidecar: binds-to     # ●●-side of the §4.3 gradient
+-- |         external-vault: requisite
+-- |         metrics: wants
+xbosunDeps :: Object Json -> Array RawDep
+xbosunDeps o = fromMaybe [] do
+  xb <- FO.lookup "x-bosun" o >>= toObject
+  reqs <- FO.lookup "requires" xb >>= toObject
+  pure (map (uncurry (\n kj -> typedDep n (fromMaybe "requires" (toString kj)))) (FO.toUnfoldable reqs))
+
+typedDep :: String -> String -> RawDep
+typedDep n kind = { to: n, ordering: Just StartAfter, requirement: Just (reqOf kind) }
+
+reqOf :: String -> Requirement
+reqOf = case _ of
+  "wants" -> Wants
+  "requisite" -> Requisite
+  "binds-to" -> BindsTo
+  "part-of" -> PartOf
+  _ -> Requires OnStarted
 
 strArray :: Object Json -> String -> Array String
 strArray o k = fromMaybe [] (FO.lookup k o >>= toArray <#> A.mapMaybe toString)

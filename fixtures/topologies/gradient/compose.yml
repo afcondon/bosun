@@ -1,0 +1,38 @@
+# Fabricated fixture — the full §4.3 REQUIREMENT GRADIENT in one graph.
+# compose's `depends_on` only yields `requires`; the other kinds ride in the
+# `x-bosun.requires:` extension (target -> kind), which the compose adapter now
+# reads. Exercises all five midpoint marks at once:
+#
+#   api → postgres   ◉ requires (depends_on, condition: service_healthy)
+#   api → vault      ● requisite   (must pre-exist; we never start it)
+#   api → metrics    ○ wants       (best-effort)
+#   api → logger     ○○ binds-to   (crash-coupled sidecar)
+#   worker → api     ●● part-of    (reverse-only lifecycle)
+services:
+  postgres:
+    build: { context: ./postgres }
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+  vault:
+    build: { context: ./vault }
+  metrics:
+    build: { context: ./metrics }
+  logger:
+    build: { context: ./logger }
+
+  api:
+    build: { context: ./api }
+    ports: ["3000:3000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    x-bosun:
+      requires:
+        vault: requisite
+        metrics: wants
+        logger: binds-to
+
+  worker:
+    build: { context: ./worker }
+    x-bosun:
+      requires:
+        api: part-of
