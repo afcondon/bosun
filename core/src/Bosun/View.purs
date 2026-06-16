@@ -21,7 +21,7 @@ import Bosun.Edge (DepOrdering(..), Gate(..), Requirement(..))
 import Bosun.Error (DeployError(..), SdiViolation(..))
 import Bosun.Executor (BuildContext(..), CDNProvider(..), ContainerSpec(..), Executor(..), ExecutorMechanism(..), ImageRef(..), RemoteVia(..), SystemdScope(..), mechanism)
 import Bosun.Health (Probe(..))
-import Bosun.Reachability (classify)
+import Bosun.Reachability (Address(..), BindScope(..), Openness(..), Reachability, addresses, classify, openness)
 import Bosun.Reconcile (AliasMap, Divergence(..), FacetKey, ReconcileResult, exposureLabel)
 import Bosun.Selector (Selector(..))
 import Bosun.Service (Service, ServiceInstance, Source(..), ValidatedDeployment, deploymentServices, unBootOrder, unRole, unServiceRef, unValidatedDeployment)
@@ -33,6 +33,7 @@ import Data.Codec.Argonaut.Record as CAR
 import Data.Either (Either(..))
 import Data.Foldable (foldl, foldr)
 import Data.Map as Map
+import Data.Set as Set
 import Data.Maybe (Maybe(..), maybe)
 import Data.Profunctor (dimap)
 import Data.String (joinWith)
@@ -45,6 +46,20 @@ type DepView = { to :: String, ordering :: Maybe String, requirement :: Maybe St
 type RouteView = { to :: String, path :: String }
 type ExecutorView = { mechanism :: String, detail :: String }
 
+-- | One inbound address, projected for the exposure badge — the `Address` glob
+-- | (NAME·HOST·PORT·PATH·SINK) as a flat record the badge renderer reads. Only
+-- | the cells relevant to the kind are populated; `openness` carries the spine.
+type AddressView =
+  { kind     :: String         -- listening | proxied | published | socket
+  , bind     :: Maybe String   -- listening: all | loopback | internal | <host>
+  , port     :: Maybe Int      -- listening
+  , path     :: Maybe String   -- proxied
+  , proxy    :: Maybe String   -- proxied
+  , domain   :: Maybe String   -- published
+  , socket   :: Maybe String   -- socket
+  , openness :: String         -- none | local | cluster | host | wide | internet
+  }
+
 -- | RUNG 1 — a single ingested instance, loose/open, per (source × unit).
 type ServiceInstanceView =
   { source    :: String
@@ -54,6 +69,7 @@ type ServiceInstanceView =
   , host      :: Maybe String
   , executor  :: ExecutorView
   , exposure  :: String
+  , reachability :: Array AddressView
   , readiness :: String
   , deps      :: Array DepView
   , routes    :: Array RouteView
@@ -183,6 +199,37 @@ requirementLabel = case _ of
 
 -- ── projections IR → view ────────────────────────────────────────────────────
 
+opennessLabel :: Openness -> String
+opennessLabel = case _ of
+  NoneOpen -> "none"
+  LocalOnly -> "local"
+  ClusterOnly -> "cluster"
+  HostScoped -> "host"
+  WideOpen -> "wide"
+  InternetWide -> "internet"
+
+bindLabel :: BindScope -> String
+bindLabel = case _ of
+  AllIfaces -> "all"
+  HostIface h -> unHost h
+  Internal -> "internal"
+  Loopback -> "loopback"
+
+addressView :: Address -> AddressView
+addressView a = case a of
+  Listening r -> base { kind = "listening", bind = Just (bindLabel r.bind), port = Just (unPort r.port) }
+  Proxied r -> base { kind = "proxied", proxy = Just (unServiceId r.proxy), path = Just (unRoutePath r.path) }
+  Published d -> base { kind = "published", domain = Just (unDomain d) }
+  Socket p -> base { kind = "socket", socket = Just (unAbsPath p) }
+  where
+  base =
+    { kind: "", bind: Nothing, port: Nothing, path: Nothing, proxy: Nothing
+    , domain: Nothing, socket: Nothing, openness: opennessLabel (openness a)
+    }
+
+reachabilityView :: Reachability -> Array AddressView
+reachabilityView r = map addressView (Set.toUnfoldable (addresses r) :: Array Address)
+
 serviceInstanceView :: ServiceInstance -> ServiceInstanceView
 serviceInstanceView si =
   { source: sourceLabel si.source
@@ -192,6 +239,7 @@ serviceInstanceView si =
   , host: map unHost si.host
   , executor: executorView si.executor
   , exposure: exposureLabel (classify si.reachability)
+  , reachability: reachabilityView si.reachability
   , readiness: probeLabel si.health.readiness
   , deps: map depView si.rawDeps
   , routes: map (\r -> { to: r.to, path: unRoutePath r.path }) si.rawRoutes
@@ -329,6 +377,18 @@ routeViewCodec = CAR.object "RouteView" { to: CA.string, path: CA.string }
 executorViewCodec :: CA.JsonCodec ExecutorView
 executorViewCodec = CAR.object "ExecutorView" { mechanism: CA.string, detail: CA.string }
 
+addressViewCodec :: CA.JsonCodec AddressView
+addressViewCodec = CAR.object "AddressView"
+  { kind: CA.string
+  , bind: CAC.maybe CA.string
+  , port: CAC.maybe CA.int
+  , path: CAC.maybe CA.string
+  , proxy: CAC.maybe CA.string
+  , domain: CAC.maybe CA.string
+  , socket: CAC.maybe CA.string
+  , openness: CA.string
+  }
+
 serviceInstanceViewCodec :: CA.JsonCodec ServiceInstanceView
 serviceInstanceViewCodec = CAR.object "ServiceInstanceView"
   { source: CA.string
@@ -338,6 +398,7 @@ serviceInstanceViewCodec = CAR.object "ServiceInstanceView"
   , host: CAC.maybe CA.string
   , executor: executorViewCodec
   , exposure: CA.string
+  , reachability: CA.array addressViewCodec
   , readiness: CA.string
   , deps: CA.array depViewCodec
   , routes: CA.array routeViewCodec

@@ -30,6 +30,7 @@ sampleInstance =
   , host: Just "macmini"
   , executor: { mechanism: "container", detail: "build ./tidal" }
   , exposure: "host:8193"
+  , reachability: [ { kind: "listening", bind: Just "all", port: Just 8193, path: Nothing, proxy: Nothing, domain: Nothing, socket: Nothing, openness: "wide" } ]
   , readiness: "http / :8193"
   , deps: [ { to: "api", ordering: Just "after", requirement: Just "requires(ready)" } ]
   , routes: [ { to: "edge", path: "/tidal" } ]
@@ -40,7 +41,7 @@ sampleInstance =
 bareInstance :: ServiceInstanceView
 bareInstance =
   { source: "registry", project: Nothing, localName: "worker", role: "worker", host: Nothing
-  , executor: { mechanism: "process", detail: "/srv$ run" }, exposure: "none", readiness: "none"
+  , executor: { mechanism: "process", detail: "/srv$ run" }, exposure: "none", reachability: [], readiness: "none"
   , deps: [], routes: [], selectors: []
   }
 
