@@ -39,6 +39,7 @@
             "halogen",
             "halogen-svg-elems",
             "http-methods",
+            "hylograph-graph",
             "hylograph-transitions",
             "integers",
             "maybe",
@@ -1361,6 +1362,21 @@
         "unfoldable"
       ]
     },
+    "graphs": {
+      "type": "registry",
+      "version": "8.1.0",
+      "integrity": "sha256-qllMIjmOGqwELOlXyHuiTT3YpeL/+gjaq7omAZ4npJQ=",
+      "dependencies": [
+        "bifunctors",
+        "catenable-lists",
+        "foldable-traversable",
+        "lists",
+        "maybe",
+        "ordered-collections",
+        "prelude",
+        "tuples"
+      ]
+    },
     "halogen": {
       "type": "registry",
       "version": "7.0.0",
@@ -1531,6 +1547,26 @@
         "typelevel-prelude",
         "unsafe-coerce",
         "untagged-union"
+      ]
+    },
+    "hylograph-graph": {
+      "type": "registry",
+      "version": "0.3.0",
+      "integrity": "sha256-/0tXvvkDmwJ9VxFprJeE8QZB0Pyv6Aon362lhUWbP/I=",
+      "dependencies": [
+        "arrays",
+        "either",
+        "foldable-traversable",
+        "free",
+        "graphs",
+        "integers",
+        "lists",
+        "maybe",
+        "numbers",
+        "ordered-collections",
+        "prelude",
+        "tree-rose",
+        "tuples"
       ]
     },
     "hylograph-transitions": {
@@ -2366,6 +2402,20 @@
         "tailrec",
         "tuples",
         "unfoldable"
+      ]
+    },
+    "tree-rose": {
+      "type": "registry",
+      "version": "4.0.2",
+      "integrity": "sha256-7Zu/FJb5jmSDxy9N5t5cKUgTWUnXkOvyIoDT/07l8as=",
+      "dependencies": [
+        "control",
+        "foldable-traversable",
+        "free",
+        "lists",
+        "maybe",
+        "prelude",
+        "tailrec"
       ]
     },
     "tuples": {

@@ -21,6 +21,8 @@ module Chair.Graph (graphView, layoutPositions) where
 import Prelude
 
 import Bosun.View (AddressView, AnalyzeResult, ServiceInstanceView)
+import Data.Graph.Algorithms (SimpleGraph)
+import Data.Graph.Decomposition (articulationPoints, bridges)
 import Hylograph.Transition.Interpolate (Point)
 import Data.Array as Array
 import Data.Foldable (foldl, maximum, minimum)
@@ -31,6 +33,7 @@ import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Set as Set
 import Data.String (joinWith)
 import Data.String.CodeUnits (length, take)
+import Data.Tuple (Tuple(..))
 import Data.Tuple.Nested ((/\))
 import Halogen as H
 import Halogen.HTML as HH
@@ -190,6 +193,12 @@ crossHostColor = SA.RGB 200 130 40
 crossHostMild :: SA.Color
 crossHostMild = SA.RGB 214 184 130
 
+-- the alarm hue for structural SPOFs (§8.7): cut-vertex halos + bridge edges.
+-- A clear red, distinct from the amber boundary ramp (which is about distance,
+-- not danger) and from every source border hue.
+alarm :: SA.Color
+alarm = SA.RGB 206 51 51
+
 -- traffic channel — a calm, non-source hue (the source palette owns blue/green/
 -- violet/amber/indigo/grey). Provisional pending the holistic attention pass.
 traffic :: SA.Color
@@ -231,6 +240,24 @@ buildPlacementNodes insts edges =
 levelHead :: Number
 levelHead = 24.0
 
+-- ── structural SPOF (§8.7) ───────────────────────────────────────────────────
+
+-- the dependency graph as an UNDIRECTED SimpleGraph, for biconnected
+-- decomposition. Cut-vertices (articulation points) are nodes whose loss
+-- partitions the graph — "everything funnels through this one service with no
+-- alternative"; bridges are edges with no redundant path around them. Both are
+-- SPOFs read purely from the graph's shape, computed not remembered.
+spofGraph :: Array String -> Array Edge -> SimpleGraph String
+spofGraph ids edges = { nodes: ids, edges: foldl ins Map.empty edges }
+  where
+  ins acc e =
+    Map.alter (Just <<< Set.insert e.to <<< fromMaybe Set.empty) e.from
+      (Map.alter (Just <<< Set.insert e.from <<< fromMaybe Set.empty) e.to acc)
+
+-- normalise an undirected edge so (a,b) and (b,a) hash the same for lookup
+normEdge :: String -> String -> Tuple String String
+normEdge a b = if a <= b then Tuple a b else Tuple b a
+
 -- ── the view ─────────────────────────────────────────────────────────────────
 
 -- `hoverAct` reports the hovered node id (Nothing on leave); `focus` is the
@@ -250,8 +277,8 @@ layoutPositions groupByHost a =
   in
     Map.fromFoldable (map (\n -> n.id /\ { x: n.x, y: n.y }) nodes)
 
-graphView :: forall act m. (Maybe String -> act) -> Boolean -> Map String Point -> Maybe String -> AnalyzeResult -> H.ComponentHTML act () m
-graphView hoverAct groupByHost livePos focus a =
+graphView :: forall act m. (Maybe String -> act) -> Boolean -> Boolean -> Map String Point -> Maybe String -> AnalyzeResult -> H.ComponentHTML act () m
+graphView hoverAct groupByHost showSpof livePos focus a =
   let
     insts = a.instances
     edges = edgesOf insts
@@ -280,6 +307,11 @@ graphView hoverAct groupByHost livePos focus a =
     edgeDim from to = case focus of
       Nothing -> false
       Just fid -> not (from == fid || to == fid)
+    -- structural SPOFs, computed from the dependency graph's shape (§8.7)
+    spofG = spofGraph (map _.id nodes) edges
+    cutVerts = if showSpof then articulationPoints spofG else Set.empty
+    bridgeSet = if showSpof then Set.fromFoldable (map (\(Tuple x y) -> normEdge x y) (bridges spofG)) else Set.empty
+    isBridge from to = Set.member (normEdge from to) bridgeSet
   in
     HH.div [ cls "graph" ]
       [ HH.div [ cls "graph-meta" ]
@@ -287,7 +319,8 @@ graphView hoverAct groupByHost livePos focus a =
               [ HH.text (show (Array.length nodes) <> " nodes · "
                   <> show (Array.length edges) <> " deps · "
                   <> show (Array.length routes) <> " routes · "
-                  <> (if groupByHost then "grouped by host" else "loose view (left → right = boot order)")) ]
+                  <> (if groupByHost then "grouped by host" else "loose view (left → right = boot order)")
+                  <> (if showSpof then " · ⚠ " <> show (Set.size cutVerts) <> " cut-vertices · " <> show (Set.size bridgeSet) <> " bridges" else "")) ]
           ]
       , SE.svg
           [ SA.viewBox 0.0 0.0 maxX maxY, SA.width maxX, SA.height maxY
@@ -297,9 +330,9 @@ graphView hoverAct groupByHost livePos focus a =
           [ SE.g [ SA.class_ (H.ClassName "traffic") ]
               (Array.mapMaybe (\r -> trafficLine (edgeDim r.from r.to) posOf r) routes)
           , SE.g [ SA.class_ (H.ClassName "edges") ]
-              (Array.mapMaybe (\e -> edgeLine (edgeDim e.from e.to) posOf e) edges)
+              (Array.mapMaybe (\e -> edgeLine (edgeDim e.from e.to) (isBridge e.from e.to) posOf e) edges)
           , SE.g [ SA.class_ (H.ClassName "nodes") ]
-              (map (\n -> nodeMark hoverAct (nodeDim n) n) renderNodes)
+              (map (\n -> nodeMark hoverAct (nodeDim n) (Set.member n.id cutVerts) n) renderNodes)
           ] )
       , legend
       ]
@@ -313,13 +346,16 @@ nbr :: String -> String -> String -> Array String
 nbr f x y = if x == f then [ y ] else if y == f then [ x ] else []
 
 -- one dependency edge: a line (dependent → dependency) + the midpoint mark.
+-- `bridge` (SPOF mode on) overrides the boundary hue with alarm-red: this edge
+-- is a single link with no redundant path around it (§8.7).
 edgeLine
   :: forall act m
    . Boolean
+  -> Boolean
   -> (String -> Maybe Node)
   -> Edge
   -> Maybe (H.ComponentHTML act () m)
-edgeLine dim posOf e = do
+edgeLine dim bridge posOf e = do
   from <- posOf e.from
   to <- posOf e.to
   let
@@ -342,8 +378,8 @@ edgeLine dim posOf e = do
   pure $ SE.g [ SA.class_ (H.ClassName (dimClass "edge" dim)) ]
     ( [ SE.line
           [ SA.x1 fx, SA.y1 fy, SA.x2 tx, SA.y2 ty
-          , SA.stroke boundaryColor
-          , SA.strokeWidth (if diverges then 1.7 else 1.2)
+          , SA.stroke (if bridge then alarm else boundaryColor)
+          , SA.strokeWidth (if bridge then 2.2 else if diverges then 1.7 else 1.2)
           ]
       ] <> midpointMark mx my e.req
     )
@@ -494,8 +530,8 @@ midpointMark mx my = case _ of
 
 -- one node: a rounded rect bordered by source, label + mechanism tag.
 -- ghosts (dangling targets) render hollow + faint.
-nodeMark :: forall act m. (Maybe String -> act) -> Boolean -> Node -> H.ComponentHTML act () m
-nodeMark hoverAct dim n =
+nodeMark :: forall act m. (Maybe String -> act) -> Boolean -> Boolean -> Node -> H.ComponentHTML act () m
+nodeMark hoverAct dim cutVertex n =
   -- positioned by a `translate` on the group, children at LOCAL 0,0 — so a layout
   -- pivot changes only this transform and the browser CSS-tweens the move
   -- (§6.1 object constancy). The reordering in graphView keeps Halogen reusing
@@ -506,7 +542,8 @@ nodeMark hoverAct dim n =
     , HE.onMouseEnter \_ -> hoverAct (Just n.id)
     , HE.onMouseLeave \_ -> hoverAct Nothing
     ]
-    ( [ SE.rect
+    ( cutVertexHalo cutVertex <>
+      [ SE.rect
           [ SA.x 0.0, SA.y 0.0, SA.width nodeW, SA.height nodeH, SA.rx 5.0
           , SA.fill (if n.ghost then paper else layerRamp n.depth)
           , SA.fillOpacity (if n.ghost then 0.4 else 1.0)
@@ -525,6 +562,19 @@ nodeMark hoverAct dim n =
           [ HH.text (if n.ghost then "undefined — no source" else (n.mech <> maybe "" (\h -> " · " <> h) n.host)) ]
       ] <> exposureBadge n
     )
+
+-- the cut-vertex alarm halo (§8.7): an alarm-red ring just outside the node,
+-- drawn behind it. A cut-vertex is a service whose loss partitions the graph —
+-- lose it and everything beyond is cut off, with no alternative path.
+cutVertexHalo :: forall act m. Boolean -> Array (H.ComponentHTML act () m)
+cutVertexHalo false = []
+cutVertexHalo true =
+  [ SE.rect
+      [ SA.x (-4.0), SA.y (-4.0), SA.width (nodeW + 8.0), SA.height (nodeH + 8.0), SA.rx 8.0
+      , SA.fill paper, SA.fillOpacity 0.0, SA.stroke alarm, SA.strokeWidth 2.4
+      , SA.class_ (H.ClassName "spof-halo")
+      ]
+  ]
 
 -- the collapsed EXPOSURE BADGE (the Siglet's smallest form): on the node's
 -- outward-facing (right) edge, an openness-coloured dot + the address value.
@@ -614,6 +664,11 @@ legend =
         , leg "●" "openness dot: warm = wide/internet · cool = local/cluster"
         , leg ":p" "the address value (port / path / domain / socket)"
         , leg "—" "no dot = no inbound surface (worker)"
+        ]
+    , HH.div [ cls "leg-grp" ]
+        [ HH.span [ cls "leg-h" ] [ HH.text "structural SPOF (⚠ toggle)" ]
+        , leg "▢" "red halo = cut-vertex (loss partitions the graph)"
+        , leg "▬" "red edge = bridge (single link, no redundant path)"
         ]
     ]
   where

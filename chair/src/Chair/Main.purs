@@ -89,6 +89,7 @@ type State =
   , livePos :: Map String Point
   , anim :: Maybe (Array AnimNode)
   , animGen :: Int
+  , showSpof :: Boolean      -- overlay structural single-points-of-failure (§8.7)
   }
 
 -- one node's position transition (interpolating a 2D Point through the engine)
@@ -114,6 +115,7 @@ data Action
   | RemoveOverride Int
   | HoverNode (Maybe String)
   | ToggleGroupBy
+  | ToggleSpof
 
 main :: Effect Unit
 main = HA.runHalogenAff do
@@ -129,7 +131,7 @@ component =
         , composePath: "", registryPath: "", analysis: Nothing, anaErr: Nothing, anaLoading: false
         , overrides: [], mergeName: "", mergeCanon: ""
         , graphFocus: Nothing, groupByHost: false
-        , livePos: Map.empty, anim: Nothing, animGen: 0
+        , livePos: Map.empty, anim: Nothing, animGen: 0, showSpof: false
         }
     , render
     , eval: H.mkEval H.defaultEval { handleAction = handleAction, initialize = Just Initialize }
@@ -185,6 +187,7 @@ handleAction = case _ of
           anims = map mk (Map.toUnfoldable toPos :: Array (String /\ Point))
         H.modify_ _ { groupByHost = target, anim = Just anims, livePos = fromPos, animGen = gen }
         void (H.fork (animLoop gen))
+  ToggleSpof -> H.modify_ \s -> s { showSpof = not s.showSpof }
   RemoveOverride i -> do
     H.modify_ \s -> s { overrides = fromMaybe s.overrides (Array.deleteAt i s.overrides) }
     runAnalyze
@@ -386,12 +389,14 @@ renderGraphView s =
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (corpusDir <> "/docker-compose.yml") (corpusDir <> "/registry.json") ] [ HH.text "frozen corpus" ]
         , HH.button [ cls (if s.groupByHost then "btn sm active" else "btn sm"), HE.onClick \_ -> ToggleGroupBy ]
             [ HH.text (if s.groupByHost then "↹ group: host" else "↹ group: deps") ]
+        , HH.button [ cls (if s.showSpof then "btn sm active" else "btn sm"), HE.onClick \_ -> ToggleSpof ]
+            [ HH.text "⚠ SPOF" ]
         , if s.anaLoading then HH.span [ cls "muted" ] [ HH.text "analysing…" ] else HH.text ""
         ]
     , maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text e ]) s.anaErr
     , case s.analysis of
         Nothing -> HH.p [ cls "muted" ] [ HH.text "load a fixture above — the graph renders the same AnalyzeResult the Ingestion view uses." ]
-        Just a -> graphView HoverNode s.groupByHost s.livePos s.graphFocus a
+        Just a -> graphView HoverNode s.groupByHost s.showSpof s.livePos s.graphFocus a
     ]
 
 ladder :: forall m. State -> AnalyzeResult -> H.ComponentHTML Action () m

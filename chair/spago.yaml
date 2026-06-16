@@ -16,6 +16,7 @@ package:
     - integers
     - halogen
     - halogen-svg-elems
+    - hylograph-graph
     - hylograph-transitions
     - ordered-collections
     - tuples
