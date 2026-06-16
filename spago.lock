@@ -39,6 +39,7 @@
             "halogen",
             "halogen-svg-elems",
             "http-methods",
+            "hylograph-transitions",
             "integers",
             "maybe",
             "ordered-collections",
@@ -1530,6 +1531,25 @@
         "typelevel-prelude",
         "unsafe-coerce",
         "untagged-union"
+      ]
+    },
+    "hylograph-transitions": {
+      "type": "registry",
+      "version": "0.1.0",
+      "integrity": "sha256-4OxA786UfwAbJYVyLKrbtR7Pc+B1chPKvYkmhh5ye04=",
+      "dependencies": [
+        "arrays",
+        "control",
+        "effect",
+        "either",
+        "foldable-traversable",
+        "integers",
+        "maybe",
+        "numbers",
+        "ordered-collections",
+        "prelude",
+        "refs",
+        "strings"
       ]
     },
     "identity": {

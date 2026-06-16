@@ -129,10 +129,17 @@
       border: 1px solid var(--line); margin-top: 8px;
     }
     .graph-svg text { font-family: inherit; }
-    /* brushing: dim the unconnected (never hide), smooth transition */
+    /* brushing: dim the unconnected (never hide), smooth transition. The pivot
+       itself is driven per-frame by the Hylograph interpolation engine (nodes
+       AND edges re-render from interpolated positions), so no CSS transform
+       transition here — only opacity for the brush. */
     .graph-svg .node, .graph-svg .edge, .graph-svg .route { transition: opacity 140ms ease; }
     .graph-svg .node { cursor: pointer; }
     .graph-svg .dim { opacity: 0.13; }
+    /* host swimlanes fade in as the nodes glide into them (keyframe, not a
+       transition, so it fires when the bands are created on entering host mode) */
+    @keyframes laneIn { from { opacity: 0; } to { opacity: 1; } }
+    .graph-svg .swimlane { animation: laneIn 480ms ease both; }
     .graph-legend { display: flex; gap: 40px; flex-wrap: wrap; margin-top: 18px; font-size: 12px; color: var(--muted); }
     .leg-grp { display: flex; flex-direction: column; gap: 5px; }
     .leg-h {

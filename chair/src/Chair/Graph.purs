@@ -16,13 +16,14 @@
 -- |
 -- | Force layout, the boot-order tight DAG, host hulls and the deck-of-cards
 -- | are later increments (docs/GRAPH-GRAMMAR.md §12).
-module Chair.Graph (graphView) where
+module Chair.Graph (graphView, layoutPositions) where
 
 import Prelude
 
 import Bosun.View (AddressView, AnalyzeResult, ServiceInstanceView)
+import Hylograph.Transition.Interpolate (Point)
 import Data.Array as Array
-import Data.Foldable (foldl, maximum)
+import Data.Foldable (foldl, maximum, minimum)
 import Data.Int (round, toNumber)
 import Data.Map (Map)
 import Data.Map as Map
@@ -219,13 +220,34 @@ buildHostNodes insts edges =
 -- `hoverAct` reports the hovered node id (Nothing on leave); `focus` is the
 -- current brush. Brushing DIMS the unconnected rather than hiding it (Andrew:
 -- show everything, highlight on interrogation) — the Minard pattern.
-graphView :: forall act m. (Maybe String -> act) -> Boolean -> Maybe String -> AnalyzeResult -> H.ComponentHTML act () m
-graphView hoverAct groupByHost focus a =
+-- | The final laid-out positions for a layout (deps layers vs host columns),
+-- | keyed by node id. Bosun's Chair animates BETWEEN two of these maps through
+-- | the Hylograph interpolation engine (Transition.Engine + Interpolate), so the
+-- | pivot is a real per-frame tween, not a CSS transform — which means the edges,
+-- | re-rendered each frame from the live positions, follow the nodes.
+layoutPositions :: Boolean -> AnalyzeResult -> Map String Point
+layoutPositions groupByHost a =
+  let
+    insts = a.instances
+    edges = edgesOf insts
+    nodes = if groupByHost then buildHostNodes insts edges else buildNodes insts edges
+  in
+    Map.fromFoldable (map (\n -> n.id /\ { x: n.x, y: n.y }) nodes)
+
+graphView :: forall act m. (Maybe String -> act) -> Boolean -> Map String Point -> Maybe String -> AnalyzeResult -> H.ComponentHTML act () m
+graphView hoverAct groupByHost livePos focus a =
   let
     insts = a.instances
     edges = edgesOf insts
     routes = trafficOf insts
-    nodes = if groupByHost then buildHostNodes insts edges else buildNodes insts edges
+    -- structural nodes for the current layout; their x,y are OVERRIDDEN by the
+    -- live (interpolating) positions during a pivot, so everything that reads a
+    -- node position — edges, swimlane bboxes, the extents — follows the tween.
+    builtNodes = if groupByHost then buildHostNodes insts edges else buildNodes insts edges
+    nodes = map (\n -> maybe n (\p -> n { x = p.x, y = p.y }) (Map.lookup n.id livePos)) builtNodes
+    -- STABLE render order (sort by id) so Halogen reuses each node's <g> across
+    -- re-renders rather than tearing down and rebuilding (object constancy, §6.1).
+    renderNodes = Array.sortWith _.id nodes
     posOf id = Array.find (\n -> n.id == id) nodes
     maxX = fromMaybe 0.0 (maximum (map _.x nodes)) + nodeW + marginX
     maxY = fromMaybe 0.0 (maximum (map _.y nodes)) + nodeH + marginY
@@ -255,13 +277,13 @@ graphView hoverAct groupByHost focus a =
           [ SA.viewBox 0.0 0.0 maxX maxY, SA.width maxX, SA.height maxY
           , SA.class_ (H.ClassName "graph-svg")
           ]
-          ( (if groupByHost then [] else [ axisLayer maxX ]) <>
+          ( (if groupByHost then [ swimlaneLayer nodes ] else [ axisLayer maxX ]) <>
           [ SE.g [ SA.class_ (H.ClassName "traffic") ]
               (Array.mapMaybe (\r -> trafficLine (edgeDim r.from r.to) posOf r) routes)
           , SE.g [ SA.class_ (H.ClassName "edges") ]
               (Array.mapMaybe (\e -> edgeLine (edgeDim e.from e.to) posOf e) edges)
           , SE.g [ SA.class_ (H.ClassName "nodes") ]
-              (map (\n -> nodeMark hoverAct (nodeDim n) n) nodes)
+              (map (\n -> nodeMark hoverAct (nodeDim n) n) renderNodes)
           ] )
       , legend
       ]
@@ -318,6 +340,58 @@ axisLayer maxX =
         [ HH.text "depended on by" ]
     ]
 
+-- one tinted band per host (a "swimlane"), drawn BEHIND everything with the host
+-- name as a header. Host mode only. The bbox is read off the already-placed
+-- nodes, so each band wraps exactly its column. Fades in via a CSS keyframe (a
+-- transition won't fire on element creation) so it appears as the nodes glide in.
+swimlaneLayer :: forall act m. Array Node -> H.ComponentHTML act () m
+swimlaneLayer nodes =
+  let hosts = Array.nub (map hostOf nodes)
+  in SE.g [ SA.class_ (H.ClassName "swimlanes") ] (Array.mapWithIndex band hosts)
+  where
+  hostOf n = fromMaybe "—" n.host
+  pad = 16.0
+  headH = 22.0
+  band hi h =
+    let
+      ns = Array.filter (\n -> hostOf n == h) nodes
+      minX = fromMaybe 0.0 (minimum (map _.x ns)) - pad
+      maxX = fromMaybe 0.0 (maximum (map _.x ns)) + nodeW + pad
+      minY = fromMaybe 0.0 (minimum (map _.y ns)) - pad - headH
+      maxY = fromMaybe 0.0 (maximum (map _.y ns)) + nodeH + pad
+      st = hostStyle hi
+    in
+      SE.g [ SA.class_ (H.ClassName "swimlane") ]
+        [ SE.rect
+            [ SA.x minX, SA.y minY, SA.width (maxX - minX), SA.height (maxY - minY)
+            , SA.rx 8.0, SA.fill st.tint, SA.fillOpacity 0.5
+            , SA.stroke st.tint, SA.strokeWidth 1.0
+            ]
+        , SE.text
+            [ SA.x (minX + 12.0), SA.y (minY + 15.0)
+            , SA.fontSize (SA.FontSizeLength (SA.Px 11.0)), SA.fill st.ink
+            ]
+            [ HH.text h ]
+        ]
+
+-- pale per-host tints (restrained, Swiss) with a matching darker ink for the
+-- header. Distinct hues so adjacent lanes separate; light enough that the node
+-- fills (depth ramp) still read on top. Cycles if there are more hosts than hues.
+hostStyle :: Int -> { tint :: SA.Color, ink :: SA.Color }
+hostStyle hi =
+  fromMaybe { tint: SA.RGB 240 240 240, ink: faint }
+    (Array.index hostPalette (hi `mod` max 1 (Array.length hostPalette)))
+
+hostPalette :: Array { tint :: SA.Color, ink :: SA.Color }
+hostPalette =
+  [ { tint: SA.RGB 232 240 250, ink: SA.RGB 88 118 158 }   -- blue
+  , { tint: SA.RGB 233 246 238, ink: SA.RGB 78 138 108 }   -- green
+  , { tint: SA.RGB 250 244 230, ink: SA.RGB 162 128 68 }   -- amber
+  , { tint: SA.RGB 244 238 250, ink: SA.RGB 128 98 162 }   -- violet
+  , { tint: SA.RGB 232 246 246, ink: SA.RGB 68 138 138 }   -- teal
+  , { tint: SA.RGB 250 238 240, ink: SA.RGB 162 92 108 }   -- rose
+  ]
+
 -- one traffic edge: a dashed line (proxy → backend, nudged off the lifecycle
 -- line it usually coincides with) + the route path. Calm/provisional styling.
 trafficLine
@@ -372,25 +446,30 @@ midpointMark mx my = case _ of
 -- ghosts (dangling targets) render hollow + faint.
 nodeMark :: forall act m. (Maybe String -> act) -> Boolean -> Node -> H.ComponentHTML act () m
 nodeMark hoverAct dim n =
+  -- positioned by a `translate` on the group, children at LOCAL 0,0 — so a layout
+  -- pivot changes only this transform and the browser CSS-tweens the move
+  -- (§6.1 object constancy). The reordering in graphView keeps Halogen reusing
+  -- this <g> across pivots, which is what lets the transition fire.
   SE.g
     [ SA.class_ (H.ClassName (dimClass (if n.ghost then "node ghost" else "node") dim))
+    , SA.transform [ SA.Translate n.x n.y ]
     , HE.onMouseEnter \_ -> hoverAct (Just n.id)
     , HE.onMouseLeave \_ -> hoverAct Nothing
     ]
     ( [ SE.rect
-          [ SA.x n.x, SA.y n.y, SA.width nodeW, SA.height nodeH, SA.rx 5.0
+          [ SA.x 0.0, SA.y 0.0, SA.width nodeW, SA.height nodeH, SA.rx 5.0
           , SA.fill (if n.ghost then paper else layerRamp n.depth)
           , SA.fillOpacity (if n.ghost then 0.4 else 1.0)
           , SA.stroke (if n.ghost then faint else srcColor n.source)
           , SA.strokeWidth (if n.ghost then 1.0 else 1.8)
           ]
       , SE.text
-          [ SA.x (n.x + 10.0), SA.y (n.y + 18.0)
+          [ SA.x 10.0, SA.y 18.0
           , SA.fontSize (SA.FontSizeLength (SA.Px 12.5)), SA.fill ink
           ]
           [ HH.text (clip 18 n.id) ]
       , SE.text
-          [ SA.x (n.x + 10.0), SA.y (n.y + 33.0)
+          [ SA.x 10.0, SA.y 33.0
           , SA.fontSize (SA.FontSizeLength (SA.Px 9.5)), SA.fill faint
           ]
           [ HH.text (if n.ghost then "undefined — no source" else (n.mech <> maybe "" (\h -> " · " <> h) n.host)) ]
@@ -407,8 +486,8 @@ exposureBadge n = case mostExposedView n.reach of
   Just a ->
     let
       c = opennessColor a.openness
-      cx = n.x + nodeW - 11.0
-      cy = n.y + 30.0
+      cx = nodeW - 11.0     -- LOCAL coords: drawn inside the node's translate group
+      cy = 30.0
     in
       [ SE.circle [ SA.cx cx, SA.cy cy, SA.r 4.0, SA.fill c, SA.fillOpacity 0.85, SA.stroke c, SA.strokeWidth 1.0 ]
       , SE.text

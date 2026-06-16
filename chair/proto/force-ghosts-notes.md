@@ -32,16 +32,36 @@ toggle **↹ group** and hover nodes.
 - hover still brushes (deps + routes highlight, rest dims) in both layouts.
 - the SVG should be natural-sized, not magnified.
 
+## Done on this branch (cont.) — the animated pivot (2026-06-16)
+
+5. **Swimlane bands + host headers** — host mode draws a faint per-host tinted
+   band (blue/green/amber/violet/teal/rose, `hostStyle`/`hostPalette`) behind
+   each column with the host name as a header. Bboxes are read off the live node
+   positions, so the bands form up as the columns assemble. Fade in via a CSS
+   `@keyframes laneIn` (a transition won't fire on element creation).
+6. **The pivot is real interpolation, NOT CSS** (Andrew's steer: we have the
+   interpolation engine, use it). Adopted `hylograph-transitions` (0.1.0, in
+   package set 77.5.0). `Chair.Graph.layoutPositions :: Boolean -> AnalyzeResult
+   -> Map String Point` gives a layout's coordinates; `Main` builds a per-node
+   `TransitionState Point` with `transitionWith lerpPoint` (CubicInOut, 520ms),
+   ticks them in a forked frame loop (`Engine.tick`, ~16ms), and writes the
+   interpolated points to `livePos`. The graph renders from `livePos` each frame,
+   so **edges follow the nodes** (read via `posOf`) — the fade hack is gone.
+   `animGen` supersedes a stale loop on re-toggle. Confirmed "perfect" by Andrew.
+   - *Substrate note:* positions now live in a model a tick loop mutates, which
+     is exactly what experiments 2–4 need. When the ForceEngine enters at #3,
+     unify onto the library `Transition.Coordinator` (its `Consumers` already
+     adapt BOTH transitions and force `Simulation` to one tick loop). The Aff-
+     delay frame loop is the interim driver; swap to `Transition.RAF`/Coordinator
+     when the sim arrives.
+   - *Later refinement (parked):* curved/path-redraw edges — Hylograph can redraw
+     an edge path per tick (e.g. growing a tree from a root); straight lines
+     already track fine, so this is polish, not blocker.
+
 ## Next experiments (designed; need your eyes)
 
-1. **Animate the pivot** (object constancy, §6.1). Render each node as
-   `SE.g [transform: translate(x,y)]` with children at *local* 0,0, and add a
-   CSS `transition: transform 500ms` on `.node`. Keep node *order stable* across
-   layouts (sort by id) so Halogen reuses the `<g>` and the browser tweens it.
-   Edges don't tween via CSS — either recompute per tick, fade them out during
-   the move, or accept a snap. This turns the static toggle into the real pivot.
-   *Risk:* if Halogen recreates the `<g>` it jumps instead of tweening — keying
-   by id fixes it. Cheapest dynamic win; do this first.
+1. ~~**Animate the pivot**~~ — DONE (item 6 above), via the interpolation engine
+   rather than CSS, so edges follow for free.
 2. **Common-fate gather** (§14.4). On hover, give same-host nodes a brief
    synchronised nudge-together-and-settle. Build on the existing brush + the
    transform-translate from (1). A half-second of shared motion = "these share a

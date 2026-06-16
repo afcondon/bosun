@@ -18,16 +18,23 @@ import Affjax.RequestBody as RB
 import Affjax.ResponseFormat as RF
 import Affjax.Web as AX
 import Bosun.View (AliasEntry, AliasOverride(..), AnalyzeRequest, AnalyzeResult, ConflictView, DeployErrorView, DivergenceView, RouteBacking, ServiceInstanceView, SvcView, ValidationView(..), analyzeRequestCodec, analyzeResultCodec)
-import Chair.Graph (graphView)
+import Chair.Graph (graphView, layoutPositions)
 import Chair.State (RedirectInfo, RejectInfo, RouteStatus, StateView, decodeStateView)
 import Data.Argonaut.Decode.Error (printJsonDecodeError)
 import Data.Array as Array
 import Data.Codec.Argonaut as CA
 import Data.Either (Either(..))
+import Data.Foldable (all)
+import Data.Map (Map)
+import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.String as String
+import Data.Tuple.Nested (type (/\), (/\))
 import Effect (Effect)
 import Effect.Aff (Aff, Milliseconds(..), delay)
+import Hylograph.Transition.Easing (EasingType(..))
+import Hylograph.Transition.Engine (TransitionState, currentValue, isComplete, start, tick, transitionWith)
+import Hylograph.Transition.Interpolate (Point, lerpPoint)
 import Halogen as H
 import Halogen.Aff as HA
 import Halogen.HTML as HH
@@ -75,7 +82,17 @@ type State =
   -- graph (pillar 3) — the brushed node for coordinated highlighting
   , graphFocus :: Maybe String
   , groupByHost :: Boolean   -- layout pivot: dependency layers vs host columns
+  -- the pivot tween, driven by the Hylograph interpolation engine: livePos holds
+  -- the per-node interpolating positions the graph renders from; anim holds the
+  -- in-flight transitions (Nothing when settled); animGen kills stale loops when
+  -- the user toggles again mid-flight.
+  , livePos :: Map String Point
+  , anim :: Maybe (Array AnimNode)
+  , animGen :: Int
   }
+
+-- one node's position transition (interpolating a 2D Point through the engine)
+type AnimNode = { id :: String, st :: TransitionState Point }
 
 data Action
   = Initialize
@@ -112,6 +129,7 @@ component =
         , composePath: "", registryPath: "", analysis: Nothing, anaErr: Nothing, anaLoading: false
         , overrides: [], mergeName: "", mergeCanon: ""
         , graphFocus: Nothing, groupByHost: false
+        , livePos: Map.empty, anim: Nothing, animGen: 0
         }
     , render
     , eval: H.mkEval H.defaultEval { handleAction = handleAction, initialize = Just Initialize }
@@ -149,7 +167,24 @@ handleAction = case _ of
     H.modify_ \s -> s { overrides = Array.snoc s.overrides (Split { name }) }
     runAnalyze
   HoverNode mid -> H.modify_ _ { graphFocus = mid }
-  ToggleGroupBy -> H.modify_ \s -> s { groupByHost = not s.groupByHost }
+  ToggleGroupBy -> do
+    s <- H.get
+    case s.analysis of
+      Nothing -> H.modify_ _ { groupByHost = not s.groupByHost }
+      Just a -> do
+        let
+          target = not s.groupByHost
+          toPos = layoutPositions target a
+          -- start from where the nodes are NOW (live if mid-flight, else the
+          -- current layout) so a re-toggle picks up from the in-flight positions
+          fromPos = if Map.isEmpty s.livePos then layoutPositions s.groupByHost a else s.livePos
+          gen = s.animGen + 1
+          mk (id /\ to) =
+            let from = fromMaybe to (Map.lookup id fromPos)
+            in { id, st: start (transitionWith lerpPoint { from, to } { duration: pivotMs, easing: CubicInOut, delay: 0.0 }) }
+          anims = map mk (Map.toUnfoldable toPos :: Array (String /\ Point))
+        H.modify_ _ { groupByHost = target, anim = Just anims, livePos = fromPos, animGen = gen }
+        void (H.fork (animLoop gen))
   RemoveOverride i -> do
     H.modify_ \s -> s { overrides = fromMaybe s.overrides (Array.deleteAt i s.overrides) }
     runAnalyze
@@ -168,6 +203,36 @@ pollLoop = do
   H.liftAff (delay (Milliseconds pollMs))
   refresh
   pollLoop
+
+-- ── pivot animation (Hylograph interpolation engine) ─────────────────────────
+
+pivotMs :: Number
+pivotMs = 520.0
+
+frameMs :: Number
+frameMs = 16.0
+
+-- A forked frame loop: tick every node's position transition, write the current
+-- interpolated points to `livePos` (the graph re-renders from it, so edges
+-- follow), and stop when all are complete. The `gen` guard makes a fresh toggle
+-- supersede this loop instead of two loops fighting over the same `anim`.
+animLoop :: forall o. Int -> H.HalogenM State Action () o Aff Unit
+animLoop gen = do
+  s <- H.get
+  when (s.animGen == gen) case s.anim of
+    Nothing -> pure unit
+    Just anims -> do
+      H.liftAff (delay (Milliseconds frameMs))
+      s2 <- H.get
+      when (s2.animGen == gen) do
+        let
+          stepped = map (\an -> an { st = tick frameMs an.st }) anims
+          lp = Map.fromFoldable (map (\an -> an.id /\ currentValue an.st) stepped)
+          done = all (\an -> isComplete an.st) stepped
+        if done then H.modify_ _ { anim = Nothing, livePos = lp }
+        else do
+          H.modify_ _ { anim = Just stepped, livePos = lp }
+          animLoop gen
 
 refresh :: forall o. H.HalogenM State Action () o Aff Unit
 refresh = do
@@ -199,7 +264,10 @@ runAnalyze = do
     Left err -> st { anaLoading = false, anaErr = Just ("chair-server unreachable — " <> AX.printError err) }
     Right resp -> case CA.decode analyzeResultCodec resp.body of
       Left e -> st { anaLoading = false, anaErr = Just (CA.printJsonDecodeError e) }
-      Right a -> st { anaLoading = false, analysis = Just a, anaErr = Nothing }
+      -- seed the live positions for the current layout so the graph (and any
+      -- subsequent pivot) starts from a settled, correct frame
+      Right a -> st { anaLoading = false, analysis = Just a, anaErr = Nothing
+                    , livePos = layoutPositions st.groupByHost a, anim = Nothing }
 
 -- ── render ───────────────────────────────────────────────────────────────────
 
@@ -322,7 +390,7 @@ renderGraphView s =
     , maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text e ]) s.anaErr
     , case s.analysis of
         Nothing -> HH.p [ cls "muted" ] [ HH.text "load a fixture above — the graph renders the same AnalyzeResult the Ingestion view uses." ]
-        Just a -> graphView HoverNode s.groupByHost s.graphFocus a
+        Just a -> graphView HoverNode s.groupByHost s.livePos s.graphFocus a
     ]
 
 ladder :: forall m. State -> AnalyzeResult -> H.ComponentHTML Action () m
