@@ -195,18 +195,37 @@ layerRamp f =
   let lerp hi lo = round (hi - f * (hi - lo))
   in SA.RGB (lerp 248.0 206.0) (lerp 250.0 216.0) (lerp 252.0 230.0)
 
+-- re-cluster the SAME nodes (depth / host / reach all retained — the §4.8
+-- retained-channel idea) into one column per host. A STATIC pivot: it proves
+-- the re-clustering; the animated force version is the next experiment (NOTES).
+buildHostNodes :: Array ServiceInstanceView -> Array Edge -> Array Node
+buildHostNodes insts edges =
+  let
+    base = buildNodes insts edges
+    hostOf n = fromMaybe "—" n.host
+    hosts = Array.nub (map hostOf base)
+    colW = nodeW + 50.0
+  in
+    Array.concat $ Array.mapWithIndex
+      ( \hi h ->
+          Array.mapWithIndex
+            (\row n -> n { x = marginX + toNumber hi * colW, y = marginY + toNumber row * rowGap })
+            (Array.filter (\n -> hostOf n == h) base)
+      )
+      hosts
+
 -- ── the view ─────────────────────────────────────────────────────────────────
 
 -- `hoverAct` reports the hovered node id (Nothing on leave); `focus` is the
 -- current brush. Brushing DIMS the unconnected rather than hiding it (Andrew:
 -- show everything, highlight on interrogation) — the Minard pattern.
-graphView :: forall act m. (Maybe String -> act) -> Maybe String -> AnalyzeResult -> H.ComponentHTML act () m
-graphView hoverAct focus a =
+graphView :: forall act m. (Maybe String -> act) -> Boolean -> Maybe String -> AnalyzeResult -> H.ComponentHTML act () m
+graphView hoverAct groupByHost focus a =
   let
     insts = a.instances
     edges = edgesOf insts
     routes = trafficOf insts
-    nodes = buildNodes insts edges
+    nodes = if groupByHost then buildHostNodes insts edges else buildNodes insts edges
     posOf id = Array.find (\n -> n.id == id) nodes
     maxX = fromMaybe 0.0 (maximum (map _.x nodes)) + nodeW + marginX
     maxY = fromMaybe 0.0 (maximum (map _.y nodes)) + nodeH + marginY
@@ -229,20 +248,21 @@ graphView hoverAct focus a =
           [ HH.span [ cls "muted" ]
               [ HH.text (show (Array.length nodes) <> " nodes · "
                   <> show (Array.length edges) <> " deps · "
-                  <> show (Array.length routes) <> " routes · loose view (left → right = boot order)") ]
+                  <> show (Array.length routes) <> " routes · "
+                  <> (if groupByHost then "grouped by host" else "loose view (left → right = boot order)")) ]
           ]
       , SE.svg
           [ SA.viewBox 0.0 0.0 maxX maxY, SA.width maxX, SA.height maxY
           , SA.class_ (H.ClassName "graph-svg")
           ]
-          [ axisLayer maxX
-          , SE.g [ SA.class_ (H.ClassName "traffic") ]
+          ( (if groupByHost then [] else [ axisLayer maxX ]) <>
+          [ SE.g [ SA.class_ (H.ClassName "traffic") ]
               (Array.mapMaybe (\r -> trafficLine (edgeDim r.from r.to) posOf r) routes)
           , SE.g [ SA.class_ (H.ClassName "edges") ]
               (Array.mapMaybe (\e -> edgeLine (edgeDim e.from e.to) posOf e) edges)
           , SE.g [ SA.class_ (H.ClassName "nodes") ]
               (map (\n -> nodeMark hoverAct (nodeDim n) n) nodes)
-          ]
+          ] )
       , legend
       ]
 

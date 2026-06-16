@@ -74,6 +74,7 @@ type State =
   , mergeCanon :: String
   -- graph (pillar 3) — the brushed node for coordinated highlighting
   , graphFocus :: Maybe String
+  , groupByHost :: Boolean   -- layout pivot: dependency layers vs host columns
   }
 
 data Action
@@ -95,6 +96,7 @@ data Action
   | SplitAlias String
   | RemoveOverride Int
   | HoverNode (Maybe String)
+  | ToggleGroupBy
 
 main :: Effect Unit
 main = HA.runHalogenAff do
@@ -109,7 +111,7 @@ component =
         , cockpit: Nothing, cockErr: Nothing, ticks: 0, busy: false
         , composePath: "", registryPath: "", analysis: Nothing, anaErr: Nothing, anaLoading: false
         , overrides: [], mergeName: "", mergeCanon: ""
-        , graphFocus: Nothing
+        , graphFocus: Nothing, groupByHost: false
         }
     , render
     , eval: H.mkEval H.defaultEval { handleAction = handleAction, initialize = Just Initialize }
@@ -147,6 +149,7 @@ handleAction = case _ of
     H.modify_ \s -> s { overrides = Array.snoc s.overrides (Split { name }) }
     runAnalyze
   HoverNode mid -> H.modify_ _ { graphFocus = mid }
+  ToggleGroupBy -> H.modify_ \s -> s { groupByHost = not s.groupByHost }
   RemoveOverride i -> do
     H.modify_ \s -> s { overrides = fromMaybe s.overrides (Array.deleteAt i s.overrides) }
     runAnalyze
@@ -312,12 +315,14 @@ renderGraphView s =
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/exposure/compose.yml") (fixturesDir <> "/topologies/exposure/registry.json") ] [ HH.text "exposure (ramp)" ]
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/multihost/compose.yml") (fixturesDir <> "/topologies/multihost/registry.json") ] [ HH.text "multi-host" ]
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (corpusDir <> "/docker-compose.yml") (corpusDir <> "/registry.json") ] [ HH.text "frozen corpus" ]
+        , HH.button [ cls (if s.groupByHost then "btn sm active" else "btn sm"), HE.onClick \_ -> ToggleGroupBy ]
+            [ HH.text (if s.groupByHost then "↹ group: host" else "↹ group: deps") ]
         , if s.anaLoading then HH.span [ cls "muted" ] [ HH.text "analysing…" ] else HH.text ""
         ]
     , maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text e ]) s.anaErr
     , case s.analysis of
         Nothing -> HH.p [ cls "muted" ] [ HH.text "load a fixture above — the graph renders the same AnalyzeResult the Ingestion view uses." ]
-        Just a -> graphView HoverNode s.graphFocus a
+        Just a -> graphView HoverNode s.groupByHost s.graphFocus a
     ]
 
 ladder :: forall m. State -> AnalyzeResult -> H.ComponentHTML Action () m
