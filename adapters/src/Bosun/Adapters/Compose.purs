@@ -17,19 +17,21 @@ module Bosun.Adapters.Compose (ingestCompose) where
 
 import Prelude
 
-import Bosun.Atoms (Port, mkHost, mkPort, mkRoutePath)
+import Bosun.Atoms (Port, mkAbsPath, mkDomain, mkHost, mkPort, mkRoutePath, mkServiceId)
 import Bosun.Edge (DepOrdering(..), Gate(..), Requirement(..))
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ImageRef(..))
-import Bosun.Reachability (hostPort, noNetwork)
+import Bosun.Reachability (Address(..), BindScope(..), Reachability(..), hostPort, noNetwork)
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Selector (Selector(..))
 import Bosun.Service (RawDep, RawRoute, ServiceInstance, Source(..), mkRole)
-import Data.Argonaut.Core (Json, toArray, toObject, toString)
+import Control.Alt ((<|>))
+import Data.Argonaut.Core (Json, toArray, toNumber, toObject, toString)
 import Data.Array as A
 import Data.Either (Either(..))
 import Data.Int as Int
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, isJust, maybe)
+import Data.Set as Set
 import Data.String (Pattern(..))
 import Data.String as String
 import Data.Tuple (uncurry)
@@ -53,7 +55,7 @@ decodeService name sj = do
     , role: mkRole (roleFromName name)
     , host: Just (mkHost "macmini")   -- compose's deploy target
     , executor: executorOf name o
-    , reachability: maybe noNetwork hostPort (publishPort o)
+    , reachability: fromMaybe (maybe noNetwork hostPort (publishPort o)) (xbosunExpose o)
     , health: { liveness: probeOf o, readiness: probeOf o, startup: Nothing }
     , restart: { base: UnlessStopped, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }
     , rawDeps: dependsOn o <> xbosunDeps o
@@ -160,6 +162,36 @@ xbosunRoutes o = fromMaybe [] do
     to <- str ro "to"
     path <- str ro "path"
     pure { to, path: mkRoutePath path }
+
+-- | `x-bosun.expose: [ {host|internal|loopback: <port>} | {socket: <path>} |
+-- |   {domain: <name>} | {proxy: <id>, path: <p>} ]` — the full reachability the
+-- | compose `ports:` default (always `0.0.0.0`, i.e. `host`) can't express:
+-- | bind scope (loopback / internal), unix sockets, public domains, and
+-- | COMPOSITION (a Set of addresses). Present ⇒ REPLACES the ports default.
+xbosunExpose :: Object Json -> Maybe Reachability
+xbosunExpose o = do
+  xb <- FO.lookup "x-bosun" o >>= toObject
+  arr <- FO.lookup "expose" xb >>= toArray
+  pure (Reachability (Set.fromFoldable (A.mapMaybe decodeAddress arr)))
+
+decodeAddress :: Json -> Maybe Address
+decodeAddress j = do
+  o <- toObject j
+  listen o "host" AllIfaces
+    <|> listen o "internal" Internal
+    <|> listen o "loopback" Loopback
+    <|> (Socket <$> (str o "socket" >>= mkAbsPath))
+    <|> (Published <<< mkDomain <$> str o "domain")
+    <|> proxied o
+  where
+  listen ob key scope = (\p -> Listening { bind: scope, port: p }) <$> portAt ob key
+  proxied ob = do
+    pid <- str ob "proxy"
+    pth <- str ob "path"
+    pure (Proxied { proxy: mkServiceId pid, path: mkRoutePath pth })
+
+portAt :: Object Json -> String -> Maybe Port
+portAt o key = FO.lookup key o >>= toNumber >>= Int.fromNumber >>= mkPort
 
 strArray :: Object Json -> String -> Array String
 strArray o k = fromMaybe [] (FO.lookup k o >>= toArray <#> A.mapMaybe toString)

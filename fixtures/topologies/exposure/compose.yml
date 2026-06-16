@@ -1,0 +1,46 @@
+# Fabricated fixture — the full EXPOSURE RAMP in one graph, via x-bosun.expose.
+# compose's `ports:` only yields 0.0.0.0 (wide); the bind-scope spectrum,
+# sockets, domains and composition ride in `x-bosun.expose:`. Exercises every
+# openness colour the badge can show:
+#
+#   gateway  → published domain     internet (warmest)
+#   api      → host :8080           wide
+#   db       → internal :5432       cluster
+#   admin    → loopback :9000       local
+#   daemon   → unix socket          local
+#   worker   → (nothing)            none — silent
+#   multi    → host :8081 + internal :5050   composition (badge shows the loudest)
+services:
+  gateway:
+    build: { context: ./gateway }
+    x-bosun:
+      expose:
+        - { domain: app.example.com }
+  api:
+    build: { context: ./api }
+    x-bosun:
+      expose:
+        - { host: 8080 }
+  db:
+    build: { context: ./db }
+    x-bosun:
+      expose:
+        - { internal: 5432 }
+  admin:
+    build: { context: ./admin }
+    x-bosun:
+      expose:
+        - { loopback: 9000 }
+  daemon:
+    build: { context: ./daemon }
+    x-bosun:
+      expose:
+        - { socket: /run/daemon.sock }
+  worker:
+    build: { context: ./worker }
+  multi:
+    build: { context: ./multi }
+    x-bosun:
+      expose:
+        - { host: 8081 }
+        - { internal: 5050 }
