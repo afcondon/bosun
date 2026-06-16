@@ -1016,3 +1016,113 @@ point of designing the grammar ahead of the engine.
    yet observed ≠ desired). Is drift a third layout mode, or just the status
    overlay on the tight layout? (Lean: overlay — drift is dynamic, the layout is
    structural; don't relayout for runtime state.)
+
+---
+
+## 14. The impossible part — placement, clusters, failover, and *interrogation over placement*
+
+§5 framed multi-hierarchy containment as the hard problem and answered it with a
+swappable spatial hierarchy. Clusters, failover and mirrors push it past "hard"
+to **formally impossible to place**, and that impossibility is the most useful
+thing in this section — because knowing *why* it can't be drawn tells us where
+the answer has to come from (Andrew, 2026-06-16).
+
+### 14.1 Why it's impossible (a theorem, not a skill issue)
+
+The things that muddy the picture — host placement, failover groups, mux pools,
+mirrors, AZs, namespaces — all share one property: **a node belongs to many
+*overlapping* sets at once.** A service is in host-A *and* failover-group-X *and*
+AZ-east *and* namespace-prod, and those memberships overlap arbitrarily.
+
+- Containment that's a clean **tree** (single parent) you *can* nest spatially
+  (treemap, pack, swimlane).
+- **Overlapping sets** you cannot — spatial regions for overlapping sets break
+  down at about three (it is why Venn diagrams die at four sets). There is no
+  faithful 2-D embedding of arbitrary overlapping membership.
+
+And 3-D does **not** rescue it: you would need *N* spatial dimensions for *N*
+cross-cutting hierarchies, not three; and the third axis costs occlusion and
+navigation for one dimension you mostly can't read. The genuinely useful extra
+dimension is not space — **it's time.** We read 2-D-plus-motion natively (we
+evolved to track moving things in a flat projection). So:
+
+> **The escape from "can't place it" is always one of three *non-spatial*
+> moves:** put the membership *on the node* (a glyph), *summon one set at a time*
+> (interaction), or *let a set move together* (motion / common-fate). You can't
+> draw all the sets; you can make any one of them **interrogable.**
+
+The governing shift, which subsumes §5's swap: **stop trying to *place* the
+hierarchies; make them *interrogable*.** One home substrate stays put (show
+everything, nothing hidden — §0.1), and the cross-cutting structure is summoned
+by gesture and dismissed. This is the brushing of §6.2 scaled up to the
+dimensions that have no spatial home.
+
+### 14.2 Force as the re-clustering engine (not a resting layout)
+
+Per §4.8 force is not a resting layout. Its real job here is the **re-clustering
+engine for the temporal pivot**: hand it a *chosen* relationship (co-location,
+this mux pool, this failover group, this AZ) and it pulls those nodes together so
+you *watch* the cluster form; the grouping you're not looking at relaxes away.
+The motion *is* the encoding — common-fate Gestalt: things that move together
+are perceived as one thing, so a transient gather shows a set you can't afford
+to give permanent space.
+
+### 14.3 Ghost extraction (the keystone interaction)
+
+Keep one containment as the persistent **home map** — e.g. a bubble-pack of
+physical placement, always on screen as the stable substrate. To examine a
+cross-cutting group, **pull its members out** into a clustering region with
+force, and **leave ghosts in their home cells** with faint tethers back. Two
+things make this more than a clever animation:
+
+- The **tethers *are* the second hierarchy** drawn as edges — so you show **two
+  containments at once**: one as enclosure (home bubbles), one as a
+  force-cluster-with-tethers. The thing we "can't do" is done by making one
+  spatial and one kinetic.
+- It answers the **redundancy / SPOF question viscerally and for free.** Extract
+  a DB's three mirrors → look at where the *ghosts* sit in the home (host) map.
+  Three different host-bubbles = real redundancy; all three ghosts in *one*
+  bubble = the mirror config is a single point of failure, *seen at a glance*.
+  The ghosts aren't decoration — their **home positions are the answer** (this is
+  §8's anti-affinity check turned into a gesture).
+
+### 14.4 Common-fate as a brush (the cheapest version)
+
+Extend the existing hover→focus brush (§6.2, built): hovering a node gives its
+*co-fate* set (same host, or same failover group) a brief synchronized
+**gather-and-settle wiggle** — they nudge together and relax back. No permanent
+spatial commitment, no layout disruption; half a second of shared motion and the
+eye has grouped them. It spends *time*, not space, and rides the brushing infra
+already in place.
+
+### 14.5 Failover is a behaviour — so play it
+
+A mirror/standby config is not a shape, it's a *dynamic*: primary serves, standby
+waits, on failure the role flips and traffic re-routes. The truest way to show
+"what's redundant and what's a SPOF" may be to stop drawing the topology and let
+the viewer **kill a node and watch the consequence ripple** — roles flip, traffic
+re-routes, the blast spreads (or doesn't). *"Hover to ask what connects; click to
+ask what breaks."* And the kicker for Bosun specifically: **the chaos suite
+already exists** (STRESS-TEST-PLAN §2). The monkeys can *drive* this — not a faked
+animation but the real router actually losing a backend and the graph reacting
+live. Bosun is one of the few systems positioned to make failover-as-behaviour
+*real* rather than a mock-up.
+
+### 14.6 Where swimlanes fit
+
+Swimlanes (host = a band) remain worth offering — familiar, clean for a few
+hosts, good for packing comparison — but they are the *flat, single-membership*
+case, not the answer to the overlapping-set problem. They are one option on the
+spectrum colour → swimlane → enclosure/territory → ghost-extraction, increasing
+in expressiveness and in how directly they convey **shared fate** and
+**boundary-crossing** (the two questions a naïve viewer must be able to answer:
+*"if that machine dies, what stops?"* and *"which connections are the fragile
+cross-machine ones?"*). The cheapest high-value win, independent of grouping
+shape, is simply to **mark cross-host edges** — placement as a node attribute,
+then flag any dep/route whose endpoints differ; that surfaces the fragile
+boundaries with no layout change at all.
+
+> **None of these solve the impossible thing — each sidesteps it through time or
+> interaction.** That is the point: the answer to "you can't place overlapping
+> sets" is "don't place them — interrogate them," and everything above is a way
+> to interrogate.
