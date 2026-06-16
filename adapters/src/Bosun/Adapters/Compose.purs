@@ -53,7 +53,7 @@ decodeService name sj = do
     , project: Nothing
     , localName: name
     , role: mkRole (roleFromName name)
-    , host: Just (mkHost "macmini")   -- compose's deploy target
+    , host: Just (mkHost (fromMaybe "macmini" (xbosunHost o)))   -- x-bosun.host override, else the compose deploy target
     , executor: executorOf name o
     , reachability: fromMaybe (maybe noNetwork hostPort (publishPort o)) (xbosunExpose o)
     , health: { liveness: probeOf o, readiness: probeOf o, startup: Nothing }
@@ -192,6 +192,12 @@ decodeAddress j = do
 
 portAt :: Object Json -> String -> Maybe Port
 portAt o key = FO.lookup key o >>= toNumber >>= Int.fromNumber >>= mkPort
+
+-- | `x-bosun.host: <name>` — place a compose service on a named host (else the
+-- | default deploy target). Lets a single fixture span hosts for the
+-- | placement / cross-host-edge / co-location experiments.
+xbosunHost :: Object Json -> Maybe String
+xbosunHost o = (FO.lookup "x-bosun" o >>= toObject) >>= \xb -> str xb "host"
 
 strArray :: Object Json -> String -> Array String
 strArray o k = fromMaybe [] (FO.lookup k o >>= toArray <#> A.mapMaybe toString)

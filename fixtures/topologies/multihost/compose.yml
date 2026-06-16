@@ -1,0 +1,64 @@
+# Fabricated fixture — services spread across HOSTS (x-bosun.host), for the
+# placement experiments: cross-host edge marking, co-location brushing, and the
+# force/ghost re-clustering. Includes a primary/mirror on DIFFERENT hosts (good
+# redundancy) so the SPOF question has a positive answer to see.
+#
+#   edge-1:  lb
+#   app-1:   web, api
+#   data-1:  db-primary, cache
+#   data-2:  db-mirror            (mirror on a separate host = survives data-1)
+#
+# cross-host deps:  lb→web (edge-1→app-1),  api→db-primary (app-1→data-1)
+# same-host dep:    web→api (app-1)
+services:
+  lb:
+    build: { context: ./lb }
+    x-bosun:
+      host: edge-1
+      expose:
+        - { host: 443 }
+    depends_on:
+      web: { condition: service_started }
+
+  web:
+    build: { context: ./web }
+    x-bosun:
+      host: app-1
+      expose:
+        - { host: 8080 }
+    depends_on:
+      api: { condition: service_started }
+
+  api:
+    build: { context: ./api }
+    x-bosun:
+      host: app-1
+      expose:
+        - { internal: 3000 }
+    depends_on:
+      db-primary: { condition: service_healthy }
+
+  db-primary:
+    build: { context: ./db }
+    x-bosun:
+      host: data-1
+      expose:
+        - { internal: 5432 }
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+
+  db-mirror:
+    build: { context: ./db }
+    x-bosun:
+      host: data-2
+      expose:
+        - { internal: 5432 }
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+
+  cache:
+    build: { context: ./cache }
+    x-bosun:
+      host: data-1
+      expose:
+        - { internal: 6379 }

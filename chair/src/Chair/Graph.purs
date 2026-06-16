@@ -71,6 +71,7 @@ type Node =
   , mech :: String
   , depth :: Number         -- 0..1 dependency layer (retained channel for pivots)
   , reach :: Array AddressView  -- inbound addresses, for the exposure badge
+  , host :: Maybe String    -- physical placement, for cross-host marking + grouping
   }
 
 -- Edges from the loose deps: (dependent → dependency), with the requirement label.
@@ -143,6 +144,7 @@ buildNodes insts edges =
            , mech: maybe "" _.executor.mechanism meta
            , depth: toNumber l / toNumber (max 1 maxLayer)
            , reach: maybe [] _.reachability meta
+           , host: meta >>= _.host
            }
     in
       { x: acc.x + toNumber subcols * colW + 40.0
@@ -173,6 +175,11 @@ paper = SA.RGB 255 255 255
 
 edgeColor :: SA.Color
 edgeColor = SA.RGB 150 150 150
+
+-- a dependency that crosses machines — the fragile boundary (network latency +
+-- partition). Warm so the boundary-crossings pop (§14.6 "mark cross-host edges").
+crossHostColor :: SA.Color
+crossHostColor = SA.RGB 200 130 40
 
 -- traffic channel — a calm, non-source hue (the source palette owns blue/green/
 -- violet/amber/indigo/grey). Provisional pending the holistic attention pass.
@@ -264,10 +271,14 @@ edgeLine dim posOf e = do
     ty = to.y + nodeH / 2.0
     mx = (fx + tx) / 2.0
     my = (fy + ty) / 2.0
+    crossHost = case from.host, to.host of
+      Just a, Just b -> a /= b
+      _, _ -> false
   pure $ SE.g [ SA.class_ (H.ClassName (dimClass "edge" dim)) ]
     ( [ SE.line
           [ SA.x1 fx, SA.y1 fy, SA.x2 tx, SA.y2 ty
-          , SA.stroke edgeColor, SA.strokeWidth 1.2
+          , SA.stroke (if crossHost then crossHostColor else edgeColor)
+          , SA.strokeWidth (if crossHost then 1.7 else 1.2)
           ]
       ] <> midpointMark mx my e.req
     )
@@ -362,7 +373,7 @@ nodeMark hoverAct dim n =
           [ SA.x (n.x + 10.0), SA.y (n.y + 33.0)
           , SA.fontSize (SA.FontSizeLength (SA.Px 9.5)), SA.fill faint
           ]
-          [ HH.text (if n.ghost then "undefined — no source" else n.mech) ]
+          [ HH.text (if n.ghost then "undefined — no source" else (n.mech <> maybe "" (\h -> " · " <> h) n.host)) ]
       ] <> exposureBadge n
     )
 
@@ -447,6 +458,7 @@ legend =
         [ HH.span [ cls "leg-h" ] [ HH.text "edges" ]
         , leg "──" "dependency (lifecycle)"
         , leg "╌╌" "route (traffic, labelled /path)"
+        , leg "▬" "amber = crosses hosts (network boundary)"
         ]
     , HH.div [ cls "leg-grp" ]
         [ HH.span [ cls "leg-h" ] [ HH.text "exposure (right of node)" ]
