@@ -318,7 +318,9 @@ same imprecision rather than a clean win — the clean win is composition.
    "Address" honours the framing that started this; swap if another reads truer.
 3. **Additive vs replace.** Start additive (`reachability` + derived `exposure`)
    for a green tree; decide whether to drop the stored `Exposure` field once the
-   migration settles.
+   migration settles. **Resolved:** went straight to replace (§11); the *full*
+   retirement of `Exposure` is planned as opportunistic per-consumer pruning —
+   see **D-R1** in `DECISIONS.md`.
 
 ---
 

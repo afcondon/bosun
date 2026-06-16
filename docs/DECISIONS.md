@@ -184,6 +184,55 @@ exotic survives round-trip via `extra` and is never silently dropped.
 
 ---
 
+## D-R1 — Retiring `Exposure`: opportunistic per-consumer pruning, not a big-bang pass
+
+**Context.** `ADDRESS-TYPE.md` (adopted 2026-06-16) introduced
+`Reachability` (a `Set Address` with explicit `BindScope`) as the stored
+reachability model and kept the old `Exposure` sum alive as the derived
+projection `classify :: Reachability -> Exposure`. That was deliberate: it let
+every existing consumer keep compiling by reading `classify s.reachability`,
+and kept the Detect golden + the backend-go differential byte-identical. The
+open question (`ADDRESS-TYPE.md §10.3`): should we *finish the job* and delete
+`Exposure`, leaving only the richer type?
+
+**Decision.** **Yes — `Exposure` is a migration scaffold, not a permanent part
+of the model — but retire it the way it was introduced: opportunistically,
+per-consumer, never as a dedicated "rip out Exposure" pass.** Pruning a consumer
+is justified only when `classify` is *in its way* (it needs structure `classify`
+threw away), not for purity. The end state is not "`Reachability` replaces
+`Exposure` 1:1": `Exposure` always conflated *where* (host vs internal) with
+*what kind* (port vs socket vs proxy). The clean decomposition is
+**`Reachability` = the data, `Openness` = the ordered security/ramp spine** —
+once consumers read those two directly, the `Exposure` sum has no job left.
+
+**Sequencing (cheapest- and safest-first):**
+
+| Step | Consumer(s) | Cost | When |
+|---|---|---|---|
+| 1 | `Serve.admit`, `Observe.effectiveProbe` | **golden-neutral** — neither feeds the Detect conformance (`admit` is under `ServeMain`; `effectiveProbe` is CLI-only) | any time; strictly better (admit can choose among listeners + reject a loopback-bound port as unpublishable; observe probes the most-exposed port of a composite) |
+| 2 | `exposureLabel` / the report → set-aware (`reachabilityLabel`) | **changes the Detect golden + conformance expectation** — must be a deliberate, reviewed golden regen; may surface *new* within-facet drift (two facets that `classify` collapsed to one label may now legitimately differ) | gate on "first real composite fixture exists" — until then `classify`'s collapse is a harmless lie (no fixture has a composite) |
+| 3 | `View` wire (`exposure :: String`) | coordinate — the wire growing a `reachability` field is the **Pillar-3 / Chair session's** call (`ADDRESS-TYPE.md §8`); flipping `View` off `classify` unilaterally risks colliding with their work | whenever the badge needs the full `Address` |
+| 4 | delete the `Exposure` type | one-line removal once no live consumer matches its constructors (optionally keep as a test/convenience export) | after 1–3 |
+
+**Type.** No change lands with this ADR — it records the *plan*. End state:
+`classify`/`Exposure` removed from the live path; `Openness` (already derived)
+becomes the explicit spine for security checks and the viz colour-ramp;
+`reachabilityLabel :: Reachability -> String` replaces `exposureLabel` and is
+composite-aware.
+
+**Consequences.** The migration stays low-risk *mechanically* — backend-go
+already transpiles the richer type byte-identically (proven: 34 Go files,
+`Set` + derived `Ord` over record-carrying constructors), so the type system
+and the Go column will not fight the prune. The **only** step that touches an
+irreversible contract is step 2's golden regen — that is the real decision point
+and it is small. A standing follow-up rides along: the collision check currently
+treats `Loopback`/`Internal` binds as non-contending (preserving the old
+`InternalPort` behaviour), which is technically imprecise on a single host; the
+richer type makes a future `bind-scope-overlap` refinement possible (see
+`ADDRESS-TYPE.md §11`).
+
+---
+
 ## Still open (deferred, not blocking)
 
 - **E10** — the full EdgeKind × tool *fidelity matrix* (which requirement
