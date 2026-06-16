@@ -81,6 +81,7 @@ type State =
   , mergeCanon :: String
   -- graph (pillar 3) — the brushed node for coordinated highlighting
   , graphFocus :: Maybe String
+  , graphSelect :: Maybe String   -- clicked node → blast radius ("what breaks")
   , groupByHost :: Boolean   -- layout pivot: dependency layers vs host columns
   -- the pivot tween, driven by the Hylograph interpolation engine: livePos holds
   -- the per-node interpolating positions the graph renders from; anim holds the
@@ -114,6 +115,7 @@ data Action
   | SplitAlias String
   | RemoveOverride Int
   | HoverNode (Maybe String)
+  | SelectNode (Maybe String)
   | ToggleGroupBy
   | ToggleSpof
 
@@ -130,7 +132,7 @@ component =
         , cockpit: Nothing, cockErr: Nothing, ticks: 0, busy: false
         , composePath: "", registryPath: "", analysis: Nothing, anaErr: Nothing, anaLoading: false
         , overrides: [], mergeName: "", mergeCanon: ""
-        , graphFocus: Nothing, groupByHost: false
+        , graphFocus: Nothing, graphSelect: Nothing, groupByHost: false
         , livePos: Map.empty, anim: Nothing, animGen: 0, showSpof: false
         }
     , render
@@ -169,6 +171,8 @@ handleAction = case _ of
     H.modify_ \s -> s { overrides = Array.snoc s.overrides (Split { name }) }
     runAnalyze
   HoverNode mid -> H.modify_ _ { graphFocus = mid }
+  -- click toggles the blast-radius selection; clicking the same node clears it
+  SelectNode mid -> H.modify_ \s -> s { graphSelect = if s.graphSelect == mid then Nothing else mid }
   ToggleGroupBy -> do
     s <- H.get
     case s.analysis of
@@ -270,7 +274,8 @@ runAnalyze = do
       -- seed the live positions for the current layout so the graph (and any
       -- subsequent pivot) starts from a settled, correct frame
       Right a -> st { anaLoading = false, analysis = Just a, anaErr = Nothing
-                    , livePos = layoutPositions st.groupByHost a, anim = Nothing }
+                    , livePos = layoutPositions st.groupByHost a, anim = Nothing
+                    , graphSelect = Nothing }   -- a stale selection wouldn't exist in the new graph
 
 -- ── render ───────────────────────────────────────────────────────────────────
 
@@ -396,7 +401,7 @@ renderGraphView s =
     , maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text e ]) s.anaErr
     , case s.analysis of
         Nothing -> HH.p [ cls "muted" ] [ HH.text "load a fixture above — the graph renders the same AnalyzeResult the Ingestion view uses." ]
-        Just a -> graphView HoverNode s.groupByHost s.showSpof s.livePos s.graphFocus a
+        Just a -> graphView HoverNode SelectNode s.groupByHost s.showSpof s.livePos s.graphFocus s.graphSelect a
     ]
 
 ladder :: forall m. State -> AnalyzeResult -> H.ComponentHTML Action () m

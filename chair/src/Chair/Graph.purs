@@ -30,6 +30,7 @@ import Data.Int (round, toNumber)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
+import Data.Set (Set)
 import Data.Set as Set
 import Data.String (joinWith)
 import Data.String.CodeUnits (length, take)
@@ -199,6 +200,11 @@ crossHostMild = SA.RGB 214 184 130
 alarm :: SA.Color
 alarm = SA.RGB 206 51 51
 
+-- the "would fall" amber for blast radius (§14.5): the killed node is alarm-red,
+-- everything that transitively depends on it is washed in this warning amber.
+blastColor :: SA.Color
+blastColor = SA.RGB 224 146 46
+
 -- traffic channel — a calm, non-source hue (the source palette owns blue/green/
 -- violet/amber/indigo/grey). Provisional pending the holistic attention pass.
 traffic :: SA.Color
@@ -258,6 +264,21 @@ spofGraph ids edges = { nodes: ids, edges: foldl ins Map.empty edges }
 normEdge :: String -> String -> Tuple String String
 normEdge a b = if a <= b then Tuple a b else Tuple b a
 
+-- ── blast radius (§14.5 "click to ask what breaks") ──────────────────────────
+
+-- everything that TRANSITIVELY DEPENDS ON `start` — i.e. what stops if it dies.
+-- Edges run dependent→dependency, so this is reverse reachability: follow
+-- to→from. The returned set includes `start` itself (the killed node).
+blastRadius :: Array Edge -> String -> Set String
+blastRadius edges start = go (Set.singleton start) [ start ]
+  where
+  revAdj = foldl (\m e -> Map.insertWith (<>) e.to [ e.from ] m) Map.empty edges
+  go seen frontier = case Array.uncons frontier of
+    Nothing -> seen
+    Just { head, tail } ->
+      let fresh = Array.filter (\d -> not (Set.member d seen)) (fromMaybe [] (Map.lookup head revAdj))
+      in go (foldl (flip Set.insert) seen fresh) (tail <> fresh)
+
 -- ── the view ─────────────────────────────────────────────────────────────────
 
 -- `hoverAct` reports the hovered node id (Nothing on leave); `focus` is the
@@ -277,8 +298,8 @@ layoutPositions groupByHost a =
   in
     Map.fromFoldable (map (\n -> n.id /\ { x: n.x, y: n.y }) nodes)
 
-graphView :: forall act m. (Maybe String -> act) -> Boolean -> Boolean -> Map String Point -> Maybe String -> AnalyzeResult -> H.ComponentHTML act () m
-graphView hoverAct groupByHost showSpof livePos focus a =
+graphView :: forall act m. (Maybe String -> act) -> (Maybe String -> act) -> Boolean -> Boolean -> Map String Point -> Maybe String -> Maybe String -> AnalyzeResult -> H.ComponentHTML act () m
+graphView hoverAct selectAct groupByHost showSpof livePos focus select a =
   let
     insts = a.instances
     edges = edgesOf insts
@@ -301,17 +322,31 @@ graphView hoverAct groupByHost showSpof livePos focus a =
             <> Array.concatMap (\e -> nbr fid e.from e.to) edges
             <> Array.concatMap (\r -> nbr fid r.from r.to) routes
         )
-    nodeDim n = case focusSet of
-      Nothing -> false
-      Just s -> not (Set.member n.id s)
-    edgeDim from to = case focus of
-      Nothing -> false
-      Just fid -> not (from == fid || to == fid)
+    -- blast radius (click-to-select): what stops if `select` dies. When a node
+    -- is selected this lens DOMINATES the hover brush — dim everything outside
+    -- the blast set, the killed node red, its transitive dependents amber.
+    blastSet = maybe Set.empty (blastRadius edges) select
+    nodeDim n = case select of
+      Just _ -> not (Set.member n.id blastSet)
+      Nothing -> case focusSet of
+        Nothing -> false
+        Just s -> not (Set.member n.id s)
+    edgeDim from to = case select of
+      Just _ -> not (Set.member from blastSet && Set.member to blastSet)
+      Nothing -> case focus of
+        Nothing -> false
+        Just fid -> not (from == fid || to == fid)
     -- structural SPOFs, computed from the dependency graph's shape (§8.7)
     spofG = spofGraph (map _.id nodes) edges
     cutVerts = if showSpof then articulationPoints spofG else Set.empty
     bridgeSet = if showSpof then Set.fromFoldable (map (\(Tuple x y) -> normEdge x y) (bridges spofG)) else Set.empty
     isBridge from to = Set.member (normEdge from to) bridgeSet
+    nodeFlags n =
+      { dim: nodeDim n
+      , cutVertex: Set.member n.id cutVerts
+      , killed: select == Just n.id
+      , willFall: select /= Just n.id && Set.member n.id blastSet
+      }
   in
     HH.div [ cls "graph" ]
       [ HH.div [ cls "graph-meta" ]
@@ -332,7 +367,7 @@ graphView hoverAct groupByHost showSpof livePos focus a =
           , SE.g [ SA.class_ (H.ClassName "edges") ]
               (Array.mapMaybe (\e -> edgeLine (edgeDim e.from e.to) (isBridge e.from e.to) posOf e) edges)
           , SE.g [ SA.class_ (H.ClassName "nodes") ]
-              (map (\n -> nodeMark hoverAct (nodeDim n) (Set.member n.id cutVerts) n) renderNodes)
+              (map (\n -> nodeMark hoverAct selectAct (nodeFlags n) n) renderNodes)
           ] )
       , legend
       ]
@@ -530,19 +565,28 @@ midpointMark mx my = case _ of
 
 -- one node: a rounded rect bordered by source, label + mechanism tag.
 -- ghosts (dangling targets) render hollow + faint.
-nodeMark :: forall act m. (Maybe String -> act) -> Boolean -> Boolean -> Node -> H.ComponentHTML act () m
-nodeMark hoverAct dim cutVertex n =
+-- render flags for one node, computed in graphView (which lens is active).
+type NodeFlags =
+  { dim :: Boolean          -- pushed back by a brush / blast lens
+  , cutVertex :: Boolean    -- structural SPOF (§8.7)
+  , killed :: Boolean       -- the blast-radius selection (§14.5)
+  , willFall :: Boolean     -- transitively depends on the killed node
+  }
+
+nodeMark :: forall act m. (Maybe String -> act) -> (Maybe String -> act) -> NodeFlags -> Node -> H.ComponentHTML act () m
+nodeMark hoverAct selectAct flags n =
   -- positioned by a `translate` on the group, children at LOCAL 0,0 — so a layout
   -- pivot changes only this transform and the browser CSS-tweens the move
   -- (§6.1 object constancy). The reordering in graphView keeps Halogen reusing
   -- this <g> across pivots, which is what lets the transition fire.
   SE.g
-    [ SA.class_ (H.ClassName (dimClass (if n.ghost then "node ghost" else "node") dim))
+    [ SA.class_ (H.ClassName (dimClass (if n.ghost then "node ghost" else "node") flags.dim))
     , SA.transform [ SA.Translate n.x n.y ]
     , HE.onMouseEnter \_ -> hoverAct (Just n.id)
     , HE.onMouseLeave \_ -> hoverAct Nothing
+    , HE.onClick \_ -> selectAct (Just n.id)
     ]
-    ( cutVertexHalo cutVertex <>
+    ( halos <>
       [ SE.rect
           [ SA.x 0.0, SA.y 0.0, SA.width nodeW, SA.height nodeH, SA.rx 5.0
           , SA.fill (if n.ghost then paper else layerRamp n.depth)
@@ -562,19 +606,24 @@ nodeMark hoverAct dim cutVertex n =
           [ HH.text (if n.ghost then "undefined — no source" else (n.mech <> maybe "" (\h -> " · " <> h) n.host)) ]
       ] <> exposureBadge n
     )
+  where
+  -- halos drawn behind the node, biggest first. cut-vertex (structural SPOF) +
+  -- killed (alarm-red) + will-fall (blast amber) stack as nested rings.
+  halos =
+    (if flags.killed then [ haloRing alarm 6.5 ] else [])
+      <> (if flags.willFall then [ haloRing blastColor 6.5 ] else [])
+      <> (if flags.cutVertex then [ haloRing alarm 3.5 ] else [])
 
--- the cut-vertex alarm halo (§8.7): an alarm-red ring just outside the node,
--- drawn behind it. A cut-vertex is a service whose loss partitions the graph —
--- lose it and everything beyond is cut off, with no alternative path.
-cutVertexHalo :: forall act m. Boolean -> Array (H.ComponentHTML act () m)
-cutVertexHalo false = []
-cutVertexHalo true =
-  [ SE.rect
-      [ SA.x (-4.0), SA.y (-4.0), SA.width (nodeW + 8.0), SA.height (nodeH + 8.0), SA.rx 8.0
-      , SA.fill paper, SA.fillOpacity 0.0, SA.stroke alarm, SA.strokeWidth 2.4
-      , SA.class_ (H.ClassName "spof-halo")
-      ]
-  ]
+-- an alarm/warning ring just outside the node, drawn behind it (a SPOF halo or
+-- a blast-radius wash). `off` is how far the ring sits outside the node border.
+haloRing :: forall act m. SA.Color -> Number -> H.ComponentHTML act () m
+haloRing c off =
+  SE.rect
+    [ SA.x (negate off), SA.y (negate off)
+    , SA.width (nodeW + 2.0 * off), SA.height (nodeH + 2.0 * off), SA.rx (5.0 + off)
+    , SA.fill paper, SA.fillOpacity 0.0, SA.stroke c, SA.strokeWidth 2.4
+    , SA.class_ (H.ClassName "spof-halo")
+    ]
 
 -- the collapsed EXPOSURE BADGE (the Siglet's smallest form): on the node's
 -- outward-facing (right) edge, an openness-coloured dot + the address value.
@@ -669,6 +718,11 @@ legend =
         [ HH.span [ cls "leg-h" ] [ HH.text "structural SPOF (⚠ toggle)" ]
         , leg "▢" "red halo = cut-vertex (loss partitions the graph)"
         , leg "▬" "red edge = bridge (single link, no redundant path)"
+        ]
+    , HH.div [ cls "leg-grp" ]
+        [ HH.span [ cls "leg-h" ] [ HH.text "blast radius (click a node)" ]
+        , leg "▢" "red = the killed node · amber = what stops with it"
+        , leg "↺" "click it again (or load) to clear"
         ]
     ]
   where
