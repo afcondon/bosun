@@ -32,6 +32,7 @@ import Data.String.CodeUnits (length, take)
 import Data.Tuple.Nested ((/\))
 import Halogen as H
 import Halogen.HTML as HH
+import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Svg.Attributes as SA
 import Halogen.Svg.Elements as SE
@@ -189,8 +190,11 @@ layerRamp f =
 
 -- ── the view ─────────────────────────────────────────────────────────────────
 
-graphView :: forall act m. AnalyzeResult -> H.ComponentHTML act () m
-graphView a =
+-- `hoverAct` reports the hovered node id (Nothing on leave); `focus` is the
+-- current brush. Brushing DIMS the unconnected rather than hiding it (Andrew:
+-- show everything, highlight on interrogation) — the Minard pattern.
+graphView :: forall act m. (Maybe String -> act) -> Maybe String -> AnalyzeResult -> H.ComponentHTML act () m
+graphView hoverAct focus a =
   let
     insts = a.instances
     edges = edgesOf insts
@@ -199,6 +203,19 @@ graphView a =
     posOf id = Array.find (\n -> n.id == id) nodes
     maxX = fromMaybe 0.0 (maximum (map _.x nodes)) + nodeW + marginX
     maxY = fromMaybe 0.0 (maximum (map _.y nodes)) + nodeH + marginY
+    -- the brushed node + its neighbours (via deps and routes) stay lit
+    focusSet = focus <#> \fid ->
+      Set.fromFoldable
+        ( [ fid ]
+            <> Array.concatMap (\e -> nbr fid e.from e.to) edges
+            <> Array.concatMap (\r -> nbr fid r.from r.to) routes
+        )
+    nodeDim n = case focusSet of
+      Nothing -> false
+      Just s -> not (Set.member n.id s)
+    edgeDim from to = case focus of
+      Nothing -> false
+      Just fid -> not (from == fid || to == fid)
   in
     HH.div [ cls "graph" ]
       [ HH.div [ cls "graph-meta" ]
@@ -213,22 +230,31 @@ graphView a =
           ]
           [ axisLayer maxX
           , SE.g [ SA.class_ (H.ClassName "traffic") ]
-              (Array.mapMaybe (trafficLine posOf) routes)
+              (Array.mapMaybe (\r -> trafficLine (edgeDim r.from r.to) posOf r) routes)
           , SE.g [ SA.class_ (H.ClassName "edges") ]
-              (Array.mapMaybe (edgeLine posOf) edges)
+              (Array.mapMaybe (\e -> edgeLine (edgeDim e.from e.to) posOf e) edges)
           , SE.g [ SA.class_ (H.ClassName "nodes") ]
-              (map nodeMark nodes)
+              (map (\n -> nodeMark hoverAct (nodeDim n) n) nodes)
           ]
       , legend
       ]
 
+-- append the dim marker class when brushing has pushed this element to the back
+dimClass :: String -> Boolean -> String
+dimClass base d = if d then base <> " dim" else base
+
+-- neighbours of `f` across one edge's endpoints
+nbr :: String -> String -> String -> Array String
+nbr f x y = if x == f then [ y ] else if y == f then [ x ] else []
+
 -- one dependency edge: a line (dependent → dependency) + the midpoint mark.
 edgeLine
   :: forall act m
-   . (String -> Maybe Node)
+   . Boolean
+  -> (String -> Maybe Node)
   -> Edge
   -> Maybe (H.ComponentHTML act () m)
-edgeLine posOf e = do
+edgeLine dim posOf e = do
   from <- posOf e.from
   to <- posOf e.to
   let
@@ -238,7 +264,7 @@ edgeLine posOf e = do
     ty = to.y + nodeH / 2.0
     mx = (fx + tx) / 2.0
     my = (fy + ty) / 2.0
-  pure $ SE.g [ SA.class_ (H.ClassName "edge") ]
+  pure $ SE.g [ SA.class_ (H.ClassName (dimClass "edge" dim)) ]
     ( [ SE.line
           [ SA.x1 fx, SA.y1 fy, SA.x2 tx, SA.y2 ty
           , SA.stroke edgeColor, SA.strokeWidth 1.2
@@ -265,10 +291,11 @@ axisLayer maxX =
 -- line it usually coincides with) + the route path. Calm/provisional styling.
 trafficLine
   :: forall act m
-   . (String -> Maybe Node)
+   . Boolean
+  -> (String -> Maybe Node)
   -> Route
   -> Maybe (H.ComponentHTML act () m)
-trafficLine posOf rt = do
+trafficLine dim posOf rt = do
   from <- posOf rt.from
   to <- posOf rt.to
   let
@@ -278,7 +305,7 @@ trafficLine posOf rt = do
     ty = to.y + nodeH / 2.0 + 7.0
     mx = (fx + tx) / 2.0
     my = (fy + ty) / 2.0
-  pure $ SE.g [ SA.class_ (H.ClassName "route") ]
+  pure $ SE.g [ SA.class_ (H.ClassName (dimClass "route" dim)) ]
     [ SE.line
         [ SA.x1 fx, SA.y1 fy, SA.x2 tx, SA.y2 ty
         , SA.stroke traffic, SA.strokeWidth 1.3, SA.strokeDashArray "6 4"
@@ -312,9 +339,13 @@ midpointMark mx my = case _ of
 
 -- one node: a rounded rect bordered by source, label + mechanism tag.
 -- ghosts (dangling targets) render hollow + faint.
-nodeMark :: forall act m. Node -> H.ComponentHTML act () m
-nodeMark n =
-  SE.g [ SA.class_ (H.ClassName (if n.ghost then "node ghost" else "node")) ]
+nodeMark :: forall act m. (Maybe String -> act) -> Boolean -> Node -> H.ComponentHTML act () m
+nodeMark hoverAct dim n =
+  SE.g
+    [ SA.class_ (H.ClassName (dimClass (if n.ghost then "node ghost" else "node") dim))
+    , HE.onMouseEnter \_ -> hoverAct (Just n.id)
+    , HE.onMouseLeave \_ -> hoverAct Nothing
+    ]
     ( [ SE.rect
           [ SA.x n.x, SA.y n.y, SA.width nodeW, SA.height nodeH, SA.rx 5.0
           , SA.fill (if n.ghost then paper else layerRamp n.depth)

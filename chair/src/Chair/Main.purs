@@ -72,6 +72,8 @@ type State =
   , overrides :: Array AliasOverride
   , mergeName :: String
   , mergeCanon :: String
+  -- graph (pillar 3) — the brushed node for coordinated highlighting
+  , graphFocus :: Maybe String
   }
 
 data Action
@@ -92,6 +94,7 @@ data Action
   | AddMerge
   | SplitAlias String
   | RemoveOverride Int
+  | HoverNode (Maybe String)
 
 main :: Effect Unit
 main = HA.runHalogenAff do
@@ -106,6 +109,7 @@ component =
         , cockpit: Nothing, cockErr: Nothing, ticks: 0, busy: false
         , composePath: "", registryPath: "", analysis: Nothing, anaErr: Nothing, anaLoading: false
         , overrides: [], mergeName: "", mergeCanon: ""
+        , graphFocus: Nothing
         }
     , render
     , eval: H.mkEval H.defaultEval { handleAction = handleAction, initialize = Just Initialize }
@@ -142,6 +146,7 @@ handleAction = case _ of
   SplitAlias name -> do
     H.modify_ \s -> s { overrides = Array.snoc s.overrides (Split { name }) }
     runAnalyze
+  HoverNode mid -> H.modify_ _ { graphFocus = mid }
   RemoveOverride i -> do
     H.modify_ \s -> s { overrides = fromMaybe s.overrides (Array.deleteAt i s.overrides) }
     runAnalyze
@@ -311,7 +316,7 @@ renderGraphView s =
     , maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text e ]) s.anaErr
     , case s.analysis of
         Nothing -> HH.p [ cls "muted" ] [ HH.text "load a fixture above — the graph renders the same AnalyzeResult the Ingestion view uses." ]
-        Just a -> graphView a
+        Just a -> graphView HoverNode s.graphFocus a
     ]
 
 ladder :: forall m. State -> AnalyzeResult -> H.ComponentHTML Action () m
