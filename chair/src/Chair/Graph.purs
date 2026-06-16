@@ -208,7 +208,9 @@ graphView a =
                   <> show (Array.length routes) <> " routes · loose view (left → right = boot order)") ]
           ]
       , SE.svg
-          [ SA.viewBox 0.0 0.0 maxX maxY, SA.class_ (H.ClassName "graph-svg") ]
+          [ SA.viewBox 0.0 0.0 maxX maxY, SA.width maxX, SA.height maxY
+          , SA.class_ (H.ClassName "graph-svg")
+          ]
           [ axisLayer maxX
           , SE.g [ SA.class_ (H.ClassName "traffic") ]
               (Array.mapMaybe (trafficLine posOf) routes)
