@@ -1,12 +1,13 @@
 # `Address` — refining `Exposure` into a reachability address
 
-> **Status: design proposal, for a feature-branch experiment — not a settled
-> decision.** Generated 2026-06-16 from a Pillar-3 (Bosun's Chair graph) design
-> session. The visual work on "how is a service reached" surfaced four things
-> the current `Exposure` sum cannot express; this note proposes a richer type
-> and — crucially — asks the Bosun engine session to **try it in a branch and
-> report whether it breaks assumptions or proves the current sum strictly
-> inferior.** The interesting answer is either outcome.
+> **Status: ADOPTED — experiment ran 2026-06-16 on branch `address-type`, all
+> gates green, merged to `main`.** Originally a Pillar-3 design proposal (below,
+> unchanged for the record). The visual work on "how is a service reached"
+> surfaced four things the current `Exposure` sum could not express; this note
+> proposed a richer type and asked the engine session to try it in a branch.
+> **It did not flame out — see §11 for the result.** `Reachability`/`Address`/
+> `BindScope` landed additively-by-replacement; `Exposure` survives as the
+> derived `classify` projection exactly as proposed.
 
 ---
 
@@ -256,6 +257,55 @@ The proposal is *wrong to adopt* if any of these turn up:
 
 If none of these bite, the old sum is proven a lossy projection with no hidden
 cost, and `Reachability` should land — with `Exposure` kept as `classify`.
+
+---
+
+## 11. Experiment result (2026-06-16, branch `address-type`)
+
+**Verdict: LAND IT.** None of the §9 falsifiers bit. `Exposure` is proven a
+lossy projection of `Reachability` with no hidden cost.
+
+**What was done.** Went straight to the §7 *replace* end-state rather than the
+additive scaffold — it is *less* total churn (no double-set at the ~30 fixture
+construction sites) and a truer test. `Bosun.Reachability` is a new module
+(types + smart constructors mirroring the old `Exposure` constructors +
+`classify`/`openness`/`maxOpenness`). The stored field `exposure :: Exposure`
+on the three service records became `reachability :: Reachability`; readers that
+only need the old view call `classify s.reachability`. **`Bosun.Exposure` is
+untouched** and remains `classify`'s codomain.
+
+**Gates.** `spago build` 7 packages 0 warnings / 0 errors · `spago test` 90
+passing (13 new in `ReachabilitySpec`) · frozen-corpus golden byte-identical (15
+divergences + the macmini:80 collision) · **backend-go differential
+byte-identical, node vs Go, 34 Go files** — i.e. `Set Address` and a *derived*
+`Ord` over record-carrying constructors transpile and run cleanly through the
+optimizer column.
+
+**Watch-list outcomes (§8).**
+
+| Consumer | Outcome |
+|---|---|
+| port-collision (`Validate`) | **GOT BETTER.** Now iterates the address *set*: every host-published listener (`AllIfaces`/`HostIface`) contributes a `(host,port)` claim, so a service's *second* published port is finally checkable — unrepresentable under singular `Exposure`. New test proves the gain and its control. `Internal`/`Loopback` don't contend (≡ old `InternalPort`, which never collided). |
+| reconcile facet model | **PASS-THROUGH.** `withinFacetConflict` compares `exposureLabel (classify …)`; per-facet partitioning unchanged; golden identical. |
+| compose adapter | **MIGRATED, better.** Emits `hostPort` = `AllIfaces` — the true `0.0.0.0` semantics of `ports:`. Composition now expressible. |
+| registry adapter | **MIGRATED, better.** Emits `Listening (HostIface host)` per §8 — host-scoped, not all-interfaces. |
+| `exposureLabel` + the wire (`View`) | **PASS-THROUGH.** Wire stays `exposure :: String` (via `classify`), so the Chair MVP *and* the Pillar-3 graph keep working untouched. The wire *could* grow a `reachability` field for the badge — deliberately left to the viz session (no codec/ frontend churn from this branch). |
+| serve admission | **PASS-THROUGH.** `admit` reads `classify s.reachability`; behaviour identical. Could later sharpen (reject a loopback-bound port as unpublishable) — not needed yet. |
+| plan / apply | **INDIFFERENT, confirmed.** They act on services, not exposure shape; backend-go conformance is byte-identical including the plan and the apply script. |
+| observe (CLI) | **PASS-THROUGH.** `effectiveProbe` reads `classify`. |
+
+**Resisters: none.** The migration stayed inside the watch-list plus mechanical
+fixture renames (`exposure = HostPort p` → `reachability = hostPort p`, etc.).
+
+**One honest wrinkle (a §10.1 follow-up, not a blocker).** The collision check
+treats `Loopback`/`Internal` binds as non-contending — which *preserves* the old
+`InternalPort` behaviour but is technically imprecise: two processes binding
+`127.0.0.1:9000` on the *same* host do collide in reality, and a `0.0.0.0:p`
+listener subsumes a `127.0.0.1:p` one. The richer type now makes this
+*fixable* (the scope is finally visible); it was deliberately left unchanged to
+keep the experiment scoped. A future `bind-scope-overlap` refinement could close
+it. The §8 example's "two loopback services don't collide" is, strictly, this
+same imprecision rather than a clean win — the clean win is composition.
 
 ---
 

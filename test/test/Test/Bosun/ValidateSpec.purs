@@ -10,7 +10,7 @@ import Bosun.Atoms (Port, mkHost, mkPort, mkRoutePath, mkServiceId)
 import Bosun.Edge (Gate(..), Requirement(..))
 import Bosun.Error (DeployError(..))
 import Bosun.Executor (Executor(..))
-import Bosun.Exposure (Exposure(..))
+import Bosun.Reachability (hostPort, noNetwork)
 import Bosun.Health (Probe(..))
 import Bosun.Selector (Selector(..))
 import Bosun.Service (LooseDep, LooseRoute, LooseService, mkDeployment, unBootOrder, unValidatedDeployment)
@@ -29,7 +29,7 @@ leaf :: String -> LooseService
 leaf name =
   { id: mkServiceId name
   , host: Nothing
-  , exposure: NoNetwork
+  , reachability: noNetwork
   , readiness: NoProbe
   , deps: []
   , routes: []
@@ -102,13 +102,13 @@ spec = describe "Bosun.Validate" do
       any isDangling (errsOf (validate (mkDeployment [ fe ]))) `shouldEqual` true
 
     it "B3 port collision (same host:port) -> PortCollision" do
-      let s1 = (leaf "s1") { host = Just (mkHost "mbp"), exposure = HostPort (port_ 3000) }
-          s2 = (leaf "s2") { host = Just (mkHost "mbp"), exposure = HostPort (port_ 3000) }
+      let s1 = (leaf "s1") { host = Just (mkHost "mbp"), reachability = hostPort (port_ 3000) }
+          s2 = (leaf "s2") { host = Just (mkHost "mbp"), reachability = hostPort (port_ 3000) }
       any isPortCollision (errsOf (validate (mkDeployment [ s1, s2 ]))) `shouldEqual` true
 
     it "B3' same port, DIFFERENT host -> NOT a collision (facets, A8)" do
-      let s1 = (leaf "s1") { host = Just (mkHost "mbp"), exposure = HostPort (port_ 3000) }
-          s2 = (leaf "s2") { host = Just (mkHost "macmini"), exposure = HostPort (port_ 3000) }
+      let s1 = (leaf "s1") { host = Just (mkHost "mbp"), reachability = hostPort (port_ 3000) }
+          s2 = (leaf "s2") { host = Just (mkHost "macmini"), reachability = hostPort (port_ 3000) }
       any isPortCollision (errsOf (validate (mkDeployment [ s1, s2 ]))) `shouldEqual` false
 
     it "B4 selector not closed under Requires -> SelectorNotClosed" do

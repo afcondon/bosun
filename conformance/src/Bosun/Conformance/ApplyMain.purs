@@ -18,7 +18,7 @@ import Prelude
 import Bosun.Apply (Command(..), StagedCommand, applyScript)
 import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkHost, mkPort, mkProjectSlug)
 import Bosun.Executor (Executor(..))
-import Bosun.Exposure (Exposure(..))
+import Bosun.Reachability (hostPort)
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Plan (plan)
 import Bosun.Reconcile (reconcile)
@@ -81,7 +81,7 @@ server name role port =
       , command: "nohup python3 -m http.server " <> show port <> " >" <> role <> ".log 2>&1 &"
       , env: []
       }
-  , exposure: HostPort (port_ port)
+  , reachability: hostPort (port_ port)
   , health: { liveness: NoProbe, readiness: TcpConnect (port_ port), startup: Nothing }
   , restart: { base: Never, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }
   , rawDeps: []

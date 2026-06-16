@@ -40,6 +40,7 @@ import Bosun.Atoms (Host, unAbsPath, unHost, unPort, unServiceId)
 import Bosun.Error (SdiViolation(..))
 import Bosun.Executor (Executor(..))
 import Bosun.Exposure (Exposure(..))
+import Bosun.Reachability (classify)
 import Bosun.Service (Deployment, LooseService, deploymentServices)
 import Data.Array as A
 import Data.Either (Either(..))
@@ -138,7 +139,7 @@ servePlan dep =
 -- | its command (so the public→internal rewrite lands). Everything else is a
 -- | typed `Rejection`.
 admit :: LooseService -> Admission
-admit s = case s.exposure of
+admit s = case classify s.reachability of
   HostPort p ->
     let public = unPort p in
     case classifyHost s.host of

@@ -17,7 +17,7 @@ import Bosun.Atoms (AbsPath, ServiceId, mkAbsPath, mkHost)
 import Bosun.Edge (Requirement(..), Gate(..))
 import Bosun.Error (DeployError)
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
-import Bosun.Exposure (Exposure(..))
+import Bosun.Reachability (hostPort, noNetwork)
 import Bosun.Health (Probe(..))
 import Bosun.Serve (internalOffset, serveDiff, servePlan)
 import Bosun.Service (Deployment, LooseDep, LooseService, deploymentServices, mkDeployment, unBootOrder, unServiceRef, unValidatedDeployment)
@@ -65,7 +65,7 @@ genLegal minN = do
     targets <- if i == 0 then pure [] else genSubset (range 0 (i - 1))
     pure ((leaf ("s" <> show i))
       { host = Just (mkHost "gen")
-      , exposure = HostPort (port_ (3000 + i))
+      , reachability = hostPort (port_ (3000 + i))
       , readiness = TcpConnect (port_ (4000 + i))
       , deps = map (\j -> requiresGate OnReady ("s" <> show j)) targets
       })
@@ -98,7 +98,7 @@ injectDangle = modifyService 0 (addDep (requires "ghost-zzz"))
 injectCollide :: Deployment -> Deployment
 injectCollide = modifyService 0 collide <<< modifyService 1 collide
   where
-  collide s = s { host = Just (mkHost "collide"), exposure = HostPort (port_ 9999) }
+  collide s = s { host = Just (mkHost "collide"), reachability = hostPort (port_ 9999) }
 
 -- s0 Requires(OnReady) s1, but s1's readiness is stripped ⇒ UncheckableGate  (needs minN = 2)
 injectDropGatedProbe :: Deployment -> Deployment
@@ -165,18 +165,18 @@ serveSvc i = build <$> chooseInt 0 5
   port = 3000 + i
   proc h cmd = (leaf name)
     { host = Just (mkHost h)
-    , exposure = HostPort (port_ port)
+    , reachability = hostPort (port_ port)
     , launch = { executor: Process { cwd: absPath ("/srv/" <> name), command: cmd, env: [] }, localName: name }
     }
   build = case _ of
     0 -> proc "mbp" ("run -p " <> show port)                 -- ADMIT (local, port in cmd)
     1 -> proc "macmini" ("run -p " <> show port)             -- REDIRECT (remote)
     2 -> proc "mbp" "run without a numeric flag"             -- REJECT (port not in command)
-    3 -> (leaf name) { host = Just (mkHost "mbp"), exposure = HostPort (port_ port) } -- REJECT (Unmanaged ⇒ no abs cwd)
-    4 -> (proc "mbp" ("run -p " <> show port)) { exposure = NoNetwork }               -- REJECT (no host port)
+    3 -> (leaf name) { host = Just (mkHost "mbp"), reachability = hostPort (port_ port) } -- REJECT (Unmanaged ⇒ no abs cwd)
+    4 -> (proc "mbp" ("run -p " <> show port)) { reachability = noNetwork }               -- REJECT (no host port)
     _ -> (leaf name)
       { host = Just (mkHost "mbp")
-      , exposure = HostPort (port_ port)
+      , reachability = hostPort (port_ port)
       , launch = { executor: Container (ContainerSpec { source: Left (ImageRef name), internalPort: Nothing, publish: Nothing }), localName: name }
       } -- REJECT (not a Process)
 

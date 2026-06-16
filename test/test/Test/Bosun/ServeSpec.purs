@@ -12,7 +12,7 @@ import Prelude
 import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkHost, mkPort)
 import Bosun.Error (SdiViolation(..))
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
-import Bosun.Exposure (Exposure(..))
+import Bosun.Reachability (hostPort)
 import Bosun.Serve (RejectReason(..), serveDiff, servePlan)
 import Bosun.Service (LooseService, mkDeployment)
 import Data.Array (head)
@@ -34,7 +34,7 @@ procSvc :: String -> Int -> String -> String -> String -> LooseService
 procSvc name port host cwd cmd =
   (leaf name)
     { host = Just (mkHost host)
-    , exposure = HostPort (port_ port)
+    , reachability = hostPort (port_ port)
     , launch = { executor: Process { cwd: absPath cwd, command: cmd, env: [] }, localName: name }
     }
 
@@ -61,7 +61,7 @@ spec = describe "Bosun.Serve.servePlan" do
     let
       svc = (leaf "x")
         { host = Just (mkHost "mbp")
-        , exposure = HostPort (port_ 3060)
+        , reachability = hostPort (port_ 3060)
         , launch = { executor: Unmanaged "flask run -p 3060", localName: "x" }
         }
       p = servePlan (mkDeployment [ svc ])
@@ -93,7 +93,7 @@ spec = describe "Bosun.Serve.servePlan" do
     let
       svc = (leaf "c")
         { host = Just (mkHost "mbp")
-        , exposure = HostPort (port_ 3070)
+        , reachability = hostPort (port_ 3070)
         , launch =
             { executor: Container (ContainerSpec { source: Left (ImageRef "c"), internalPort: Nothing, publish: Nothing })
             , localName: "c"

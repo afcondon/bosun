@@ -37,6 +37,7 @@ import Bosun.Atoms (Host, ServiceId, mkServiceId, unAbsPath, unDomain, unPort, u
 import Bosun.Error (DeployError(..))
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ExecutorMechanism, mechanism)
 import Bosun.Exposure (Exposure(..))
+import Bosun.Reachability (classify)
 import Bosun.Health (Probe(..))
 import Bosun.Service
   ( Deployment, LooseDep, LooseRoute, LooseService, RawDep, RawRoute
@@ -111,7 +112,7 @@ facetKeyOf si = { host: si.host, mechanism: mechanism si.executor }
 -- Two sources in the SAME facet disagreeing on exposure ⇒ a real conflict.
 withinFacetConflict :: ServiceId -> Array ServiceInstance -> Array DeployError
 withinFacetConflict sid fis =
-  let claims = map (\si -> Tuple si.source (exposureLabel si.exposure)) fis
+  let claims = map (\si -> Tuple si.source (exposureLabel (classify si.reachability))) fis
   in if A.length (A.nub (map snd claims)) > 1
        then [ CrossSourceDrift { svc: sid, field: "exposure", claims } ]
        else []
@@ -126,7 +127,7 @@ toLoose :: AliasMap -> ServiceId -> ServiceInstance -> Array ServiceInstance -> 
 toLoose aliases sid rep is =
   { id: sid
   , host: rep.host
-  , exposure: rep.exposure
+  , reachability: rep.reachability
   , readiness: fromMaybe NoProbe (A.find (_ /= NoProbe) (map (\si -> si.health.readiness) is))
   , deps: A.nubEq (is >>= \si -> map (resolveDep aliases) si.rawDeps)
   , routes: A.nubEq (is >>= \si -> map (resolveRoute aliases) si.rawRoutes)

@@ -20,7 +20,7 @@ import Prelude
 import Bosun.Atoms (Host, ProjectSlug, RoutePath, ServiceId)
 import Bosun.Edge (DepOrdering, Requirement)
 import Bosun.Executor (Executor)
-import Bosun.Exposure (Exposure)
+import Bosun.Reachability (Reachability)
 import Bosun.Health (Health, Probe, RestartPolicy)
 import Bosun.Selector (Selector)
 import Data.Argonaut.Core (Json)
@@ -74,7 +74,7 @@ type ServiceInstance =
   , role      :: Role
   , host      :: Maybe Host
   , executor  :: Executor
-  , exposure  :: Exposure
+  , reachability :: Reachability
   , health    :: Health
   , restart   :: RestartPolicy
   , rawDeps   :: Array RawDep
@@ -96,7 +96,7 @@ type LooseRoute = { to :: ServiceId, path :: RoutePath }
 type LooseService =
   { id        :: ServiceId
   , host      :: Maybe Host
-  , exposure  :: Exposure
+  , reachability :: Reachability
   , readiness :: Probe
   , deps      :: Array LooseDep
   , routes    :: Array LooseRoute
@@ -147,7 +147,7 @@ type ResolvedRoute = { to :: ServiceRef, path :: RoutePath }
 type Service =
   { id        :: ServiceId
   , host      :: Maybe Host
-  , exposure  :: Exposure
+  , reachability :: Reachability
   , readiness :: Probe
   , deps      :: Array ResolvedDep
   , routes    :: Array ResolvedRoute

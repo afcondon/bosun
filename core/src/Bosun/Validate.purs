@@ -22,7 +22,7 @@ import Prelude
 
 import Bosun.Edge (DepOrdering(..), Gate(..), Requirement(..))
 import Bosun.Error (DeployError(..))
-import Bosun.Exposure (Exposure(..))
+import Bosun.Reachability (Address(..), BindScope(..), addresses)
 import Bosun.Health (Probe(..))
 import Bosun.Atoms (Host, Port, ServiceId, unServiceId)
 import Bosun.Selector (Selector)
@@ -108,7 +108,7 @@ validate dep =
   resolveNode s =
     { id: s.id
     , host: s.host
-    , exposure: s.exposure
+    , reachability: s.reachability
     , readiness: s.readiness
     , deps: s.deps # A.mapMaybe \d ->
         if Set.member d.to ids
@@ -127,23 +127,42 @@ checkDangling ids s = s.deps # A.mapMaybe \d ->
     then Nothing
     else Just (DanglingDependency s.id (unServiceId d.to))
 
--- B3 — PortCollision. Group `HostPort` claims by (host, port); >1 = collision.
--- Different hosts are fine (that is A8's facets). Host-less claims are skipped
--- (we cannot name the colliding host).
+-- B3 — PortCollision. Group host-published-listener claims by (host, port);
+-- >1 distinct service = collision. Different hosts are fine (that is A8's
+-- facets). Host-less claims are skipped (we cannot name the colliding host).
+--
+-- SCOPE-AWARE (ADDRESS-TYPE §8): the old check matched a single `HostPort`
+-- per service. Now `reachability` is a SET, so a service contributes a claim
+-- for EVERY host-published listener — composition (multiple published ports on
+-- one service) is finally checkable. `Internal`/`Loopback` binds do not contend
+-- for the host's published port space, so they never collide here.
 checkCollisions :: Array LooseService -> Array DeployError
 checkCollisions svcs =
   let
     claims :: Array (Tuple (Tuple Host Port) ServiceId)
-    claims = svcs # A.mapMaybe \s -> case s.host, s.exposure of
-      Just h, HostPort p -> Just (Tuple (Tuple h p) s.id)
-      _, _ -> Nothing
+    claims = svcs >>= \s -> case s.host of
+      Nothing -> []
+      Just h ->
+        A.fromFoldable (addresses s.reachability) # A.mapMaybe \a -> case a of
+          Listening { bind, port } | publishedToHost bind -> Just (Tuple (Tuple h port) s.id)
+          _ -> Nothing
     grouped :: Map (Tuple Host Port) (Array ServiceId)
     grouped = foldr (\(Tuple k sid) -> Map.insertWith (<>) k [ sid ]) Map.empty claims
   in
     Map.toUnfoldable grouped # A.mapMaybe \(Tuple (Tuple h p) sids) ->
-      if A.length sids > 1
-        then map (PortCollision h p) (NEA.fromArray sids)
+      -- nub so a service that publishes one port via two listeners (e.g.
+      -- AllIfaces and a HostIface) does not collide with itself.
+      let distinct = A.nub sids in
+      if A.length distinct > 1
+        then map (PortCollision h p) (NEA.fromArray distinct)
         else Nothing
+  where
+  publishedToHost :: BindScope -> Boolean
+  publishedToHost = case _ of
+    AllIfaces -> true
+    HostIface _ -> true
+    Internal -> false
+    Loopback -> false
 
 -- B5 — UncheckableGate. A `Requires On{Ready,Healthy}` edge demands the
 -- upstream publish a readiness signal (≠ NoProbe). OnStarted/OnCompleted do not.
