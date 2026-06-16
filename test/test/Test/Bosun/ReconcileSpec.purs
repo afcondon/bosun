@@ -10,7 +10,7 @@ import Prelude
 
 import Bosun.Atoms (AbsPath, Port, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkServiceId)
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
-import Bosun.Exposure (Exposure(..))
+import Bosun.Reachability (hostPort, noNetwork)
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Reconcile (reconcile)
 import Bosun.Report (renderReport)
@@ -40,7 +40,7 @@ inst =
   , role: mkRole "frontend"
   , host: Just (mkHost "mbp")
   , executor: Unmanaged "svc"
-  , exposure: NoNetwork
+  , reachability: noNetwork
   , health: { liveness: NoProbe, readiness: NoProbe, startup: Nothing }
   , restart: { base: Never, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }
   , rawDeps: []
@@ -63,7 +63,7 @@ tiltedRegistry = inst
   , role = mkRole "frontend"
   , host = Just (mkHost "mbp")
   , executor = Process { cwd: absPath "/Users/afc/work/afc-work/purescript-hylograph-showcases/psd3-tilted-radio", command: "npx serve", env: [] }
-  , exposure = HostPort (port_ 3013)
+  , reachability = hostPort (port_ 3013)
   }
 
 -- compose: tidal-frontend, macmini, container, no host port
@@ -75,7 +75,7 @@ tiltedCompose = inst
   , role = mkRole "frontend"
   , host = Just (mkHost "macmini")
   , executor = container "tidal-frontend"
-  , exposure = NoNetwork
+  , reachability = noNetwork
   }
 
 -- the alias bridges compose's name to the registry-derived id
@@ -92,8 +92,8 @@ spec = describe "Bosun.Reconcile" do
 
   it "B9 within-facet port disagreement => 1 conflict, 0 divergences" do
     let
-      a = inst { source = FromRegistry, project = Just (mkProjectSlug "p"), role = mkRole "api", exposure = HostPort (port_ 3013) }
-      b = inst { source = FromCompose, project = Just (mkProjectSlug "p"), role = mkRole "api", exposure = HostPort (port_ 3014) }
+      a = inst { source = FromRegistry, project = Just (mkProjectSlug "p"), role = mkRole "api", reachability = hostPort (port_ 3013) }
+      b = inst { source = FromCompose, project = Just (mkProjectSlug "p"), role = mkRole "api", reachability = hostPort (port_ 3014) }
       r = reconcile Map.empty [ a, b ]
     length r.conflicts `shouldEqual` 1
     length r.divergences `shouldEqual` 0
@@ -113,8 +113,8 @@ spec = describe "Bosun.Reconcile" do
 
     it "renders a within-facet conflict under CONFLICTS" do
       let
-        a = inst { project = Just (mkProjectSlug "p"), role = mkRole "api", exposure = HostPort (port_ 3013) }
-        b = inst { source = FromCompose, project = Just (mkProjectSlug "p"), role = mkRole "api", exposure = HostPort (port_ 3014) }
+        a = inst { project = Just (mkProjectSlug "p"), role = mkRole "api", reachability = hostPort (port_ 3013) }
+        b = inst { source = FromCompose, project = Just (mkProjectSlug "p"), role = mkRole "api", reachability = hostPort (port_ 3014) }
         r = reconcile Map.empty [ a, b ]
         out = renderReport { conflicts: r.conflicts, divergences: r.divergences } []
       contains (Pattern "CONFLICTS") out `shouldEqual` true

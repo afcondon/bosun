@@ -13,14 +13,14 @@ import Prelude
 
 import Bosun.Adapters.StartCommand (parseStartCommand)
 import Bosun.Atoms (mkHost, mkPort, mkProjectSlug)
-import Bosun.Exposure (Exposure(..))
+import Bosun.Reachability (BindScope(..), hostPort, listening, noNetwork)
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Service (ServiceInstance, Source(..), mkRole)
 import Data.Argonaut.Core (Json, toArray, toNumber, toObject, toString)
 import Data.Array as A
 import Data.Int (round)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromMaybe, maybe)
+import Data.Maybe (Maybe(..), fromMaybe)
 import Foreign.Object (Object)
 import Foreign.Object as FO
 
@@ -37,14 +37,23 @@ decodeRow j = do
   role <- str o "role"
   let
     portM = int o "port"
+    hostM = map mkHost (str o "host")
+    -- §8: a registry row names its host, so a listener binds that specific
+    -- interface (`HostIface host`), not all interfaces. Falls back to a bare
+    -- host-published port when the row has no host.
+    reach = case portM >>= mkPort of
+      Nothing -> noNetwork
+      Just p -> case hostM of
+        Just h -> listening (HostIface h) p
+        Nothing -> hostPort p
   pure
     { source: FromRegistry
     , project: map mkProjectSlug (str o "projectSlug")
     , localName: fromMaybe role (str o "projectName")
     , role: mkRole role
-    , host: map mkHost (str o "host")
+    , host: hostM
     , executor: parseStartCommand (fromMaybe "" (str o "startCommand"))
-    , exposure: maybe NoNetwork HostPort (portM >>= mkPort)
+    , reachability: reach
     , health: { liveness: NoProbe, readiness: NoProbe, startup: Nothing }
     , restart: { base: Always, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }
     , rawDeps: []

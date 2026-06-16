@@ -13,7 +13,7 @@ import Prelude
 import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkServiceId)
 import Bosun.Edge (Gate(..), Requirement(..))
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
-import Bosun.Exposure (Exposure(..))
+import Bosun.Reachability (hostPort, noNetwork)
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Apply (applyScript)
 import Bosun.Plan (Snapshot, Status(..), plan)
@@ -80,7 +80,7 @@ planFixture =
       , project = Just (mkProjectSlug "store")
       , localName = "store-db"
       , role = mkRole "db"
-      , exposure = HostPort (port_ 5432)
+      , reachability = hostPort (port_ 5432)
       , executor = Process { cwd: absPath "/srv/store-db", command: "postgres", env: [] }
       , health = inst.health { readiness = TcpConnect (port_ 5432) }
       }
@@ -89,7 +89,7 @@ planFixture =
       , project = Just (mkProjectSlug "store")
       , localName = "store-api"
       , role = mkRole "api"
-      , exposure = HostPort (port_ 3000)
+      , reachability = hostPort (port_ 3000)
       , executor = Process { cwd: absPath "/srv/store-api", command: "node server.js", env: [] }
       , health = inst.health { readiness = HttpGet { port: port_ 3000, path: "/health", expectStatus: 200 } }
       , rawDeps = [ { to: "store:db", ordering: Nothing, requirement: Just (Requires OnReady) } ]
@@ -99,7 +99,7 @@ planFixture =
       , project = Just (mkProjectSlug "store")
       , localName = "store-worker"
       , role = mkRole "worker"
-      , exposure = NoNetwork
+      , reachability = noNetwork
       , executor = Process { cwd: absPath "/srv/store-worker", command: "node worker.js", env: [] }
       , rawDeps = [ { to: "store:api", ordering: Nothing, requirement: Just BindsTo } ]
       }
@@ -113,14 +113,14 @@ fixture =
       , localName = "psd3-tilted-radio"
       , host = Just (mkHost "mbp")
       , executor = Process { cwd: absPath "/Users/afc/work/afc-work/purescript-hylograph-showcases/psd3-tilted-radio", command: "npx serve", env: [] }
-      , exposure = HostPort (port_ 3013)
+      , reachability = hostPort (port_ 3013)
       }
   , inst
       { source = FromCompose
       , localName = "tidal-frontend"
       , host = Just (mkHost "macmini")
       , executor = Container (ContainerSpec { source: Left (ImageRef "tidal-frontend"), internalPort: Nothing, publish: Nothing })
-      , exposure = NoNetwork
+      , reachability = noNetwork
       }
   , inst
       { source = FromRegistry
@@ -128,14 +128,14 @@ fixture =
       , localName = "minard-backend"
       , role = mkRole "api"
       , host = Just (mkHost "mbp")
-      , exposure = HostPort (port_ 3000)
+      , reachability = hostPort (port_ 3000)
       }
   , inst
       { source = FromRegistry
       , project = Just (mkProjectSlug "minard")
       , localName = "minard-frontend"
       , host = Just (mkHost "mbp")
-      , exposure = HostPort (port_ 3001)
+      , reachability = hostPort (port_ 3001)
       , rawDeps = [ { to: "minard:api", ordering: Nothing, requirement: Just (Requires OnHealthy) } ]
       }
   ]
@@ -148,7 +148,7 @@ inst =
   , role: mkRole "frontend"
   , host: Just (mkHost "mbp")
   , executor: Unmanaged "svc"
-  , exposure: NoNetwork
+  , reachability: noNetwork
   , health: { liveness: NoProbe, readiness: NoProbe, startup: Nothing }
   , restart: { base: Never, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }
   , rawDeps: []

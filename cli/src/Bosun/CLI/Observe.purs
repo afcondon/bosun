@@ -19,6 +19,7 @@ import Prelude
 
 import Bosun.Atoms (Host, ServiceId, unHost, unPort)
 import Bosun.Exposure (Exposure(..))
+import Bosun.Reachability (classify)
 import Bosun.Health (Probe(..))
 import Bosun.Plan (Reason(..), Snapshot, Status(..))
 import Bosun.Service (Deployment, LooseService, deploymentServices)
@@ -59,7 +60,7 @@ observeSnapshot dep = do
 -- host-observable, so it is left to the explicit-probe path.)
 effectiveProbe :: LooseService -> Probe
 effectiveProbe s = case s.readiness of
-  NoProbe -> case s.exposure of
+  NoProbe -> case classify s.reachability of
     HostPort p -> TcpConnect p
     InternalPort p -> TcpConnect p
     _ -> NoProbe

@@ -25,7 +25,7 @@ import Prelude
 
 import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkHost, mkPort, mkProjectSlug)
 import Bosun.Executor (Executor(..))
-import Bosun.Exposure (Exposure(..))
+import Bosun.Reachability (hostPort)
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Reconcile (reconcile)
 import Bosun.Report (renderServePlan)
@@ -72,7 +72,7 @@ server name role port =
       , command: "python3 -m http.server " <> show port
       , env: []
       }
-  , exposure: HostPort (port_ port)
+  , reachability: hostPort (port_ port)
   , health: { liveness: NoProbe, readiness: TcpConnect (port_ port), startup: Nothing }
   , restart: { base: Always, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }
   , rawDeps: []

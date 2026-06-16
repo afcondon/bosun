@@ -3,8 +3,9 @@
 -- | facet partner to the registry's native facet.
 -- |
 -- | Each `services:` entry becomes a `ServiceInstance`: `build`/`image` -> a
--- | `Container` executor, `ports:` -> `HostPort` (else `NoNetwork`, behind the
--- | edge), `depends_on:` -> `rawDeps` (array form = `Requires OnStarted`; map
+-- | `Container` executor, `ports:` -> a `hostPort` reachability (binds every
+-- | interface, like `0.0.0.0:p`; else `noNetwork`, behind the edge),
+-- | `depends_on:` -> `rawDeps` (array form = `Requires OnStarted`; map
 -- | form reads `condition:`), `healthcheck:` presence -> a readiness probe,
 -- | `profiles:` -> `Selector`s. Pure; compose runs on the macmini, so the host
 -- | is tagged `macmini` (the deploy target — configurable later).
@@ -19,7 +20,7 @@ import Prelude
 import Bosun.Atoms (Port, mkHost, mkPort)
 import Bosun.Edge (DepOrdering(..), Gate(..), Requirement(..))
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ImageRef(..))
-import Bosun.Exposure (Exposure(..))
+import Bosun.Reachability (hostPort, noNetwork)
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Selector (Selector(..))
 import Bosun.Service (RawDep, ServiceInstance, Source(..), mkRole)
@@ -52,7 +53,7 @@ decodeService name sj = do
     , role: mkRole (roleFromName name)
     , host: Just (mkHost "macmini")   -- compose's deploy target
     , executor: executorOf name o
-    , exposure: maybe NoNetwork HostPort (hostPort o)
+    , reachability: maybe noNetwork hostPort (publishPort o)
     , health: { liveness: probeOf o, readiness: probeOf o, startup: Nothing }
     , restart: { base: UnlessStopped, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }
     , rawDeps: dependsOn o
@@ -67,18 +68,18 @@ roleFromName name = fromMaybe name (A.last (String.split (Pattern "-") name))
 
 executorOf :: String -> Object Json -> Executor
 executorOf name o = case FO.lookup "image" o >>= toString of
-  Just img -> Container (ContainerSpec { source: Left (ImageRef img), internalPort: Nothing, publish: hostPort o })
+  Just img -> Container (ContainerSpec { source: Left (ImageRef img), internalPort: Nothing, publish: publishPort o })
   Nothing -> case FO.lookup "build" o >>= toObject of
     Just b -> Container (ContainerSpec
       { source: Right (BuildContext { context: fromMaybe "" (str b "context"), dockerfile: str b "dockerfile" })
       , internalPort: Nothing
-      , publish: hostPort o
+      , publish: publishPort o
       })
     Nothing -> Unmanaged name
 
--- first "host:container" entry -> the host port
-hostPort :: Object Json -> Maybe Port
-hostPort o = do
+-- first "host:container" entry -> the published host port
+publishPort :: Object Json -> Maybe Port
+publishPort o = do
   pj <- FO.lookup "ports" o
   ps <- toArray pj
   first <- A.head ps

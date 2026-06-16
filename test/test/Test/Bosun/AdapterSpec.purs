@@ -10,6 +10,7 @@ import Bosun.Adapters.StartCommand (parseStartCommand)
 import Bosun.Atoms (unAbsPath)
 import Bosun.Executor (Executor(..), ExecutorMechanism(..), mechanism)
 import Bosun.Health (Probe(..))
+import Bosun.Reachability (classify)
 import Bosun.Reconcile (exposureLabel)
 import Bosun.Selector (Selector(..))
 import Data.Argonaut.Parser (jsonParser)
@@ -60,7 +61,7 @@ spec = describe "Bosun.Adapters" do
           let svcs = ingestRegistry j
           length svcs `shouldEqual` 2
           map _.localName svcs `shouldEqual` [ "tilted-radio", "minard" ]
-          map (exposureLabel <<< _.exposure) svcs `shouldEqual` [ "host:3013", "host:3000" ]
+          map (exposureLabel <<< classify <<< _.reachability) svcs `shouldEqual` [ "host:3013", "host:3000" ]
           map (mechanism <<< _.executor) svcs `shouldEqual` [ MechProcess, MechUnmanaged ]
 
   describe "ingestCompose" do
@@ -81,7 +82,7 @@ spec = describe "Bosun.Adapters" do
           case find (\s -> s.localName == "tidal-backend") svcs of
             Nothing -> fail "tidal-backend not ingested"
             Just s -> do
-              exposureLabel s.exposure `shouldEqual` "host:3012"
+              exposureLabel (classify s.reachability) `shouldEqual` "host:3012"
               mechanism s.executor `shouldEqual` MechContainer
               (s.health.readiness == NoProbe) `shouldEqual` false   -- healthcheck => a probe
 
@@ -101,4 +102,4 @@ spec = describe "Bosun.Adapters" do
             Nothing -> fail "tidal-frontend not ingested"
             Just s -> do
               s.selectors `shouldEqual` [ Profile "tidal", Profile "full" ]
-              exposureLabel s.exposure `shouldEqual` "none"
+              exposureLabel (classify s.reachability) `shouldEqual` "none"

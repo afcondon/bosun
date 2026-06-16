@@ -21,6 +21,7 @@ import Bosun.Edge (DepOrdering(..), Gate(..), Requirement(..))
 import Bosun.Error (DeployError(..), SdiViolation(..))
 import Bosun.Executor (BuildContext(..), CDNProvider(..), ContainerSpec(..), Executor(..), ExecutorMechanism(..), ImageRef(..), RemoteVia(..), SystemdScope(..), mechanism)
 import Bosun.Health (Probe(..))
+import Bosun.Reachability (classify)
 import Bosun.Reconcile (AliasMap, Divergence(..), FacetKey, ReconcileResult, exposureLabel)
 import Bosun.Selector (Selector(..))
 import Bosun.Service (Service, ServiceInstance, Source(..), ValidatedDeployment, deploymentServices, unBootOrder, unRole, unServiceRef, unValidatedDeployment)
@@ -190,7 +191,7 @@ serviceInstanceView si =
   , role: unRole si.role
   , host: map unHost si.host
   , executor: executorView si.executor
-  , exposure: exposureLabel si.exposure
+  , exposure: exposureLabel (classify si.reachability)
   , readiness: probeLabel si.health.readiness
   , deps: map depView si.rawDeps
   , routes: map (\r -> { to: r.to, path: unRoutePath r.path }) si.rawRoutes
@@ -226,7 +227,7 @@ svcView :: Service -> SvcView
 svcView s =
   { id: unServiceId s.id
   , host: map unHost s.host
-  , exposure: exposureLabel s.exposure
+  , exposure: exposureLabel (classify s.reachability)
   , deps: map (unServiceId <<< unServiceRef <<< _.to) s.deps
   , selectors: map selectorLabel s.selectors
   }
