@@ -17,6 +17,7 @@ package:
     - halogen
     - halogen-svg-elems
     - hylograph-graph
+    - hylograph-layout
     - hylograph-transitions
     - ordered-collections
     - tuples

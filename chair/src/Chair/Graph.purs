@@ -16,11 +16,12 @@
 -- |
 -- | Force layout, the boot-order tight DAG, host hulls and the deck-of-cards
 -- | are later increments (docs/GRAPH-GRAMMAR.md §12).
-module Chair.Graph (graphView, layoutPositions) where
+module Chair.Graph (graphView, layoutPositions, GroupMode(..), nextMode, modeLabel) where
 
 import Prelude
 
 import Bosun.View (AddressView, AnalyzeResult, ServiceInstanceView)
+import DataViz.Layout.Hierarchy.Pack (HierarchyData(..), PackNode(..), defaultPackConfig, hierarchy, pack)
 import Data.Graph.Algorithms (SimpleGraph)
 import Data.Graph.Decomposition (articulationPoints, bridges)
 import Hylograph.Transition.Interpolate (Point)
@@ -42,6 +43,30 @@ import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Svg.Attributes as SA
 import Halogen.Svg.Elements as SE
+
+-- ── layout / grouping mode ───────────────────────────────────────────────────
+
+-- the spatial hierarchy the nodes are arranged by (§5 swappable hierarchy). The
+-- interpolation engine animates BETWEEN any two of these (positions are just a
+-- layoutPositions map per mode), so cycling is a live pivot.
+data GroupMode
+  = ByDeps   -- loose dependency layers, left→right = boot order
+  | ByHost   -- nested placement swimlanes (rectangular bands)
+  | ByPack   -- nested circle-packing of the placement tree (no-overlap, any depth)
+
+derive instance Eq GroupMode
+
+nextMode :: GroupMode -> GroupMode
+nextMode = case _ of
+  ByDeps -> ByHost
+  ByHost -> ByPack
+  ByPack -> ByDeps
+
+modeLabel :: GroupMode -> String
+modeLabel = case _ of
+  ByDeps -> "↹ group: deps"
+  ByHost -> "↹ group: host"
+  ByPack -> "↹ group: pack"
 
 -- ── layout constants ─────────────────────────────────────────────────────────
 
@@ -246,6 +271,85 @@ buildPlacementNodes insts edges =
 levelHead :: Number
 levelHead = 24.0
 
+-- ── circle-packing the placement tree (Hylograph DataViz.Layout.Hierarchy.Pack) ─
+--
+-- The placement path becomes a hierarchy (root → machine → host → service); the
+-- pack layout nests it as non-overlapping circles to ARBITRARY depth (what the
+-- rectangular swimlanes can't guarantee). Leaf circles carry the service cards;
+-- enclosing circles are the placement bands. Scaled so the 150×42 cards clear
+-- each other: equal leaves pack tangent at 2·r, so a uniform scale to ≥184px
+-- between adjacent centres keeps even diagonal neighbours apart.
+
+type PackCircle = { x :: Number, y :: Number, r :: Number, label :: String, depth :: Int }
+
+cardSpacing :: Number
+cardSpacing = 188.0
+
+-- build the placement hierarchy: leaves (children:Nothing) are services, internal
+-- nodes (children:Just) are domains. value 1.0 per leaf → area ∝ service count.
+mkHier :: String -> Array { path :: Array String, id :: String } -> HierarchyData String
+mkHier label items =
+  let
+    leaves = Array.filter (\it -> Array.null it.path) items
+    nested = Array.filter (\it -> not (Array.null it.path)) items
+    heads = Array.nub (Array.mapMaybe (\it -> Array.head it.path) nested)
+    leafKids = map (\it -> HierarchyData { data_: it.id, value: Just 1.0, children: Nothing }) leaves
+    groupKids = map mkGroup heads
+    mkGroup h = mkHier h
+      (map (\it -> it { path = fromMaybe [] (Array.tail it.path) })
+        (Array.filter (\it -> Array.head it.path == Just h) nested))
+  in
+    HierarchyData { data_: label, value: Nothing, children: Just (leafKids <> groupKids) }
+
+flattenPack :: PackNode String -> Array (PackNode String)
+flattenPack pn@(PackNode n) = [ pn ] <> Array.concatMap flattenPack n.children
+
+-- run the pack and project into screen coords (leaf centres → card top-lefts;
+-- internal circles → bands). Deterministic in the node set, so layoutPositions
+-- and the band layer agree without sharing state.
+packLayout :: Array Node -> { centres :: Map String Point, radii :: Map String Number, circles :: Array PackCircle }
+packLayout base =
+  let
+    hd = mkHier "·" (map (\n -> { path: n.place, id: n.id }) base)
+    -- padding is in the SAME units as the radii, and leaves have radius
+    -- sqrt(value)=1, so this must be a small FRACTION of 1 — else the gaps
+    -- dwarf the circles and leaves read as dots inside huge bands.
+    PackNode rootN = pack (defaultPackConfig { padding = 0.12 }) (hierarchy hd)
+    flat = flattenPack (PackNode rootN)
+    leaves = Array.mapMaybe (\(PackNode n) -> if Array.null n.children then Just { id: n.data_, x: n.x, y: n.y, r: n.r } else Nothing) flat
+    internals = Array.mapMaybe
+      (\(PackNode n) -> if not (Array.null n.children) && n.depth >= 1 then Just { x: n.x, y: n.y, r: n.r, label: n.data_, depth: n.depth } else Nothing)
+      flat
+    r0 = fromMaybe 1.0 (map _.r (Array.head leaves))
+    s = if r0 <= 0.0 then 200.0 else cardSpacing / (2.0 * r0)
+    minX = rootN.x - rootN.r
+    minY = rootN.y - rootN.r
+    tx v = (v - minX) * s + marginX
+    ty v = (v - minY) * s + marginY
+    -- centres are stored as card top-lefts (so the pivot interpolates the same
+    -- convention as the other layouts); the leaf circle is drawn around the card
+    -- centre. radii are the scaled pack-circle radii (the node's actual slot).
+    centres = Map.fromFoldable (map (\l -> l.id /\ { x: tx l.x - nodeW / 2.0, y: ty l.y - nodeH / 2.0 }) leaves)
+    radii = Map.fromFoldable (map (\l -> l.id /\ (l.r * s)) leaves)
+    circles = map (\c -> { x: tx c.x, y: ty c.y, r: c.r * s, label: c.label, depth: c.depth }) internals
+  in
+    { centres, radii, circles }
+
+buildPackNodes :: Array ServiceInstanceView -> Array Edge -> Array Node
+buildPackNodes insts edges =
+  let
+    base = buildNodes insts edges
+    centres = (packLayout base).centres
+  in
+    map (\n -> maybe n (\p -> n { x = p.x, y = p.y }) (Map.lookup n.id centres)) base
+
+-- dispatch the node layout by grouping mode
+buildFor :: GroupMode -> Array ServiceInstanceView -> Array Edge -> Array Node
+buildFor mode insts edges = case mode of
+  ByDeps -> buildNodes insts edges
+  ByHost -> buildPlacementNodes insts edges
+  ByPack -> buildPackNodes insts edges
+
 -- ── structural SPOF (§8.7) ───────────────────────────────────────────────────
 
 -- the dependency graph as an UNDIRECTED SimpleGraph, for biconnected
@@ -289,17 +393,17 @@ blastRadius edges start = go (Set.singleton start) [ start ]
 -- | the Hylograph interpolation engine (Transition.Engine + Interpolate), so the
 -- | pivot is a real per-frame tween, not a CSS transform — which means the edges,
 -- | re-rendered each frame from the live positions, follow the nodes.
-layoutPositions :: Boolean -> AnalyzeResult -> Map String Point
-layoutPositions groupByHost a =
+layoutPositions :: GroupMode -> AnalyzeResult -> Map String Point
+layoutPositions mode a =
   let
     insts = a.instances
     edges = edgesOf insts
-    nodes = if groupByHost then buildPlacementNodes insts edges else buildNodes insts edges
+    nodes = buildFor mode insts edges
   in
     Map.fromFoldable (map (\n -> n.id /\ { x: n.x, y: n.y }) nodes)
 
-graphView :: forall act m. (Maybe String -> act) -> (Maybe String -> act) -> Boolean -> Boolean -> Map String Point -> Maybe String -> Maybe String -> AnalyzeResult -> H.ComponentHTML act () m
-graphView hoverAct selectAct groupByHost showSpof livePos focus select a =
+graphView :: forall act m. (Maybe String -> act) -> (Maybe String -> act) -> GroupMode -> Boolean -> Map String Point -> Maybe String -> Maybe String -> AnalyzeResult -> H.ComponentHTML act () m
+graphView hoverAct selectAct mode showSpof livePos focus select a =
   let
     insts = a.instances
     edges = edgesOf insts
@@ -307,14 +411,22 @@ graphView hoverAct selectAct groupByHost showSpof livePos focus select a =
     -- structural nodes for the current layout; their x,y are OVERRIDDEN by the
     -- live (interpolating) positions during a pivot, so everything that reads a
     -- node position — edges, swimlane bboxes, the extents — follows the tween.
-    builtNodes = if groupByHost then buildPlacementNodes insts edges else buildNodes insts edges
+    builtNodes = buildFor mode insts edges
     nodes = map (\n -> maybe n (\p -> n { x = p.x, y = p.y }) (Map.lookup n.id livePos)) builtNodes
     -- STABLE render order (sort by id) so Halogen reuses each node's <g> across
     -- re-renders rather than tearing down and rebuilding (object constancy, §6.1).
     renderNodes = Array.sortWith _.id nodes
     posOf id = Array.find (\n -> n.id == id) nodes
-    maxX = fromMaybe 0.0 (maximum (map _.x nodes)) + nodeW + marginX
-    maxY = fromMaybe 0.0 (maximum (map _.y nodes)) + nodeH + marginY
+    -- pack circles (band layer + extents) + per-node leaf radii, only in ByPack
+    -- mode; deterministic in the node set, so this matches buildPackNodes' centres.
+    packRes = case mode of
+      ByPack -> packLayout builtNodes
+      _ -> { centres: Map.empty, radii: Map.empty, circles: [] }
+    packCirc = packRes.circles
+    maxX = max (fromMaybe 0.0 (maximum (map _.x nodes)) + nodeW)
+               (fromMaybe 0.0 (maximum (map (\c -> c.x + c.r) packCirc))) + marginX
+    maxY = max (fromMaybe 0.0 (maximum (map _.y nodes)) + nodeH)
+               (fromMaybe 0.0 (maximum (map (\c -> c.y + c.r) packCirc))) + marginY
     -- the brushed node + its neighbours (via deps and routes) stay lit
     focusSet = focus <#> \fid ->
       Set.fromFoldable
@@ -346,6 +458,7 @@ graphView hoverAct selectAct groupByHost showSpof livePos focus select a =
       , cutVertex: Set.member n.id cutVerts
       , killed: select == Just n.id
       , willFall: select /= Just n.id && Set.member n.id blastSet
+      , circleR: Map.lookup n.id packRes.radii   -- Just r in pack mode → render as a circle
       }
   in
     HH.div [ cls "graph" ]
@@ -354,14 +467,20 @@ graphView hoverAct selectAct groupByHost showSpof livePos focus select a =
               [ HH.text (show (Array.length nodes) <> " nodes · "
                   <> show (Array.length edges) <> " deps · "
                   <> show (Array.length routes) <> " routes · "
-                  <> (if groupByHost then "grouped by host" else "loose view (left → right = boot order)")
+                  <> (case mode of
+                        ByDeps -> "loose view (left → right = boot order)"
+                        ByHost -> "grouped by host"
+                        ByPack -> "packed by placement")
                   <> (if showSpof then " · ⚠ " <> show (Set.size cutVerts) <> " cut-vertices · " <> show (Set.size bridgeSet) <> " bridges" else "")) ]
           ]
       , SE.svg
           [ SA.viewBox 0.0 0.0 maxX maxY, SA.width maxX, SA.height maxY
           , SA.class_ (H.ClassName "graph-svg")
           ]
-          ( (if groupByHost then [ swimlaneLayer nodes ] else [ axisLayer maxX ]) <>
+          ( (case mode of
+              ByDeps -> [ axisLayer maxX ]
+              ByHost -> [ swimlaneLayer nodes ]
+              ByPack -> [ circleLayer packCirc ]) <>
           [ SE.g [ SA.class_ (H.ClassName "traffic") ]
               (Array.mapMaybe (\r -> trafficLine (edgeDim r.from r.to) posOf r) routes)
           , SE.g [ SA.class_ (H.ClassName "edges") ]
@@ -495,6 +614,35 @@ swimlaneLayer nodes =
           [ HH.text label ]
       ]
 
+-- the circle-packing band layer: nested placement circles (machine ⊃ host ⊃ …).
+-- Outermost machine circles are tinted (by index) and filled faintly; deeper
+-- circles are stroke-only so the machine tint shows through. Label sits at the
+-- top of each circle. Fades in via the same keyframe as the swimlanes.
+circleLayer :: forall act m. Array PackCircle -> H.ComponentHTML act () m
+circleLayer circles =
+  SE.g [ SA.class_ (H.ClassName "swimlanes") ] (map circ circles)
+  where
+  machines = Array.sort (Array.nub (map _.label (Array.filter (\c -> c.depth == 1) circles)))
+  circ c =
+    let
+      outer = c.depth == 1
+      st = if outer then hostStyle (fromMaybe 0 (Array.elemIndex c.label machines))
+           else { tint: paper, ink: faint }
+    in
+      SE.g [ SA.class_ (H.ClassName "swimlane") ]
+        [ SE.circle
+            [ SA.cx c.x, SA.cy c.y, SA.r c.r
+            , SA.fill st.tint, SA.fillOpacity (if outer then 0.4 else 0.0)
+            , SA.stroke st.ink, SA.strokeWidth (if outer then 1.2 else 1.0)
+            ]
+        , SE.text
+            [ SA.x c.x, SA.y (c.y - c.r + 13.0), SA.textAnchor SA.AnchorMiddle
+            , SA.fontSize (SA.FontSizeLength (SA.Px (if outer then 11.0 else 10.0)))
+            , SA.fill st.ink, SA.fillOpacity (if outer then 1.0 else 0.75)
+            ]
+            [ HH.text c.label ]
+        ]
+
 -- pale per-host tints (restrained, Swiss) with a matching darker ink for the
 -- header. Distinct hues so adjacent lanes separate; light enough that the node
 -- fills (depth ramp) still read on top. Cycles if there are more hosts than hues.
@@ -571,6 +719,7 @@ type NodeFlags =
   , cutVertex :: Boolean    -- structural SPOF (§8.7)
   , killed :: Boolean       -- the blast-radius selection (§14.5)
   , willFall :: Boolean     -- transitively depends on the killed node
+  , circleR :: Maybe Number -- Just r ⇒ pack mode: render the node AS a circle of radius r
   }
 
 nodeMark :: forall act m. (Maybe String -> act) -> (Maybe String -> act) -> NodeFlags -> Node -> H.ComponentHTML act () m
@@ -586,44 +735,79 @@ nodeMark hoverAct selectAct flags n =
     , HE.onMouseLeave \_ -> hoverAct Nothing
     , HE.onClick \_ -> selectAct (Just n.id)
     ]
-    ( halos <>
-      [ SE.rect
-          [ SA.x 0.0, SA.y 0.0, SA.width nodeW, SA.height nodeH, SA.rx 5.0
+    ( halos <> body )
+  where
+  -- in pack mode the node IS its pack circle (centred on the card-box centre);
+  -- elsewhere it's the 150×42 card. Same source/depth/exposure channels apply.
+  body = case flags.circleR of
+    Just r -> circleBody r
+    Nothing -> cardBody
+
+  cardBody =
+    [ SE.rect
+        [ SA.x 0.0, SA.y 0.0, SA.width nodeW, SA.height nodeH, SA.rx 5.0
+        , SA.fill (if n.ghost then paper else layerRamp n.depth)
+        , SA.fillOpacity (if n.ghost then 0.4 else 1.0)
+        , SA.stroke (if n.ghost then faint else srcColor n.source)
+        , SA.strokeWidth (if n.ghost then 1.0 else 1.8)
+        ]
+    , SE.text
+        [ SA.x 10.0, SA.y 18.0
+        , SA.fontSize (SA.FontSizeLength (SA.Px 12.5)), SA.fill ink
+        ]
+        [ HH.text (clip 18 n.id) ]
+    , SE.text
+        [ SA.x 10.0, SA.y 33.0
+        , SA.fontSize (SA.FontSizeLength (SA.Px 9.5)), SA.fill faint
+        ]
+        [ HH.text (if n.ghost then "undefined — no source" else (n.mech <> maybe "" (\h -> " · " <> h) n.host)) ]
+    ] <> exposureBadge n
+
+  -- a leaf circle filling its pack slot (drawn a touch inside r for a gap),
+  -- centred on the card-box centre so the position tween is unchanged.
+  circleBody r =
+    let cr = max 6.0 (r - 4.0)
+    in
+      [ SE.circle
+          [ SA.cx (nodeW / 2.0), SA.cy (nodeH / 2.0), SA.r cr
           , SA.fill (if n.ghost then paper else layerRamp n.depth)
           , SA.fillOpacity (if n.ghost then 0.4 else 1.0)
           , SA.stroke (if n.ghost then faint else srcColor n.source)
           , SA.strokeWidth (if n.ghost then 1.0 else 1.8)
           ]
       , SE.text
-          [ SA.x 10.0, SA.y 18.0
-          , SA.fontSize (SA.FontSizeLength (SA.Px 12.5)), SA.fill ink
+          [ SA.x (nodeW / 2.0), SA.y (nodeH / 2.0 + 4.0), SA.textAnchor SA.AnchorMiddle
+          , SA.fontSize (SA.FontSizeLength (SA.Px 12.0)), SA.fill ink
           ]
-          [ HH.text (clip 18 n.id) ]
-      , SE.text
-          [ SA.x 10.0, SA.y 33.0
-          , SA.fontSize (SA.FontSizeLength (SA.Px 9.5)), SA.fill faint
-          ]
-          [ HH.text (if n.ghost then "undefined — no source" else (n.mech <> maybe "" (\h -> " · " <> h) n.host)) ]
-      ] <> exposureBadge n
-    )
-  where
+          [ HH.text (clip (max 4 (round (cr / 4.0))) n.id) ]
+      ]
+
   -- halos drawn behind the node, biggest first. cut-vertex (structural SPOF) +
-  -- killed (alarm-red) + will-fall (blast amber) stack as nested rings.
+  -- killed (alarm-red) + will-fall (blast amber) stack as nested rings; circular
+  -- in pack mode, rounded-rect otherwise.
   halos =
-    (if flags.killed then [ haloRing alarm 6.5 ] else [])
-      <> (if flags.willFall then [ haloRing blastColor 6.5 ] else [])
-      <> (if flags.cutVertex then [ haloRing alarm 3.5 ] else [])
+    (if flags.killed then [ haloRing flags.circleR alarm 6.5 ] else [])
+      <> (if flags.willFall then [ haloRing flags.circleR blastColor 6.5 ] else [])
+      <> (if flags.cutVertex then [ haloRing flags.circleR alarm 3.5 ] else [])
 
 -- an alarm/warning ring just outside the node, drawn behind it (a SPOF halo or
--- a blast-radius wash). `off` is how far the ring sits outside the node border.
-haloRing :: forall act m. SA.Color -> Number -> H.ComponentHTML act () m
-haloRing c off =
-  SE.rect
-    [ SA.x (negate off), SA.y (negate off)
-    , SA.width (nodeW + 2.0 * off), SA.height (nodeH + 2.0 * off), SA.rx (5.0 + off)
-    , SA.fill paper, SA.fillOpacity 0.0, SA.stroke c, SA.strokeWidth 2.4
-    , SA.class_ (H.ClassName "spof-halo")
-    ]
+-- a blast-radius wash). `off` is how far the ring sits outside the node edge.
+-- A circle in pack mode (Just r), a rounded-rect otherwise.
+haloRing :: forall act m. Maybe Number -> SA.Color -> Number -> H.ComponentHTML act () m
+haloRing circleR c off = case circleR of
+  Just r ->
+    SE.circle
+      [ SA.cx (nodeW / 2.0), SA.cy (nodeH / 2.0), SA.r (max 6.0 (r - 4.0) + off)
+      , SA.fill paper, SA.fillOpacity 0.0, SA.stroke c, SA.strokeWidth 2.4
+      , SA.class_ (H.ClassName "spof-halo")
+      ]
+  Nothing ->
+    SE.rect
+      [ SA.x (negate off), SA.y (negate off)
+      , SA.width (nodeW + 2.0 * off), SA.height (nodeH + 2.0 * off), SA.rx (5.0 + off)
+      , SA.fill paper, SA.fillOpacity 0.0, SA.stroke c, SA.strokeWidth 2.4
+      , SA.class_ (H.ClassName "spof-halo")
+      ]
 
 -- the collapsed EXPOSURE BADGE (the Siglet's smallest form): on the node's
 -- outward-facing (right) edge, an openness-coloured dot + the address value.

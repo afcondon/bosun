@@ -18,7 +18,7 @@ import Affjax.RequestBody as RB
 import Affjax.ResponseFormat as RF
 import Affjax.Web as AX
 import Bosun.View (AliasEntry, AliasOverride(..), AnalyzeRequest, AnalyzeResult, ConflictView, DeployErrorView, DivergenceView, RouteBacking, ServiceInstanceView, SvcView, ValidationView(..), analyzeRequestCodec, analyzeResultCodec)
-import Chair.Graph (graphView, layoutPositions)
+import Chair.Graph (GroupMode(..), graphView, layoutPositions, modeLabel, nextMode)
 import Chair.State (RedirectInfo, RejectInfo, RouteStatus, StateView, decodeStateView)
 import Data.Argonaut.Decode.Error (printJsonDecodeError)
 import Data.Array as Array
@@ -82,7 +82,7 @@ type State =
   -- graph (pillar 3) — the brushed node for coordinated highlighting
   , graphFocus :: Maybe String
   , graphSelect :: Maybe String   -- clicked node → blast radius ("what breaks")
-  , groupByHost :: Boolean   -- layout pivot: dependency layers vs host columns
+  , groupMode :: GroupMode   -- layout pivot: deps layers / host swimlanes / pack
   -- the pivot tween, driven by the Hylograph interpolation engine: livePos holds
   -- the per-node interpolating positions the graph renders from; anim holds the
   -- in-flight transitions (Nothing when settled); animGen kills stale loops when
@@ -132,7 +132,7 @@ component =
         , cockpit: Nothing, cockErr: Nothing, ticks: 0, busy: false
         , composePath: "", registryPath: "", analysis: Nothing, anaErr: Nothing, anaLoading: false
         , overrides: [], mergeName: "", mergeCanon: ""
-        , graphFocus: Nothing, graphSelect: Nothing, groupByHost: false
+        , graphFocus: Nothing, graphSelect: Nothing, groupMode: ByDeps
         , livePos: Map.empty, anim: Nothing, animGen: 0, showSpof: false
         }
     , render
@@ -176,20 +176,20 @@ handleAction = case _ of
   ToggleGroupBy -> do
     s <- H.get
     case s.analysis of
-      Nothing -> H.modify_ _ { groupByHost = not s.groupByHost }
+      Nothing -> H.modify_ _ { groupMode = nextMode s.groupMode }
       Just a -> do
         let
-          target = not s.groupByHost
+          target = nextMode s.groupMode
           toPos = layoutPositions target a
           -- start from where the nodes are NOW (live if mid-flight, else the
           -- current layout) so a re-toggle picks up from the in-flight positions
-          fromPos = if Map.isEmpty s.livePos then layoutPositions s.groupByHost a else s.livePos
+          fromPos = if Map.isEmpty s.livePos then layoutPositions s.groupMode a else s.livePos
           gen = s.animGen + 1
           mk (id /\ to) =
             let from = fromMaybe to (Map.lookup id fromPos)
             in { id, st: start (transitionWith lerpPoint { from, to } { duration: pivotMs, easing: CubicInOut, delay: 0.0 }) }
           anims = map mk (Map.toUnfoldable toPos :: Array (String /\ Point))
-        H.modify_ _ { groupByHost = target, anim = Just anims, livePos = fromPos, animGen = gen }
+        H.modify_ _ { groupMode = target, anim = Just anims, livePos = fromPos, animGen = gen }
         void (H.fork (animLoop gen))
   ToggleSpof -> H.modify_ \s -> s { showSpof = not s.showSpof }
   RemoveOverride i -> do
@@ -274,7 +274,7 @@ runAnalyze = do
       -- seed the live positions for the current layout so the graph (and any
       -- subsequent pivot) starts from a settled, correct frame
       Right a -> st { anaLoading = false, analysis = Just a, anaErr = Nothing
-                    , livePos = layoutPositions st.groupByHost a, anim = Nothing
+                    , livePos = layoutPositions st.groupMode a, anim = Nothing
                     , graphSelect = Nothing }   -- a stale selection wouldn't exist in the new graph
 
 -- ── render ───────────────────────────────────────────────────────────────────
@@ -392,8 +392,8 @@ renderGraphView s =
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/multihost/compose.yml") (fixturesDir <> "/topologies/multihost/registry.json") ] [ HH.text "multi-host" ]
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/colocation/compose.yml") (fixturesDir <> "/topologies/colocation/registry.json") ] [ HH.text "co-location" ]
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (corpusDir <> "/docker-compose.yml") (corpusDir <> "/registry.json") ] [ HH.text "frozen corpus" ]
-        , HH.button [ cls (if s.groupByHost then "btn sm active" else "btn sm"), HE.onClick \_ -> ToggleGroupBy ]
-            [ HH.text (if s.groupByHost then "↹ group: host" else "↹ group: deps") ]
+        , HH.button [ cls (if s.groupMode == ByDeps then "btn sm" else "btn sm active"), HE.onClick \_ -> ToggleGroupBy ]
+            [ HH.text (modeLabel s.groupMode) ]
         , HH.button [ cls (if s.showSpof then "btn sm active" else "btn sm"), HE.onClick \_ -> ToggleSpof ]
             [ HH.text "⚠ SPOF" ]
         , if s.anaLoading then HH.span [ cls "muted" ] [ HH.text "analysing…" ] else HH.text ""
@@ -401,7 +401,7 @@ renderGraphView s =
     , maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text e ]) s.anaErr
     , case s.analysis of
         Nothing -> HH.p [ cls "muted" ] [ HH.text "load a fixture above — the graph renders the same AnalyzeResult the Ingestion view uses." ]
-        Just a -> graphView HoverNode SelectNode s.groupByHost s.showSpof s.livePos s.graphFocus s.graphSelect a
+        Just a -> graphView HoverNode SelectNode s.groupMode s.showSpof s.livePos s.graphFocus s.graphSelect a
     ]
 
 ladder :: forall m. State -> AnalyzeResult -> H.ComponentHTML Action () m
