@@ -47,3 +47,41 @@ Work is split across two Claude sessions; they meet at the serve HTTP contract.
 Light coupling — both sides can move in parallel against the contract above.
 Chair needs serve running on a safe fixture to develop against; that's the
 engine session's first task.
+
+## Engine session — status (2026-06-16): DONE, contract verified live
+
+The Chair's dependency is unblocked. Run serve against the safe fixture and
+develop against `:3997`:
+
+```
+node cli/run.js serve fixtures/serve/registry.json
+#   binds 4 proxy + 2 redirect public ports; /state + /control on :3997
+```
+
+`fixtures/serve/registry.json` is now a **dashboard-dev fixture** (was a thin
+1-service admission demo): 4 admitted mbp Processes (gallery:frontend,
+gallery:api, atlas:frontend, ledger:api — each a harmless lazy-spawned
+`python3 -m http.server` over `fixtures/serve/site`, so spawning any of them
+NEVER touches the real rig), 2 macmini redirects (minard:frontend,
+archive:api — a second host swimlane), and 2 instructive rejections
+(no-cd-row, port-not-in-cmd). Multi-host + multi-node so the live overlay,
+swimlanes, and the control modal all have something to render. Not
+golden-pinned — edit freely. Ports 8190-8197 reserved for it.
+
+**Verified end-to-end against a running resident loop:**
+
+| Endpoint | Result |
+|---|---|
+| `GET /state` | shape matches `Chair.State.decodeStateView` exactly (routes/redirects/rejected; `up`, `pid`) |
+| `OPTIONS /control/*` | `204` + `access-control-allow-origin: *`, methods `GET,POST,OPTIONS` — POST from `:3020` is allowed |
+| `POST /control/spawn?port=8190` | `{ok,serviceId,up:true}`; `/state` then shows `up:true` + real `pid`; proxy `GET :8190` → `200` |
+| `POST /control/stop?port=8190` | `{ok,up:false}`; `/state` returns to `up:false`, `pid:null` |
+| `GET :8193` (a macmini route) | `421` + `location` header → tailnet URL (the redirect path) |
+| `POST /control/reload` | typed `serveDiff`; no-op `{unbound:[],boundRoutes:[],boundRedirects:[]}` on an unchanged fixture |
+
+**Tasks 2 & 3 were already landed** before this session: the `/state` +
+`/control/*` contract and CORS live in `cli/src/Bosun/CLI/Serve.js`; the
+observe/control seam abstraction (Docker-on-Node now, BEAM observer later) is
+specced in `BEAM-OBSERVER.md`. Correlation reminder for the overlay: `/state`
+keys by canonical `serviceId` (`projectSlug:role`), graph nodes key by
+`localName` — map through `reconcile.aliases` from `AnalyzeResult`.

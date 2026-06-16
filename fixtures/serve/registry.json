@@ -1,40 +1,52 @@
 {
+  "_comment": "SAFE dashboard-dev fixture for `bosun serve` (CONTROL-SURFACE.md, engine session task 1). Every admitted backend is a harmless static `python3 -m http.server` over fixtures/serve/site — lazy-spawned, no real-rig service is ever touched. Multi-host (mbp admit + macmini redirect) and multi-service so the Chair can develop the live overlay (status dots), host swimlanes, and the control modal against a running serve without risk. Ports 8190-8199 are reserved for this fixture. Not golden-pinned — edit freely.",
   "servers": [
     {
       "id": 1,
-      "role": "site",
-      "projectName": "serve-demo",
-      "projectSlug": "serve-demo",
+      "role": "frontend",
+      "projectName": "gallery",
+      "projectSlug": "gallery",
       "port": 8190,
       "host": "mbp",
       "startCommand": "cd /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/serve/site && python3 -m http.server 8190",
       "url": "http://localhost:8190",
-      "description": "A routable Process: abs cwd + the literal public port in the command. ADMITTED."
+      "description": "mbp Process — abs cwd + literal port. ADMITTED, lazy-spawnable (harmless static server)."
     },
     {
       "id": 2,
-      "role": "frontend",
-      "projectName": "no-cd-row",
-      "projectSlug": "no-cd-row",
-      "port": 8091,
+      "role": "api",
+      "projectName": "gallery",
+      "projectSlug": "gallery",
+      "port": 8191,
       "host": "mbp",
-      "startCommand": "python3 -m flask run -p 8091",
-      "url": "http://localhost:8091",
-      "description": "No `cd /abs` anchor — the SDI footgun. REJECTED (NoAbsoluteCwd)."
+      "startCommand": "cd /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/serve/site && python3 -m http.server 8191",
+      "url": "http://localhost:8191",
+      "description": "mbp Process — gallery's API tier. ADMITTED, lazy-spawnable."
     },
     {
       "id": 3,
-      "role": "api",
-      "projectName": "port-not-in-cmd",
-      "projectSlug": "port-not-in-cmd",
-      "port": 8092,
+      "role": "frontend",
+      "projectName": "atlas",
+      "projectSlug": "atlas",
+      "port": 8192,
       "host": "mbp",
-      "startCommand": "cd /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/serve/site && python3 -m http.server",
-      "url": "http://localhost:8092",
-      "description": "Abs cwd, but the literal port is absent — the rewrite has nowhere to land. REJECTED (PortNotInStartCommand)."
+      "startCommand": "cd /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/serve/site && python3 -m http.server 8192",
+      "url": "http://localhost:8192",
+      "description": "mbp Process — a second project, for a multi-node graph. ADMITTED, lazy-spawnable."
     },
     {
       "id": 4,
+      "role": "api",
+      "projectName": "ledger",
+      "projectSlug": "ledger",
+      "port": 8194,
+      "host": "mbp",
+      "startCommand": "cd /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/serve/site && python3 -m http.server 8194",
+      "url": "http://localhost:8194",
+      "description": "mbp Process — a third project. ADMITTED, lazy-spawnable."
+    },
+    {
+      "id": 5,
       "role": "frontend",
       "projectName": "minard",
       "projectSlug": "minard",
@@ -42,7 +54,40 @@
       "host": "macmini",
       "startCommand": "cd /srv/minard && npx serve -p 8193",
       "url": "http://andrews-mac-mini:8193",
-      "description": "Runs on macmini — P2 binds :8193 locally and answers 421 → the tailnet URL."
+      "description": "Runs on macmini — serve binds :8193 locally and answers 421 -> the tailnet URL. A second host swimlane; never spawned here."
+    },
+    {
+      "id": 6,
+      "role": "api",
+      "projectName": "archive",
+      "projectSlug": "archive",
+      "port": 8195,
+      "host": "macmini",
+      "startCommand": "cd /srv/archive && node server.js --port 8195",
+      "url": "http://andrews-mac-mini:8195",
+      "description": "Runs on macmini — REDIRECT (421). The macmini swimlane's second node."
+    },
+    {
+      "id": 7,
+      "role": "frontend",
+      "projectName": "no-cd-row",
+      "projectSlug": "no-cd-row",
+      "port": 8196,
+      "host": "mbp",
+      "startCommand": "python3 -m flask run -p 8196",
+      "url": "http://localhost:8196",
+      "description": "No `cd /abs` anchor — the SDI footgun. REJECTED (NoAbsoluteCwd)."
+    },
+    {
+      "id": 8,
+      "role": "api",
+      "projectName": "port-not-in-cmd",
+      "projectSlug": "port-not-in-cmd",
+      "port": 8197,
+      "host": "mbp",
+      "startCommand": "cd /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/serve/site && python3 -m http.server",
+      "url": "http://localhost:8197",
+      "description": "Abs cwd, but the literal port is absent — the rewrite has nowhere to land. REJECTED (PortNotInStartCommand)."
     }
   ]
 }
