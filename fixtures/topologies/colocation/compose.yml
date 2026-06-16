@@ -1,0 +1,64 @@
+# Fabricated fixture — placement as a failure-domain PATH (x-bosun.place,
+# coarse→fine: machine → host). Demonstrates CO-LOCATION and the illusory-
+# redundancy smell: db-primary and db-mirror sit on DIFFERENT hosts (data-a /
+# data-b) but the SAME machine (mini-1), so the "mirror" does not survive the
+# loss of mini-1. The nested swimlanes make it visible — both DBs land inside
+# the one mini-1 band — before any SPOF analysis runs.
+#
+#   mini-1:  edge(lb)  app(web, api)  data-a(db-primary)  data-b(db-mirror)
+#   mini-2:  cache(cache)
+#
+# Smells on display: (1) primary+mirror co-located on mini-1 (illusory
+# redundancy); (2) mini-1 concentrates nearly everything (blast radius).
+services:
+  lb:
+    build: { context: ./lb }
+    x-bosun:
+      place: [mini-1, edge]
+      expose:
+        - { host: 443 }
+    depends_on:
+      web: { condition: service_started }
+
+  web:
+    build: { context: ./web }
+    x-bosun:
+      place: [mini-1, app]
+      expose:
+        - { host: 8080 }
+    depends_on:
+      api: { condition: service_started }
+
+  api:
+    build: { context: ./api }
+    x-bosun:
+      place: [mini-1, app]
+      expose:
+        - { internal: 3000 }
+    depends_on:
+      db-primary: { condition: service_healthy }
+
+  db-primary:
+    build: { context: ./db }
+    x-bosun:
+      place: [mini-1, data-a]
+      expose:
+        - { internal: 5432 }
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+
+  db-mirror:
+    build: { context: ./db }
+    x-bosun:
+      place: [mini-1, data-b]
+      expose:
+        - { internal: 5432 }
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+
+  cache:
+    build: { context: ./cache }
+    x-bosun:
+      place: [mini-2, data-c]
+      expose:
+        - { internal: 6379 }

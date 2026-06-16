@@ -28,6 +28,7 @@ sampleInstance =
   , localName: "tidal-frontend"
   , role: "frontend"
   , host: Just "macmini"
+  , place: [ "mini-1", "macmini" ]
   , executor: { mechanism: "container", detail: "build ./tidal" }
   , exposure: "host:8193"
   , reachability: [ { kind: "listening", bind: Just "all", port: Just 8193, path: Nothing, proxy: Nothing, domain: Nothing, socket: Nothing, openness: "wide" } ]
@@ -40,7 +41,7 @@ sampleInstance =
 -- An instance exercising the Nothing branches (no project, no host, empty arrays).
 bareInstance :: ServiceInstanceView
 bareInstance =
-  { source: "registry", project: Nothing, localName: "worker", role: "worker", host: Nothing
+  { source: "registry", project: Nothing, localName: "worker", role: "worker", host: Nothing, place: []
   , executor: { mechanism: "process", detail: "/srv$ run" }, exposure: "none", reachability: [], readiness: "none"
   , deps: [], routes: [], selectors: []
   }

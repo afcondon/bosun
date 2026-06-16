@@ -36,7 +36,8 @@ import Data.Map as Map
 import Data.Set as Set
 import Data.Maybe (Maybe(..), maybe)
 import Data.Profunctor (dimap)
-import Data.String (joinWith)
+import Data.Argonaut.Core (toString)
+import Data.String (joinWith, split, Pattern(..))
 import Data.Tuple (Tuple(..))
 import Data.Validation.Semigroup (V, toEither)
 
@@ -67,6 +68,11 @@ type ServiceInstanceView =
   , localName :: String
   , role      :: String
   , host      :: Maybe String
+  -- placement as a failure-domain PATH, coarse→fine (e.g. ["mini-1","data-1"]);
+  -- co-location = a shared prefix. `host` stays the finest level for back-compat.
+  -- PROTOTYPE: carried through ServiceInstance.extra["place"] pending promotion
+  -- to a first-class core `Placement` (see docs/PLACEMENT-TYPE.md).
+  , place     :: Array String
   , executor  :: ExecutorView
   , exposure  :: String
   , reachability :: Array AddressView
@@ -237,6 +243,7 @@ serviceInstanceView si =
   , localName: si.localName
   , role: unRole si.role
   , host: map unHost si.host
+  , place: placePath si
   , executor: executorView si.executor
   , exposure: exposureLabel (classify si.reachability)
   , reachability: reachabilityView si.reachability
@@ -247,6 +254,16 @@ serviceInstanceView si =
   }
   where
   depView d = { to: d.to, ordering: map orderingLabel d.ordering, requirement: map requirementLabel d.requirement }
+
+-- the placement path (coarse→fine). PROTOTYPE: read from extra["place"] as a
+-- "/"-joined string; falls back to the single-level [host] so existing single-
+-- host fixtures keep their one-band layout. To be promoted to a first-class
+-- core `Placement` field (docs/PLACEMENT-TYPE.md), at which point this reads
+-- si.place directly and the extra-hatch goes away.
+placePath :: ServiceInstance -> Array String
+placePath si = case Map.lookup "place" si.extra >>= toString of
+  Just s -> split (Pattern "/") s
+  Nothing -> maybe [] (\h -> [ h ]) (map unHost si.host)
 
 facetView :: FacetKey -> FacetView
 facetView fk = { host: map unHost fk.host, mechanism: mechanismLabel fk.mechanism }
@@ -396,6 +413,7 @@ serviceInstanceViewCodec = CAR.object "ServiceInstanceView"
   , localName: CA.string
   , role: CA.string
   , host: CAC.maybe CA.string
+  , place: CA.array CA.string
   , executor: executorViewCodec
   , exposure: CA.string
   , reachability: CA.array addressViewCodec

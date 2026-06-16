@@ -25,7 +25,7 @@ import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Selector (Selector(..))
 import Bosun.Service (RawDep, RawRoute, ServiceInstance, Source(..), mkRole)
 import Control.Alt ((<|>))
-import Data.Argonaut.Core (Json, toArray, toNumber, toObject, toString)
+import Data.Argonaut.Core (Json, fromString, toArray, toNumber, toObject, toString)
 import Data.Array as A
 import Data.Either (Either(..))
 import Data.Int as Int
@@ -53,7 +53,7 @@ decodeService name sj = do
     , project: Nothing
     , localName: name
     , role: mkRole (roleFromName name)
-    , host: Just (mkHost (fromMaybe "macmini" (xbosunHost o)))   -- x-bosun.host override, else the compose deploy target
+    , host: Just (mkHost (placeHost o))   -- finest placement level (x-bosun.place last, else x-bosun.host, else default)
     , executor: executorOf name o
     , reachability: fromMaybe (maybe noNetwork hostPort (publishPort o)) (xbosunExpose o)
     , health: { liveness: probeOf o, readiness: probeOf o, startup: Nothing }
@@ -61,7 +61,7 @@ decodeService name sj = do
     , rawDeps: dependsOn o <> xbosunDeps o
     , rawRoutes: xbosunRoutes o
     , selectors: map Profile (strArray o "profiles")
-    , extra: Map.empty
+    , extra: placeExtra o   -- PROTOTYPE carrier for the failure-domain path (View.placePath)
     }
 
 -- "tidal-frontend" -> "frontend"; "edge" -> "edge"
@@ -198,6 +198,29 @@ portAt o key = FO.lookup key o >>= toNumber >>= Int.fromNumber >>= mkPort
 -- | placement / cross-host-edge / co-location experiments.
 xbosunHost :: Object Json -> Maybe String
 xbosunHost o = (FO.lookup "x-bosun" o >>= toObject) >>= \xb -> str xb "host"
+
+-- | `x-bosun.place: [coarse, …, fine]` — the failure-domain PATH (e.g.
+-- | `[mini-1, data-1]`: host data-1 lives on machine mini-1). Co-location is a
+-- | shared prefix; two hosts on one machine share level 0 → an illusory mirror
+-- | is visible spatially. Falls back to `x-bosun.host` (single level).
+xbosunPlace :: Object Json -> Array String
+xbosunPlace o = fromMaybe [] do
+  xb <- FO.lookup "x-bosun" o >>= toObject
+  arr <- FO.lookup "place" xb >>= toArray
+  pure (A.mapMaybe toString arr)
+
+-- finest placement level → the `host` atom (keeps cross-host marking working)
+placeHost :: Object Json -> String
+placeHost o = case A.last (xbosunPlace o) of
+  Just h -> h
+  Nothing -> fromMaybe "macmini" (xbosunHost o)
+
+-- PROTOTYPE: stash the path in extra["place"] as a "/"-joined string for
+-- View.placePath to read, pending a first-class core `Placement` field.
+placeExtra :: Object Json -> Map.Map String Json
+placeExtra o = case xbosunPlace o of
+  p | not (A.null p) -> Map.singleton "place" (fromString (String.joinWith "/" p))
+  _ -> Map.empty
 
 strArray :: Object Json -> String -> Array String
 strArray o k = fromMaybe [] (FO.lookup k o >>= toArray <#> A.mapMaybe toString)

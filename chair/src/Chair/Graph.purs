@@ -29,6 +29,7 @@ import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Set as Set
+import Data.String (joinWith)
 import Data.String.CodeUnits (length, take)
 import Data.Tuple.Nested ((/\))
 import Halogen as H
@@ -72,7 +73,8 @@ type Node =
   , mech :: String
   , depth :: Number         -- 0..1 dependency layer (retained channel for pivots)
   , reach :: Array AddressView  -- inbound addresses, for the exposure badge
-  , host :: Maybe String    -- physical placement, for cross-host marking + grouping
+  , host :: Maybe String    -- finest placement level, for cross-host marking
+  , place :: Array String   -- the failure-domain PATH, coarse→fine (nested bands)
   }
 
 -- Edges from the loose deps: (dependent → dependency), with the requirement label.
@@ -146,6 +148,7 @@ buildNodes insts edges =
            , depth: toNumber l / toNumber (max 1 maxLayer)
            , reach: maybe [] _.reachability meta
            , host: meta >>= _.host
+           , place: maybe [] _.place meta
            }
     in
       { x: acc.x + toNumber subcols * colW + 40.0
@@ -182,6 +185,11 @@ edgeColor = SA.RGB 150 150 150
 crossHostColor :: SA.Color
 crossHostColor = SA.RGB 200 130 40
 
+-- a dependency that crosses hosts but stays on ONE machine — fragile (a process/
+-- container boundary) but not a network partition. A paler amber than cross-machine.
+crossHostMild :: SA.Color
+crossHostMild = SA.RGB 214 184 130
+
 -- traffic channel — a calm, non-source hue (the source palette owns blue/green/
 -- violet/amber/indigo/grey). Provisional pending the holistic attention pass.
 traffic :: SA.Color
@@ -196,24 +204,32 @@ layerRamp f =
   let lerp hi lo = round (hi - f * (hi - lo))
   in SA.RGB (lerp 248.0 206.0) (lerp 250.0 216.0) (lerp 252.0 230.0)
 
--- re-cluster the SAME nodes (depth / host / reach all retained — the §4.8
--- retained-channel idea) into one column per host. A STATIC pivot: it proves
--- the re-clustering; the animated force version is the next experiment (NOTES).
-buildHostNodes :: Array ServiceInstanceView -> Array Edge -> Array Node
-buildHostNodes insts edges =
+-- re-cluster the SAME nodes (depth / reach all retained — §4.8) by PLACEMENT:
+-- one column per finest-level group (leaf of the failure-domain path), columns
+-- ORDERED by the full path so groups sharing a coarse ancestor sit adjacent —
+-- which is what lets the nested swimlane bands (§5/§2.1) enclose them. Reduces
+-- to one-column-per-host when the path is a single level (back-compat).
+buildPlacementNodes :: Array ServiceInstanceView -> Array Edge -> Array Node
+buildPlacementNodes insts edges =
   let
     base = buildNodes insts edges
-    hostOf n = fromMaybe "—" n.host
-    hosts = Array.nub (map hostOf base)
+    leafKey n = joinWith "/" n.place
+    leaves = Array.sort (Array.nub (map leafKey base))   -- path-sorted → prefix-adjacent
+    maxLen = fromMaybe 1 (maximum (map (\n -> Array.length n.place) base))
+    y0 = marginY + toNumber (max 0 (maxLen - 1)) * levelHead   -- headroom for stacked band headers
     colW = nodeW + 50.0
   in
     Array.concat $ Array.mapWithIndex
-      ( \hi h ->
+      ( \ci key ->
           Array.mapWithIndex
-            (\row n -> n { x = marginX + toNumber hi * colW, y = marginY + toNumber row * rowGap })
-            (Array.filter (\n -> hostOf n == h) base)
+            (\row n -> n { x = marginX + toNumber ci * colW, y = y0 + toNumber row * rowGap })
+            (Array.filter (\n -> leafKey n == key) base)
       )
-      hosts
+      leaves
+
+-- per-level vertical headroom reserved above the node area for each band header
+levelHead :: Number
+levelHead = 24.0
 
 -- ── the view ─────────────────────────────────────────────────────────────────
 
@@ -230,7 +246,7 @@ layoutPositions groupByHost a =
   let
     insts = a.instances
     edges = edgesOf insts
-    nodes = if groupByHost then buildHostNodes insts edges else buildNodes insts edges
+    nodes = if groupByHost then buildPlacementNodes insts edges else buildNodes insts edges
   in
     Map.fromFoldable (map (\n -> n.id /\ { x: n.x, y: n.y }) nodes)
 
@@ -243,7 +259,7 @@ graphView hoverAct groupByHost livePos focus a =
     -- structural nodes for the current layout; their x,y are OVERRIDDEN by the
     -- live (interpolating) positions during a pivot, so everything that reads a
     -- node position — edges, swimlane bboxes, the extents — follows the tween.
-    builtNodes = if groupByHost then buildHostNodes insts edges else buildNodes insts edges
+    builtNodes = if groupByHost then buildPlacementNodes insts edges else buildNodes insts edges
     nodes = map (\n -> maybe n (\p -> n { x = p.x, y = p.y }) (Map.lookup n.id livePos)) builtNodes
     -- STABLE render order (sort by id) so Halogen reuses each node's <g> across
     -- re-renders rather than tearing down and rebuilding (object constancy, §6.1).
@@ -313,17 +329,32 @@ edgeLine dim posOf e = do
     ty = to.y + nodeH / 2.0
     mx = (fx + tx) / 2.0
     my = (fy + ty) / 2.0
-    crossHost = case from.host, to.host of
-      Just a, Just b -> a /= b
-      _, _ -> false
+    -- fragility by how COARSELY the endpoints diverge in placement: same leaf →
+    -- local (grey); diverge only deep (same machine, different host) → mild;
+    -- diverge at the top (different machine/region) → the fragile network
+    -- boundary (strong amber). §14.6 generalised from flat cross-host to the path.
+    shared = sharedPrefixLen from.place to.place
+    diverges = from.place /= to.place && not (Array.null from.place) && not (Array.null to.place)
+    boundaryColor
+      | not diverges = edgeColor
+      | shared == 0 = crossHostColor       -- different machine — most fragile
+      | otherwise = crossHostMild          -- same machine, different host
   pure $ SE.g [ SA.class_ (H.ClassName (dimClass "edge" dim)) ]
     ( [ SE.line
           [ SA.x1 fx, SA.y1 fy, SA.x2 tx, SA.y2 ty
-          , SA.stroke (if crossHost then crossHostColor else edgeColor)
-          , SA.strokeWidth (if crossHost then 1.7 else 1.2)
+          , SA.stroke boundaryColor
+          , SA.strokeWidth (if diverges then 1.7 else 1.2)
           ]
       ] <> midpointMark mx my e.req
     )
+
+-- length of the shared coarse→fine prefix of two placement paths
+sharedPrefixLen :: Array String -> Array String -> Int
+sharedPrefixLen a b = go 0
+  where
+  go i = case Array.index a i, Array.index b i of
+    Just x, Just y | x == y -> go (i + 1)
+    _, _ -> i
 
 -- the labelled dependency axis (§ pivot-table): when the layout IS the boot
 -- order, left→right carries meaning, so name it — "depended on by →". (Under a
@@ -340,39 +371,58 @@ axisLayer maxX =
         [ HH.text "depended on by" ]
     ]
 
--- one tinted band per host (a "swimlane"), drawn BEHIND everything with the host
--- name as a header. Host mode only. The bbox is read off the already-placed
--- nodes, so each band wraps exactly its column. Fades in via a CSS keyframe (a
--- transition won't fire on element creation) so it appears as the nodes glide in.
+-- NESTED placement bands (§2.1/§5): one band per distinct prefix of the
+-- failure-domain path, at every level. Coarse bands (machines) enclose finer
+-- bands (hosts) — which is why co-location is *visible*: two hosts on one
+-- machine sit inside the same outer band, so a primary/mirror that share a
+-- machine read as the SPOF they are before any analysis runs. Drawn behind
+-- everything, bboxes read off live node positions, faded in via CSS keyframe.
+-- Coarser bands get more padding (so they frame the inner ones) and are tinted
+-- by their level-0 ancestor (a machine + its hosts share a hue family). A
+-- single-level path reduces this to the flat one-band-per-host swimlane.
 swimlaneLayer :: forall act m. Array Node -> H.ComponentHTML act () m
 swimlaneLayer nodes =
-  let hosts = Array.nub (map hostOf nodes)
-  in SE.g [ SA.class_ (H.ClassName "swimlanes") ] (Array.mapWithIndex band hosts)
+  SE.g [ SA.class_ (H.ClassName "swimlanes") ]
+    (Array.concatMap bandsAtLevel (Array.range 0 (maxLen - 1)))
   where
-  hostOf n = fromMaybe "—" n.host
-  pad = 16.0
-  headH = 22.0
-  band hi h =
+  maxLen = fromMaybe 1 (maximum (map (\n -> Array.length n.place) nodes))
+  machines = Array.sort (Array.nub (Array.mapMaybe (\n -> Array.head n.place) nodes))
+  basePad = 11.0
+  levelGap = 18.0   -- extra padding per coarser level → visible nesting frame
+  headH = 17.0
+
+  bandsAtLevel d =
     let
-      ns = Array.filter (\n -> hostOf n == h) nodes
+      relevant = Array.filter (\n -> Array.length n.place > d) nodes
+      prefixes = Array.nub (map (\n -> Array.take (d + 1) n.place) relevant)
+    in
+      Array.mapMaybe (band d) prefixes
+
+  band d prefix = do
+    let ns = Array.filter (\n -> Array.take (d + 1) n.place == prefix) nodes
+    label <- Array.last prefix
+    let
+      machineIx = fromMaybe 0 (Array.head prefix >>= \m -> Array.elemIndex m machines)
+      st = hostStyle machineIx
+      outer = d == 0
+      pad = basePad + toNumber (maxLen - 1 - d) * levelGap
       minX = fromMaybe 0.0 (minimum (map _.x ns)) - pad
       maxX = fromMaybe 0.0 (maximum (map _.x ns)) + nodeW + pad
       minY = fromMaybe 0.0 (minimum (map _.y ns)) - pad - headH
       maxY = fromMaybe 0.0 (maximum (map _.y ns)) + nodeH + pad
-      st = hostStyle hi
-    in
-      SE.g [ SA.class_ (H.ClassName "swimlane") ]
-        [ SE.rect
-            [ SA.x minX, SA.y minY, SA.width (maxX - minX), SA.height (maxY - minY)
-            , SA.rx 8.0, SA.fill st.tint, SA.fillOpacity 0.5
-            , SA.stroke st.tint, SA.strokeWidth 1.0
-            ]
-        , SE.text
-            [ SA.x (minX + 12.0), SA.y (minY + 15.0)
-            , SA.fontSize (SA.FontSizeLength (SA.Px 11.0)), SA.fill st.ink
-            ]
-            [ HH.text h ]
-        ]
+    pure $ SE.g [ SA.class_ (H.ClassName "swimlane") ]
+      [ SE.rect
+          [ SA.x minX, SA.y minY, SA.width (maxX - minX), SA.height (maxY - minY)
+          , SA.rx 8.0, SA.fill st.tint, SA.fillOpacity (if outer then 0.45 else 0.0)
+          , SA.stroke st.ink, SA.strokeWidth (if outer then 1.2 else 1.0)
+          ]
+      , SE.text
+          [ SA.x (minX + 12.0), SA.y (minY + 13.0)
+          , SA.fontSize (SA.FontSizeLength (SA.Px (if outer then 11.0 else 10.0)))
+          , SA.fill st.ink, SA.fillOpacity (if outer then 1.0 else 0.75)
+          ]
+          [ HH.text label ]
+      ]
 
 -- pale per-host tints (restrained, Swiss) with a matching darker ink for the
 -- header. Distinct hues so adjacent lanes separate; light enough that the node

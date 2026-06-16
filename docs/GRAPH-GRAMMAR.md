@@ -1126,3 +1126,81 @@ boundaries with no layout change at all.
 > interaction.** That is the point: the answer to "you can't place overlapping
 > sets" is "don't place them — interrogate them," and everything above is a way
 > to interrogate.
+
+## Appendix A — Compared to Kubernetes: what is essential, what is apparatus
+
+Bosun's strategy is to **ingest the ineffable and present the logical**: accept
+any deployment surface, project it onto a small typed core, and render and
+analyse *that*. Kubernetes is the most elaborate surface, so it is the sharpest
+test of the claim that the logical content is small. This appendix is a
+dispassionate audit of the k8s object model against Bosun's five primitives
+(dependency-with-gradient, reachability/address, placement-as-failure-domain-
+path, redundancy group, route). It is descriptive, not polemic; the point is to
+show *what survives the projection* and what is dropped as accidental.
+
+### A.1 The genuinely new ideas
+
+Four concepts in the k8s model are irreducible — they name something Unix-era
+distributed-systems practice did not have a clean primitive for:
+
+1. **The Pod — a co-scheduling unit.** Containers that share a network
+   namespace and `localhost`, scheduled together, living and dying as one. This
+   is real: there was no first-class "these processes are physically one unit."
+   *Projects onto:* `binds-to`/`part-of` (crash-coupling) **+** co-location at
+   the finest placement level.
+2. **Stable identity over ephemeral instances — Service/selector.** Once compute
+   is cattle, instances churn, so a stable virtual name in front of a
+   label-selected set becomes necessary. *Projects onto:* a route to a
+   redundancy group (the selector *is* the group membership predicate).
+3. **Declarative desired-state reconciliation.** A controller continuously
+   driving actual→desired. This is the genuinely good idea — and the one
+   **Bosun itself is built on**, so it is shared, not dropped.
+4. **Placement constraints.** Spread / anti-affinity over failure domains.
+   *Projects onto:* a redundancy group whose members' placement paths are
+   required to diverge at a given level.
+
+### A.2 The non-essential majority
+
+Most of the remaining object kinds are non-essential in a precise sense — they
+fall into three classes:
+
+- **Implementation leaking into the API.** *ReplicaSet* is an internal detail of
+  *Deployment* that users are told never to touch directly, yet it is a top-level
+  object. It carries no concept the Deployment does not.
+- **Policy that should be a field, not a kind.** *Deployment / StatefulSet /
+  DaemonSet / Job / CronJob* are one thing — a reconciler over pods — under five
+  different invariants (ordered + stable identity / one-per-node /
+  run-to-completion / scheduled). In a normalised model this is **one primitive
+  with a mode**, which is exactly how Bosun models redundancy (one group, a
+  `mode` of active-active | active-passive | quorum).
+- **The platform-for-building-platforms tax.** *CRDs* make k8s not a deployment
+  system but a kit for building deployment systems. This is the source of both
+  its reach and its irregularity, and it is the one part that has no fixed
+  projection — by construction it is open-ended.
+
+The rest map cleanly onto existing primitives: *Ingress* → route (L7);
+*NetworkPolicy* and ClusterIP/LoadBalancer scoping → reachability/openness;
+*Namespace* → a scoping label (a coarse placement/ownership level);
+*taints/tolerations* → placement constraints; *PodDisruptionBudget* → an
+availability invariant on a redundancy group.
+
+### A.3 Why it is shaped this way (and what that implies)
+
+Kubernetes descends from Borg: it was designed for Google-scale, multi-tenant
+fleets of thousands of machines, where treat-compute-as-cattle is *forced* and
+the apparatus earns its keep. The majority of real deployments are not that —
+a handful of services and a database — and have inherited the complexity tax
+without the scale that justifies it. So the common complaint that it is
+over-complicated is accurate *for the deployments most operators actually run*;
+it is appropriately complicated only near the scale it was born for.
+
+For Bosun this is the whole thesis in miniature. The **logical** content of a
+k8s deployment is small — the five primitives — while the **apparatus** is large.
+The projection keeps the postcard and drops the apparatus, and the result is
+directly comparable, line for line, with a compose file or a `terraform graph`.
+The co-location feature is the proof at small scale: `podAntiAffinity` +
+`topologySpreadConstraints` + zone/region labels — a whole k8s subsystem —
+becomes, in Bosun's world, one sentence ("a redundancy group whose members'
+placement paths should diverge at the top") and one picture ("are they in the
+same outer band?"). See §2.1 for the cross-cutting hierarchy table that the same
+surfaces share, and §8 for the failover motif catalog these objects instantiate.

@@ -382,6 +382,7 @@ renderGraphView s =
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/gradient/compose.yml") (fixturesDir <> "/topologies/gradient/registry.json") ] [ HH.text "gradient (all 5 marks)" ]
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/exposure/compose.yml") (fixturesDir <> "/topologies/exposure/registry.json") ] [ HH.text "exposure (ramp)" ]
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/multihost/compose.yml") (fixturesDir <> "/topologies/multihost/registry.json") ] [ HH.text "multi-host" ]
+        , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/colocation/compose.yml") (fixturesDir <> "/topologies/colocation/registry.json") ] [ HH.text "co-location" ]
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (corpusDir <> "/docker-compose.yml") (corpusDir <> "/registry.json") ] [ HH.text "frozen corpus" ]
         , HH.button [ cls (if s.groupByHost then "btn sm active" else "btn sm"), HE.onClick \_ -> ToggleGroupBy ]
             [ HH.text (if s.groupByHost then "↹ group: host" else "↹ group: deps") ]
