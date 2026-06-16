@@ -20,7 +20,7 @@ module Chair.Graph (graphView) where
 
 import Prelude
 
-import Bosun.View (AnalyzeResult, ServiceInstanceView)
+import Bosun.View (AddressView, AnalyzeResult, ServiceInstanceView)
 import Data.Array as Array
 import Data.Foldable (foldl, maximum)
 import Data.Int (round, toNumber)
@@ -69,6 +69,7 @@ type Node =
   , source :: String
   , mech :: String
   , depth :: Number         -- 0..1 dependency layer (retained channel for pivots)
+  , reach :: Array AddressView  -- inbound addresses, for the exposure badge
   }
 
 -- Edges from the loose deps: (dependent → dependency), with the requirement label.
@@ -140,6 +141,7 @@ buildNodes insts edges =
            , source: maybe "" _.source meta
            , mech: maybe "" _.executor.mechanism meta
            , depth: toNumber l / toNumber (max 1 maxLayer)
+           , reach: maybe [] _.reachability meta
            }
     in
       { x: acc.x + toNumber subcols * colW + 40.0
@@ -311,24 +313,81 @@ midpointMark mx my = case _ of
 nodeMark :: forall act m. Node -> H.ComponentHTML act () m
 nodeMark n =
   SE.g [ SA.class_ (H.ClassName (if n.ghost then "node ghost" else "node")) ]
-    [ SE.rect
-        [ SA.x n.x, SA.y n.y, SA.width nodeW, SA.height nodeH, SA.rx 5.0
-        , SA.fill (if n.ghost then paper else layerRamp n.depth)
-        , SA.fillOpacity (if n.ghost then 0.4 else 1.0)
-        , SA.stroke (if n.ghost then faint else srcColor n.source)
-        , SA.strokeWidth (if n.ghost then 1.0 else 1.8)
-        ]
-    , SE.text
-        [ SA.x (n.x + 10.0), SA.y (n.y + 18.0)
-        , SA.fontSize (SA.FontSizeLength (SA.Px 12.5)), SA.fill ink
-        ]
-        [ HH.text (clip 18 n.id) ]
-    , SE.text
-        [ SA.x (n.x + 10.0), SA.y (n.y + 33.0)
-        , SA.fontSize (SA.FontSizeLength (SA.Px 9.5)), SA.fill faint
-        ]
-        [ HH.text (if n.ghost then "undefined — no source" else (n.mech <> " · " <> n.source)) ]
-    ]
+    ( [ SE.rect
+          [ SA.x n.x, SA.y n.y, SA.width nodeW, SA.height nodeH, SA.rx 5.0
+          , SA.fill (if n.ghost then paper else layerRamp n.depth)
+          , SA.fillOpacity (if n.ghost then 0.4 else 1.0)
+          , SA.stroke (if n.ghost then faint else srcColor n.source)
+          , SA.strokeWidth (if n.ghost then 1.0 else 1.8)
+          ]
+      , SE.text
+          [ SA.x (n.x + 10.0), SA.y (n.y + 18.0)
+          , SA.fontSize (SA.FontSizeLength (SA.Px 12.5)), SA.fill ink
+          ]
+          [ HH.text (clip 18 n.id) ]
+      , SE.text
+          [ SA.x (n.x + 10.0), SA.y (n.y + 33.0)
+          , SA.fontSize (SA.FontSizeLength (SA.Px 9.5)), SA.fill faint
+          ]
+          [ HH.text (if n.ghost then "undefined — no source" else n.mech) ]
+      ] <> exposureBadge n
+    )
+
+-- the collapsed EXPOSURE BADGE (the Siglet's smallest form): on the node's
+-- outward-facing (right) edge, an openness-coloured dot + the address value.
+-- Prominence-by-exposure — wide/internet warm and eye-catching, workers silent.
+-- (Composition collapses to the loudest member; full glob on interrogation later.)
+exposureBadge :: forall act m. Node -> Array (H.ComponentHTML act () m)
+exposureBadge n = case mostExposedView n.reach of
+  Nothing -> []
+  Just a ->
+    let
+      c = opennessColor a.openness
+      cx = n.x + nodeW - 11.0
+      cy = n.y + 30.0
+    in
+      [ SE.circle [ SA.cx cx, SA.cy cy, SA.r 4.0, SA.fill c, SA.fillOpacity 0.85, SA.stroke c, SA.strokeWidth 1.0 ]
+      , SE.text
+          [ SA.x (cx - 9.0), SA.y (cy + 3.5), SA.textAnchor SA.AnchorEnd
+          , SA.fontSize (SA.FontSizeLength (SA.Px 9.5)), SA.fill c
+          ]
+          [ HH.text (clip 14 (addrValue a)) ]
+      ]
+
+-- pick the most-exposed address (the loudest member of a composite)
+mostExposedView :: Array AddressView -> Maybe AddressView
+mostExposedView = foldl pick Nothing
+  where
+  pick acc a = case acc of
+    Nothing -> Just a
+    Just b -> if opennessRank a.openness > opennessRank b.openness then Just a else acc
+
+opennessRank :: String -> Int
+opennessRank = case _ of
+  "internet" -> 5
+  "wide" -> 4
+  "host" -> 3
+  "cluster" -> 2
+  "local" -> 1
+  _ -> 0
+
+-- warm = wide-open surface (earns the eye), cool = sealed; non-source hues
+opennessColor :: String -> SA.Color
+opennessColor = case _ of
+  "internet" -> SA.RGB 188 70 45
+  "wide" -> SA.RGB 200 110 40
+  "host" -> SA.RGB 185 150 55
+  "cluster" -> SA.RGB 120 135 150
+  "local" -> SA.RGB 95 140 170
+  _ -> faint
+
+addrValue :: AddressView -> String
+addrValue a = case a.kind of
+  "listening" -> maybe "" (\p -> ":" <> show p) a.port
+  "proxied" -> fromMaybe "" a.path
+  "published" -> fromMaybe "" a.domain
+  "socket" -> fromMaybe "" a.socket
+  _ -> ""
 
 clip :: Int -> String -> String
 clip n s = if length s > n then take (n - 1) s <> "…" else s
@@ -355,6 +414,12 @@ legend =
         [ HH.span [ cls "leg-h" ] [ HH.text "edges" ]
         , leg "──" "dependency (lifecycle)"
         , leg "╌╌" "route (traffic, labelled /path)"
+        ]
+    , HH.div [ cls "leg-grp" ]
+        [ HH.span [ cls "leg-h" ] [ HH.text "exposure (right of node)" ]
+        , leg "●" "openness dot: warm = wide/internet · cool = local/cluster"
+        , leg ":p" "the address value (port / path / domain / socket)"
+        , leg "—" "no dot = no inbound surface (worker)"
         ]
     ]
   where
