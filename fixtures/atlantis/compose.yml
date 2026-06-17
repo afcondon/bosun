@@ -1,0 +1,81 @@
+# Atlantis — the live-coding rig's OS-process tier, modelled for Bosun to
+# supervise in place of DeepStar (ROADMAP Stage 2). These are NATIVE processes,
+# not containers, so each declares `x-bosun.process {cwd, command}` (the compose
+# adapter reads that as a Process executor). `depends_on` gives the boot DAG;
+# `x-bosun.expose` the reachability. Source of truth for the set + deps: the
+# DeepStar SPEC's service table (es9-daemon was cv-router; fh2-daemon ×N).
+#
+# Boot order falls out of depends_on:
+#   stage 0: es9-daemon, link-spike, fh2-daemon   (no deps)
+#   stage 1: purerl-tidal        (needs es9-daemon + link-spike)
+#   stage 2: calypso-server      (needs purerl-tidal)
+#   stage 3: calypso-frontend    (needs calypso-server)
+#
+# NB the OSC ports are UDP; the Address model has no protocol axis yet, so they
+# ride as plain listening ports — the UDP/process-existence probe is Stage-2
+# delta #1 (today's TCP-connect probe would mis-read them).
+# The rig runs LOCALLY (the machine with the ES-9/FH-2 hardware), so every
+# service is x-bosun.host: mbp → LocalExec (no ssh-wrap). Adjust the host if the
+# rig moves; this is the one placement assumption to confirm in the #134-style
+# co-design.
+services:
+  es9-daemon:
+    x-bosun:
+      host: mbp
+      process:
+        cwd: /Users/afc/work/afc-work/music/expert-sleepers/es9-daemon
+        command: ./target/release/es9-daemon
+      expose:
+        - host: 57120
+
+  link-spike:
+    x-bosun:
+      host: mbp
+      process:
+        cwd: /Users/afc/work/afc-work/music/link-spike
+        command: ./target/release/link-spike
+      expose:
+        - host: 57122
+
+  purerl-tidal:
+    depends_on:
+      - es9-daemon
+      - link-spike
+    x-bosun:
+      host: mbp
+      process:
+        cwd: /Users/afc/work/afc-work/music/live-coding/purerl-tidal
+        command: erl -pa ebin -noshell -eval 'F = main@ps:main(), F()'
+      expose:
+        - host: 3012
+
+  calypso-server:
+    depends_on:
+      - purerl-tidal
+    x-bosun:
+      host: mbp
+      process:
+        cwd: /Users/afc/work/afc-work/music/live-coding/calypso
+        command: BACKEND_PORT=3060 node server/run.js
+      expose:
+        - host: 3060
+
+  calypso-frontend:
+    depends_on:
+      - calypso-server
+    x-bosun:
+      host: mbp
+      process:
+        cwd: /Users/afc/work/afc-work/music/live-coding/calypso
+        command: npx http-server frontend/public -p 3061 -c-1 --cors
+      expose:
+        - host: 3061
+
+  fh2-daemon:
+    x-bosun:
+      host: mbp
+      process:
+        cwd: /Users/afc/work/afc-work/music/expert-sleepers/fh2-config
+        command: spago run -- --daemon
+      expose:
+        - socket: /Users/afc/.fh2/control.sock

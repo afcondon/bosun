@@ -69,15 +69,33 @@ roleFromName :: String -> String
 roleFromName name = fromMaybe name (A.last (String.split (Pattern "-") name))
 
 executorOf :: String -> Object Json -> Executor
-executorOf name o = case FO.lookup "image" o >>= toString of
-  Just img -> Container (ContainerSpec { source: Left (ImageRef img), internalPort: Nothing, publish: publishPort o })
-  Nothing -> case FO.lookup "build" o >>= toObject of
-    Just b -> Container (ContainerSpec
-      { source: Right (BuildContext { context: fromMaybe "" (str b "context"), dockerfile: str b "dockerfile" })
-      , internalPort: Nothing
-      , publish: publishPort o
-      })
-    Nothing -> Unmanaged name
+executorOf name o = case xbosunProcess o of
+  -- `x-bosun.process: { cwd, command }` declares a NATIVE process, not a
+  -- container — so a compose overlay can model a native-process deployment
+  -- (dev servers, the Atlantis daemon tier) with all of compose's depends_on
+  -- boot-order machinery. Takes precedence; such a service has no image/build.
+  Just proc -> proc
+  Nothing -> case FO.lookup "image" o >>= toString of
+    Just img -> Container (ContainerSpec { source: Left (ImageRef img), internalPort: Nothing, publish: publishPort o })
+    Nothing -> case FO.lookup "build" o >>= toObject of
+      Just b -> Container (ContainerSpec
+        { source: Right (BuildContext { context: fromMaybe "" (str b "context"), dockerfile: str b "dockerfile" })
+        , internalPort: Nothing
+        , publish: publishPort o
+        })
+      Nothing -> Unmanaged name
+
+-- | `x-bosun.process: { cwd: <abs>, command: <str> }` → a `Process` executor.
+-- | Requires an ABSOLUTE cwd (the SDI footgun, enforced by `mkAbsPath`); a
+-- | missing/relative cwd or absent command ⇒ `Nothing` (falls back to the
+-- | container/unmanaged path).
+xbosunProcess :: Object Json -> Maybe Executor
+xbosunProcess o = do
+  xb <- FO.lookup "x-bosun" o >>= toObject
+  pr <- FO.lookup "process" xb >>= toObject
+  cwd <- str pr "cwd" >>= mkAbsPath
+  command <- str pr "command"
+  pure (Process { cwd, command, env: [] })
 
 -- first "host:container" entry -> the published host port
 publishPort :: Object Json -> Maybe Port

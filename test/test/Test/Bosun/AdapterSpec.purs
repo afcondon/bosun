@@ -107,6 +107,34 @@ spec = describe "Bosun.Adapters" do
               s.selectors `shouldEqual` [ Profile "tidal", Profile "full" ]
               exposureLabel (classify s.reachability) `shouldEqual` "none"
 
+    it "x-bosun.process { cwd, command } => a native Process executor, not a Container" do
+      let
+        pf = """{"services":{
+          "es9-daemon":{"x-bosun":{"host":"mbp","process":{"cwd":"/abs/es9","command":"./run"},"expose":[{"host":57120}]}},
+          "purerl-tidal":{"depends_on":["es9-daemon"],"x-bosun":{"host":"mbp","process":{"cwd":"/abs/tidal","command":"erl -noshell"}}}
+        }}"""
+      case jsonParser pf of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> do
+          let svcs = ingestCompose j
+          case find (\s -> s.localName == "es9-daemon") svcs of
+            Nothing -> fail "es9-daemon not ingested"
+            Just s -> do
+              mechanism s.executor `shouldEqual` MechProcess
+              exposureLabel (classify s.reachability) `shouldEqual` "host:57120"
+          -- depends_on still wires the boot DAG for a Process service
+          case find (\s -> s.localName == "purerl-tidal") svcs of
+            Nothing -> fail "purerl-tidal not ingested"
+            Just s -> map _.to s.rawDeps `shouldEqual` [ "es9-daemon" ]
+
+    it "a relative or missing x-bosun.process cwd is NOT a Process (falls through to Unmanaged)" do
+      let pf = """{"services":{"bad":{"x-bosun":{"process":{"cwd":"relative/dir","command":"./run"}}}}}"""
+      case jsonParser pf of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> case find (\s -> s.localName == "bad") (ingestCompose j) of
+          Nothing -> fail "bad not ingested"
+          Just s -> mechanism s.executor `shouldEqual` MechUnmanaged
+
   describe "ingestTargets" do
     let
       fixture =

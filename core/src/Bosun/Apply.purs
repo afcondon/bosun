@@ -20,6 +20,7 @@ module Bosun.Apply
   ( Command(..)
   , StagedCommand
   , applyScript
+  , downScript
   , commandFor
   ) where
 
@@ -29,9 +30,10 @@ import Bosun.Atoms (Port, ServiceId, unAbsPath, unPort, unServiceId)
 import Bosun.Executor (Executor(..))
 import Bosun.Plan (Change(..), Plan, changeRef, planSteps)
 import Bosun.Reachability (Address(..), addresses)
-import Bosun.Service (Service, ValidatedDeployment, unServiceRef, unValidatedDeployment)
+import Bosun.Service (Service, ValidatedDeployment, unBootOrder, unServiceRef, unValidatedDeployment)
 import Bosun.Target (ExecLoc(..), Target, TargetMap, resolveTarget, unSshDest)
 import Data.Array as A
+import Data.Array.NonEmpty as NEA
 import Data.Foldable (foldMap)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), isJust)
@@ -68,6 +70,26 @@ applyScript tmap vd p =
           (A.fromFoldable (commandFor tmap step.change svc) <> publishCommands tmap step.change svc)
   where
   svcs = (unValidatedDeployment vd).services
+
+-- | The teardown script: a `Stop` for every service, in REVERSE boot order
+-- | (dependents before their dependencies — the D-E5 stop ordering), so a
+-- | `Container` group comes down cleanly. A `Process` Stop is still an honest
+-- | `# MANUAL` note (an unmanaged local process has no handle to kill — task
+-- | #8; the resident `supervise` mode or a recorded-PID `down` closes that). No
+-- | publish/unpublish here — stopping the service is the teardown.
+downScript :: TargetMap -> ValidatedDeployment -> Array StagedCommand
+downScript tmap vd =
+  A.reverse (unBootOrder vr.bootOrder) # A.mapWithIndex stageCmds # A.concat
+  where
+  vr = unValidatedDeployment vd
+  svcs = vr.services
+  stageCmds stage nea =
+    NEA.toArray nea # A.mapMaybe \ref ->
+      case Map.lookup (unServiceRef ref) svcs of
+        Nothing -> Nothing
+        Just svc -> case commandFor tmap (Stop ref) svc of
+          Nothing -> Nothing
+          Just command -> Just { stage, service: svc.id, command }
 
 -- | The command for one change on one service, `ssh`-wrapped for remote hosts.
 -- | `Nothing` ⇒ a `NoOp` (no command needed). The service's host resolves to a

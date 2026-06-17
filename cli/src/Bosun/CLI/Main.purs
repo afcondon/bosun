@@ -23,7 +23,7 @@ import Prelude
 import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.Adapters.Registry (ingestRegistry)
 import Bosun.Adapters.Targets (ingestTargets)
-import Bosun.Apply (Command(..), StagedCommand, applyScript)
+import Bosun.Apply (Command(..), StagedCommand, applyScript, downScript)
 import Bosun.Target (TargetMap, defaultTargets)
 import Bosun.Atoms (AbsPath, Port, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkServiceId, unServiceId)
 import Bosun.CLI.Exec (execLine)
@@ -80,6 +80,8 @@ main = do
     [ "apply", "--dry-run", composePath, registryPath, snapshotPath ] -> runApplyDryRun targets composePath registryPath (Just snapshotPath)
     [ "apply", composePath, registryPath ] -> runApply targets composePath registryPath Nothing
     [ "apply", composePath, registryPath, snapshotPath ] -> runApply targets composePath registryPath (Just snapshotPath)
+    [ "down", "--dry-run", composePath, registryPath ] -> runDownDryRun targets composePath registryPath
+    [ "down", composePath, registryPath ] -> runDown targets composePath registryPath
     _ -> runDemo
 
 -- | Pull an optional `--targets <path>` out of the argument vector wherever it
@@ -197,6 +199,50 @@ runApply targets composePath registryPath snapshotPath = do
         script = applyScript targets vd (plan vd { desired: vd, recorded: Nothing, observed })
         stages = A.groupBy (\a b -> a.stage == b.stage) script
       if A.null stages then log "apply: nothing to do — the rig already matches desired state."
+      else runStages 1 (map NEA.toArray stages)
+
+-- ── bosun down [--dry-run] <compose> <registry> ────────────────────────────
+-- |
+-- | Teardown: stop every service in REVERSE boot order (`downScript`). For a
+-- | `Container` group (the macmini deploy) this is `docker compose stop`,
+-- | ssh-wrapped — the apply↔down symmetry. An unmanaged local `Process` stop is
+-- | still an honest `# MANUAL` note (task #8); it is reported and skipped, never
+-- | a port-kill heuristic. Refuses a deployment that does not validate.
+runDownDryRun :: TargetMap -> String -> String -> Effect Unit
+runDownDryRun targets composePath registryPath = do
+  composeJson <- readYamlFile composePath
+  registryJson <- readJsonFile registryPath
+  let
+    insts = ingestCompose composeJson <> ingestRegistry registryJson
+    r = reconcile (buildAliases insts) insts
+  log ("bosun " <> version <> " — down --dry-run " <> composePath <> " + " <> registryPath)
+  log ""
+  case toEither (validate r.deployment) of
+    Left vErrors -> do
+      log "cannot down: the deployment does not validate —"
+      log ""
+      log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
+    Right vd -> log (renderScript (downScript targets vd))
+
+runDown :: TargetMap -> String -> String -> Effect Unit
+runDown targets composePath registryPath = do
+  composeJson <- readYamlFile composePath
+  registryJson <- readJsonFile registryPath
+  let
+    insts = ingestCompose composeJson <> ingestRegistry registryJson
+    r = reconcile (buildAliases insts) insts
+  log ("bosun " <> version <> " — down " <> composePath <> " + " <> registryPath)
+  log ""
+  case toEither (validate r.deployment) of
+    Left vErrors -> do
+      log "cannot down: the deployment does not validate —"
+      log ""
+      log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
+    Right vd -> do
+      let
+        script = downScript targets vd
+        stages = A.groupBy (\a b -> a.stage == b.stage) script
+      if A.null stages then log "down: nothing to do — no services to stop."
       else runStages 1 (map NEA.toArray stages)
 
 runStages :: Int -> Array (Array StagedCommand) -> Effect Unit
