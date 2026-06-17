@@ -46,12 +46,21 @@ Work is split across two Claude sessions; they meet at the serve HTTP contract.
      pair is one node whose canonical id == the serve serviceId. Load it with the
      **◉ live demo** button in the Graph toolbar. Stop `ledger:api` (port 8194) in
      the Cockpit and watch almost the whole graph wash amber.
-3. **Control modal (NEXT — not yet built):** explicit mode toggle with a TIMEOUT and
-   a loud banner — you must not kill a service while exploring. In control mode a
-   node click offers spawn/stop/restart via `/control/*`. Decision (Andrew):
-   modal, timeout, maximum visual clarity about which mode you're in.
+3. **Armed control channel:** ✅ DONE (2026-06-17, `659c7eb`). The earlier
+   "modal + timeout" was superseded by the armed-control-channel decision (full
+   identity at the point of action). Toggling the `⚠ control` rack thumbnail arms
+   the main view: serve-managed route nodes become fill-buttons — stopped → green
+   **launch**, running → split red **stop** | blue **reboot** — wired to
+   `/control/spawn|stop` (reboot = stop+spawn). Safety: ChControl is excluded from
+   `allChannels` (neither the default nor the "all" button can arm it); while
+   armed a node's select-click is removed; the node keeps name/role/host on top; a
+   pulsing red frame + "⚠ ARMED" banner make the mode unmistakable.
 4. Graph becomes the primary live surface; the Cockpit table stays as a
    secondary view.
+
+**Autonomy is now the engine session's turn** — auto-restart of `Always`,
+crash-coupling (`binds-to`/`part-of`), failover. Requirements + the optional
+`/state` fields and atomic `/control/restart` ask are in `HANDOFF-ENGINE.md`.
 
 ## Control APIs — what exists vs autonomous behaviour (2026-06-17)
 
