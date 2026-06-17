@@ -226,3 +226,73 @@ are the same `recorded`-threading work.
 (slow). Swapping it for the prebuilt fh2-daemon (`~/.fh2/control.sock`, the
 sub-100ms socket daemon) shrinks its boot window — a good fixture fix, but it
 does NOT fix the storm (the BEAM still races). Boot-grace is the real fix.
+
+---
+
+## RESOLUTION (engine session, 2026-06-17) — boot-grace + backoff landed
+
+The storm is fixed, and it's the same `recorded`-threading work that powers the
+Chair's D-S1 badges — built once, used twice.
+
+**New pure module `Bosun.Supervisor`** (core) — the tick-transition the loop was
+missing. It threads launch memory (`SupState`) across ticks; time is a *parameter*
+(`Millis` passed at the seam) so it stays deterministic and **rides go-conformance
+byte-identically** (new `scripts/go-supervise-conf.sh`, node ≡ Go, 14 Go files).
+Two states do the work:
+- **boot-grace** — a service we launched whose process GROUP is alive (we hold
+  its pgid) but whose readiness probe hasn't passed yet reads `Starting`, which
+  the planner already `NoOp`s. This is the root fix: the BEAM / `spago run` no
+  longer reads `Down` while booting, so it is never re-`Start`ed. Past
+  `bootGraceMs` (60s) without binding ⇒ `Failed` (genuinely wedged → restart).
+- **backoff** — after a crash relaunch we arm `suspendedUntil`; while suspended
+  the service reads `InBackoff` (planner `NoOp`), so a fast-crash loop is
+  throttled exponentially (5s→60s, capped) instead of piled on.
+
+`Bosun.CLI.Supervise` now threads a `SupState` Ref through `tick`/bring-up/
+restart/down: `observeSupSnapshot` (readiness probe AND pgid liveness per
+service) → `refine` → `plan` → `recordLaunches`. The pure `plan` is unchanged.
+
+**Live-proven** against `fixtures/slowboot/` (a TCP-probed service that
+`sleep 8 && python -m http.server` — exactly the BEAM's alive-but-not-bound
+window): ONE bring-up launch, keep-alive ticks do nothing for 8s, then it goes
+`running`; `ps` shows a single process, `restarts: 0`. 117 tests green.
+
+### The Chair's round-2 asks, answered
+
+- **A (poll-miss)** — DONE. `/state` now carries a `restarts` counter and
+  `lastTransitionAt` (see below), so a sub-poll-interval flap is still visible
+  as `↻ N` even if the Chair never samples the red.
+- **B (manual stop of a supervised process)** — already coherent: `desiredUp`
+  makes `/control/down` HOLD (auto-restart suspended until `/control/up`); on
+  down the launch memory is cleared so stopped services read `down`, not `failed`.
+- **C (atomic restart)** — `supervise`'s `POST /control/restart?service=<id>` is
+  ALREADY a single atomic call (marks the service `Failed` in the snapshot and
+  lets the planner do the rest, incl. D-E5 coupled co-restart). No stop-then-
+  spawn window on the supervise surface.
+- **D (contract hygiene + IR policy field)** — all new `/state` fields are
+  ADDITIVE (see below); nothing required. The restart-policy field name in the
+  IR is `Bosun.Health.RestartPolicy.base :: BaseRestart`
+  (`Never | OnFailure | Always | UnlessStopped`) — badge "supervised" on
+  anything not `Never`. NB the supervisor does not yet *read* per-service policy
+  (the validated `Service` drops `RestartPolicy`); today one group-level config.
+- **E (coupling in one poll window)** — `recordLaunches` stamps the whole
+  coupled set the planner co-restarts in a single tick, so `/state` flips them
+  together. (Real lockstep still rides the planner's D-E5 propagation, unchanged.)
+- **F (same `/state` + `/control` surface)** — YES, unchanged shape + additive.
+
+### The additive `/state` fields (ADR D-S1)
+The `services` map (id → status string) is UNCHANGED — older decoders keep
+working. Added, alongside it:
+- top-level `"supervised": true` — this is a supervise daemon.
+- top-level `"supervision": { "<id>": { "restarts", "fails",
+  "lastTransitionAt", "suspendedUntil" } }` — the per-service badge data. An
+  older decoder ignores both new keys; the Chair adds them as `Maybe` when it
+  wires Stage 2, exactly as the resolution above agreed.
+
+### Future enhancement (Andrew, this session): typed restart policy
+The supervisor's knobs (`SupConfig`) are deliberately the seed of a per-service
+typed policy — they mirror `Bosun.Health.RestartPolicy` (`base :: BaseRestart`,
+`backoff { minSec, maxRetries }`). The path: carry `RestartPolicy` onto the
+validated `Service`/`LaunchSpec` so `refine` resolves backoff/maxRetries/base
+per service from its own policy instead of one config for the whole group.
+Tracked as a follow-up, not blocking.

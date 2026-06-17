@@ -11,6 +11,7 @@ import Test.Bosun.PlanSpec as PlanSpec
 import Test.Bosun.ReachabilitySpec as ReachabilitySpec
 import Test.Bosun.ReconcileSpec as ReconcileSpec
 import Test.Bosun.ServeSpec as ServeSpec
+import Test.Bosun.SupervisorSpec as SupervisorSpec
 import Test.Bosun.ValidateSpec as ValidateSpec
 import Test.Bosun.ViewSpec as ViewSpec
 import Test.Spec (describe)
@@ -31,5 +32,6 @@ main = runSpecAndExitProcess [specReporter] do
     PlanSpec.spec
     ApplySpec.spec
     ServeSpec.spec
+    SupervisorSpec.spec
     ViewSpec.spec
     PBTSpec.spec

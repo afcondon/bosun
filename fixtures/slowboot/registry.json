@@ -1,0 +1,4 @@
+{ "servers": [
+  { "role": "web", "projectSlug": "slowboot", "projectName": "slowboot", "port": 8788, "host": "mbp",
+    "startCommand": "cd /tmp && bash -c 'sleep 8 && python3 -m http.server 8788'" }
+], "count": 1 }

@@ -5,6 +5,10 @@
 // (CORS + JSON) so the Chair lights up against either mode unchanged.
 import http from "node:http";
 
+// Effect Number — wall-clock ms at the seam (the pure supervisor never reads
+// the clock; it only receives `now`, so it stays conformance-deterministic).
+export const nowMs = () => Date.now();
+
 const INTERNAL_HOST = "127.0.0.1";
 const CORS = {
   "access-control-allow-origin": "*",

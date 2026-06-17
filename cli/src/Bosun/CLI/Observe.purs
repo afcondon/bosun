@@ -13,6 +13,7 @@
 module Bosun.CLI.Observe
   ( observe
   , observeSnapshot
+  , observeSupSnapshot
   ) where
 
 import Prelude
@@ -24,6 +25,8 @@ import Bosun.Reachability (classify)
 import Bosun.Health (Probe(..))
 import Bosun.Plan (Reason(..), Snapshot, Status(..))
 import Bosun.Service (Deployment, LooseService, deploymentServices)
+import Bosun.Supervisor (Observation)
+import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..))
 import Data.Traversable (traverse)
@@ -64,6 +67,22 @@ observeSnapshot dep = do
   where
   probeOne :: LooseService -> Effect (Tuple ServiceId Status)
   probeOne s = Tuple s.id <$> observeService s
+
+-- | The supervisor's reading: for every service, BOTH its readiness probe and
+-- | whether the process GROUP `apply` launched is still alive (`pidPath s.id`).
+-- | The pgid signal is what lets `Bosun.Supervisor.refine` tell "launched, still
+-- | booting" (group alive, port not yet bound ⇒ `Starting`) from "actually down"
+-- | (group gone) — the relaunch-storm fix. Closes observe → refine → plan.
+observeSupSnapshot :: Deployment -> Effect (Map ServiceId Observation)
+observeSupSnapshot dep = do
+  entries <- traverse probeOne (deploymentServices dep)
+  pure (Map.fromFoldable entries)
+  where
+  probeOne :: LooseService -> Effect (Tuple ServiceId Observation)
+  probeOne s = do
+    ready <- observeService s
+    groupAlive <- runEffectFn1 probePgidAliveImpl (pidPath s.id)
+    pure (Tuple s.id { ready, groupAlive })
 
 -- Service-aware probe: `ProcessAlive` is checked against the process GROUP
 -- `apply` recorded for this service (`pidPath s.id`) — the honest liveness signal

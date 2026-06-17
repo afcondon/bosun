@@ -24,23 +24,24 @@ import Prelude
 
 import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.Adapters.Registry (ingestRegistry)
-import Bosun.Apply (Command(..), StagedCommand, applyScript, downScript)
+import Bosun.Apply (Command(..), applyScript, downScript)
 import Bosun.Atoms (ServiceId, mkServiceId, unServiceId)
 import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (readJsonFile, readYamlFile)
-import Bosun.CLI.Observe (observeSnapshot)
-import Bosun.Plan (Snapshot, Status(..), plan)
+import Bosun.CLI.Observe (observeSupSnapshot)
+import Bosun.Plan (Change(..), Plan, Status(..), plan, planSteps)
 import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderCommand, renderReport)
+import Bosun.Service (unServiceRef)
+import Bosun.Supervisor (Launch, SupConfig, SupState, SvcState, defaultConfig, emptySupState, recordLaunches, refine)
 import Bosun.Target (defaultTargets)
 import Bosun.Validate (validate)
 import Bosun.Version (version)
 import Data.Array as A
 import Data.Either (Either(..))
 import Data.Foldable (intercalate, traverse_)
-import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Tuple (Tuple(..))
 import Data.Validation.Semigroup (toEither)
 import Effect (Effect)
@@ -60,6 +61,11 @@ type SuperviseConfig =
   }
 
 foreign import superviseImpl :: EffectFn1 SuperviseConfig Unit
+
+-- | Wall-clock milliseconds at the seam. Lives in the shim (not the pure core),
+-- | so `Bosun.Supervisor` stays deterministic and conformance-byte-identical;
+-- | the supervisor only ever *receives* time, never reads it.
+foreign import nowMs :: Effect Number
 
 defaultStatusPort :: Int
 defaultStatusPort = 3996
@@ -87,8 +93,14 @@ runSupervise mPort composePath registryPath = do
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
     Right vd -> do
       desiredUp <- Ref.new true
-      snapRef <- Ref.new (Map.empty :: Snapshot)
+      -- The threaded `recorded` state (D-7): launch memory across ticks. This is
+      -- what makes `supervise` more than a stateless plan-loop — without it a
+      -- slow-boot service re-Starts every tick (the relaunch storm).
+      supRef <- Ref.new emptySupState
       let
+        cfg :: SupConfig
+        cfg = defaultConfig
+
         runOne sc = case sc.command of
           Manual note -> log ("  · skip (manual): " <> note)
           command -> do
@@ -101,22 +113,43 @@ runSupervise mPort composePath registryPath = do
             log ("supervise: " <> label)
             traverse_ runOne (A.sortWith _.stage script)
 
-        scriptFor :: Snapshot -> Array StagedCommand
-        scriptFor obs = applyScript defaultTargets vd (plan vd { desired: vd, recorded: Nothing, observed: obs })
+        -- Which services this plan launches, and whether each is a crash
+        -- relaunch (Restart) or a first bring-up (Start) — so `recordLaunches`
+        -- bumps the badge + arms backoff only for the former.
+        launchesOf :: Plan -> Array Launch
+        launchesOf p = A.mapMaybe toLaunch (planSteps p)
+          where
+          toLaunch step = case step.change of
+            Start ref -> Just { id: unServiceRef ref, isRestart: false }
+            Restart ref _ -> Just { id: unServiceRef ref, isRestart: true }
+            _ -> Nothing
 
-        bringUp = enact "bring-up" (scriptFor Map.empty)
+        -- One reconcile pass against an already-refined observed snapshot:
+        -- plan → enact → stamp launch memory.
+        enactPlan label now observed = do
+          let p = plan vd { desired: vd, recorded: Nothing, observed }
+          enact label (applyScript defaultTargets vd p)
+          Ref.modify_ (recordLaunches cfg now (launchesOf p)) supRef
+
+        bringUp = do
+          now <- nowMs
+          enactPlan "bring-up" now Map.empty
+
         bringDown = enact "teardown" (downScript defaultTargets vd)
 
         tick = do
           up <- Ref.read desiredUp
-          snap <- observeSnapshot dep
-          Ref.write snap snapRef
-          when up (enact "reconcile (keep-alive)" (scriptFor snap))
+          obs <- observeSupSnapshot dep
+          now <- nowMs
+          prev <- Ref.read supRef
+          let refined = refine cfg now prev obs
+          Ref.write refined.state supRef
+          when up (enactPlan "reconcile (keep-alive)" now refined.snapshot)
 
         stateBody = do
-          snap <- Ref.read snapRef
+          st <- Ref.read supRef
           up <- Ref.read desiredUp
-          pure (snapshotBody up snap)
+          pure (snapshotBody up st)
 
         control = mkEffectFn2 \verb arg -> case verb of
           "up" -> do
@@ -126,10 +159,18 @@ runSupervise mPort composePath registryPath = do
           "down" -> do
             Ref.write false desiredUp
             bringDown
+            -- forget launch memory so stopped services read Down, not Failed
+            Ref.write emptySupState supRef
             pure "down: desired=down, auto-restart suspended"
           "restart" -> do
-            snap <- observeSnapshot dep
-            enact ("restart " <> arg) (scriptFor (Map.insert (mkServiceId arg) Failed snap))
+            now <- nowMs
+            obs <- observeSupSnapshot dep
+            prev <- Ref.read supRef
+            let
+              refined = refine cfg now prev obs
+              forced = Map.insert (mkServiceId arg) Failed refined.snapshot
+            Ref.write refined.state supRef
+            enactPlan ("restart " <> arg) now forced
             pure ("restart: " <> arg)
           _ -> pure ("unknown control verb: " <> verb)
       log "supervise: initial bring-up…"
@@ -137,17 +178,33 @@ runSupervise mPort composePath registryPath = do
       runEffectFn1 superviseImpl
         { statusPort: fromMaybe defaultStatusPort mPort, intervalMs, tick, stateBody, control }
 
--- Minimal `/state` JSON: desired up/down + each service's observed status.
--- (Mirrors Main's `statusToken`; consolidate both into a shared snapshot codec
--- in CLI.Observe later — flagged follow-up.)
-snapshotBody :: Boolean -> Snapshot -> String
-snapshotBody up snap =
-  "{ \"desired\": \"" <> (if up then "up" else "down")
-    <> "\", \"services\": { "
-    <> intercalate ", " (map entry (Map.toUnfoldable snap :: Array (Tuple ServiceId Status)))
-    <> " } }"
+-- | `/state` JSON. The `services` map (id → status string) is UNCHANGED — the
+-- | Chair's existing decoder keeps working. Everything else is ADDITIVE (ADR
+-- | D-S1, "never break the existing decode"): a top-level `supervised: true`
+-- | marks this as a supervise daemon, and a parallel `supervision` map carries
+-- | the per-service badge data (`restarts`, `lastTransitionAt`, plus `fails` /
+-- | `suspendedUntil` diagnostics) the Chair renders as `↻ N` and "Xs ago". An
+-- | older decoder simply ignores the two new keys.
+snapshotBody :: Boolean -> SupState -> String
+snapshotBody up st =
+  "{ \"desired\": \"" <> (if up then "up" else "down") <> "\""
+    <> ", \"supervised\": true"
+    <> ", \"services\": { " <> intercalate ", " (map svcEntry entries) <> " }"
+    <> ", \"supervision\": { " <> intercalate ", " (map supEntry entries) <> " }"
+    <> " }"
   where
-  entry (Tuple sid st) = "\"" <> unServiceId sid <> "\": \"" <> statusToken st <> "\""
+  entries = Map.toUnfoldable st :: Array (Tuple ServiceId SvcState)
+
+  svcEntry (Tuple sid s) =
+    "\"" <> unServiceId sid <> "\": \"" <> statusToken s.status <> "\""
+
+  supEntry (Tuple sid s) =
+    "\"" <> unServiceId sid <> "\": { "
+      <> "\"restarts\": " <> show s.restarts
+      <> ", \"fails\": " <> show s.fails
+      <> ", \"lastTransitionAt\": " <> show s.since
+      <> ", \"suspendedUntil\": " <> maybe "null" show s.suspendedUntil
+      <> " }"
 
 statusToken :: Status -> String
 statusToken = case _ of
