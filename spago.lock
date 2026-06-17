@@ -41,6 +41,7 @@
             "http-methods",
             "hylograph-graph",
             "hylograph-layout",
+            "hylograph-selection",
             "hylograph-transitions",
             "integers",
             "maybe",
@@ -48,6 +49,7 @@
             "prelude",
             "strings",
             "tuples",
+            "web-dom",
             "web-html"
           ]
         },
@@ -1045,6 +1047,24 @@
         "variant"
       ]
     },
+    "colors": {
+      "type": "registry",
+      "version": "7.0.1",
+      "integrity": "sha256-3A93ysUoamlsH2yfIiPFH0SoG8DZQk2ytFKlKhd/aJg=",
+      "dependencies": [
+        "arrays",
+        "control",
+        "either",
+        "foldable-traversable",
+        "integers",
+        "lists",
+        "maybe",
+        "numbers",
+        "partial",
+        "prelude",
+        "strings"
+      ]
+    },
     "console": {
       "type": "registry",
       "version": "6.1.0",
@@ -1591,6 +1611,44 @@
         "transformers",
         "tree-rose",
         "tuples"
+      ]
+    },
+    "hylograph-selection": {
+      "type": "registry",
+      "version": "0.5.1",
+      "integrity": "sha256-/cxTLlzBYBrQiL80+roo0irozdHAyf++31pd2sYUvOQ=",
+      "dependencies": [
+        "arrays",
+        "colors",
+        "contravariant",
+        "datetime",
+        "effect",
+        "either",
+        "foldable-traversable",
+        "free",
+        "graphs",
+        "hylograph-graph",
+        "hylograph-transitions",
+        "integers",
+        "lists",
+        "maybe",
+        "newtype",
+        "nullable",
+        "numbers",
+        "ordered-collections",
+        "prelude",
+        "refs",
+        "strings",
+        "transformers",
+        "tree-rose",
+        "tuples",
+        "typelevel-prelude",
+        "unsafe-coerce",
+        "web-dom",
+        "web-events",
+        "web-html",
+        "web-pointerevents",
+        "web-uievents"
       ]
     },
     "hylograph-transitions": {

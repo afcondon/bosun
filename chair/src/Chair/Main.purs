@@ -43,6 +43,13 @@ import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.VDom.Driver (runUI)
+import Data.Traversable (traverse)
+import Hylograph.Interaction.Zoom (ZoomHandle, attachNativeZoom)
+import Web.DOM (Element)
+import Web.DOM.ParentNode (QuerySelector(..), querySelector)
+import Web.HTML (window)
+import Web.HTML.HTMLDocument (toParentNode)
+import Web.HTML.Window (document)
 
 serveBase :: String
 serveBase = "http://localhost:3997"
@@ -94,6 +101,7 @@ type State =
   , anim :: Maybe (Array AnimNode)
   , animGen :: Int
   , channels :: Set Channel  -- which display channels are composited into the view
+  , zoom :: Maybe ZoomHandle -- the pan/zoom handle for the main SVG (Hylograph.Interaction.Zoom)
   }
 
 -- one node's position transition (interpolating a 2D Point through the engine)
@@ -125,6 +133,7 @@ data Action
   | ToggleChannel Channel
   | ShowAllChannels
   | HideAllChannels
+  | ResetZoom
 
 main :: Effect Unit
 main = HA.runHalogenAff do
@@ -142,6 +151,7 @@ component =
         , graphFocus: Nothing, graphSelect: Nothing, groupMode: ByDeps
         , livePos: Map.empty, anim: Nothing, animGen: 0
         , channels: Set.fromFoldable allChannels   -- default: full composite (clutter is a fine resting state)
+        , zoom: Nothing
         }
     , render
     , eval: H.mkEval H.defaultEval { handleAction = handleAction, initialize = Just Initialize }
@@ -156,7 +166,12 @@ handleAction = case _ of
   Reload -> control "/control/reload"
   Spawn port -> control ("/control/spawn?port=" <> show port)
   Stop port -> control ("/control/stop?port=" <> show port)
-  Goto v -> H.modify_ _ { view = v }
+  Goto v -> do
+    H.modify_ _ { view = v }
+    when (v == Graph) (void (H.fork attachZoom))   -- (re)attach once the svg mounts
+  ResetZoom -> do
+    mh <- H.gets _.zoom
+    H.liftEffect (maybe (pure unit) _.resetZoom mh)
   SetCompose s -> H.modify_ _ { composePath = s }
   SetRegistry s -> H.modify_ _ { registryPath = s }
   LoadCorpus -> H.modify_ _
@@ -320,6 +335,42 @@ runAnalyze = do
       Right a -> st { anaLoading = false, analysis = Just a, anaErr = Nothing
                     , livePos = layoutPositions st.groupMode a, anim = Nothing
                     , graphSelect = Nothing }   -- a stale selection wouldn't exist in the new graph
+  v <- H.gets _.view
+  when (v == Graph) (void (H.fork attachZoom))   -- the svg (re)mounts with the new graph
+
+-- ── pan / zoom (Hylograph.Interaction.Zoom over the main SVG) ─────────────────
+
+zoomMin :: Number
+zoomMin = 0.15
+
+zoomMax :: Number
+zoomMax = 6.0
+
+-- the graph SVG (a single instance, tagged `.graph-svg`); querying by class
+-- avoids a Halogen ref (an <svg> is an SVGElement, not an HTMLElement).
+findGraphSvg :: Effect (Maybe Element)
+findGraphSvg = do
+  doc <- document =<< window
+  querySelector (QuerySelector "svg.graph-svg") (toParentNode doc)
+
+-- (re)attach drag-pan / wheel-zoom to the main SVG's `.zoom-group`. Forked by the
+-- caller so the yield (the 16ms delay) lands AFTER Halogen has mounted the svg.
+-- Idempotent: destroys any prior handle first (the svg is a fresh element when we
+-- re-enter the Graph view; persists across pivots/channel toggles, where we don't
+-- re-attach). A fresh handle starts at identity, so loading a fixture also resets.
+attachZoom :: forall o. H.HalogenM State Action () o Aff Unit
+attachZoom = do
+  H.liftAff (delay (Milliseconds 16.0))
+  old <- H.gets _.zoom
+  H.liftEffect (maybe (pure unit) _.destroy old)
+  mEl <- H.liftEffect findGraphSvg
+  h <- H.liftEffect (traverse mkZoom mEl)
+  H.modify_ _ { zoom = h }
+  where
+  mkZoom el = attachNativeZoom el
+    { scaleMin: zoomMin, scaleMax: zoomMax, targetSelector: ".zoom-group"
+    , initialTransform: Nothing, translateExtent: Nothing, onZoom: Nothing
+    }
 
 -- ── render ───────────────────────────────────────────────────────────────────
 
@@ -404,6 +455,7 @@ graphNav s =
     , HH.span [ cls "muted" ] [ HH.text "marks" ]
     , HH.button [ cls "btn xs", HE.onClick \_ -> ShowAllChannels ] [ HH.text "all" ]
     , HH.button [ cls "btn xs", HE.onClick \_ -> HideAllChannels ] [ HH.text "none" ]
+    , HH.button [ cls "btn xs", HE.onClick \_ -> ResetZoom ] [ HH.text "⤢ reset" ]
     , if s.anaLoading then HH.span [ cls "muted" ] [ HH.text "…" ] else HH.text ""
     ]
   where

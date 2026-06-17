@@ -18,9 +18,11 @@ package:
     - halogen-svg-elems
     - hylograph-graph
     - hylograph-layout
+    - hylograph-selection
     - hylograph-transitions
     - ordered-collections
     - tuples
+    - web-dom
     - web-html
     - affjax
     - affjax-web

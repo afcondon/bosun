@@ -594,13 +594,17 @@ graphView hoverAct selectAct toggleChan mode channels livePos focus select live 
                       <> (if hasLive then " · ◉ live: " <> show liveUpN <> " up · " <> show (Array.length downIds) <> " down" else "")) ]
               ]
           , SE.svg
-              [ SA.viewBox 0.0 0.0 maxX maxY, SA.width maxX, SA.height maxY
+              [ SA.viewBox 0.0 0.0 maxX maxY
               , SA.class_ (H.ClassName "graph-svg")
               ]
-              ( bgLayer <> trafficLayer <> edgeLayer <>
-              [ SE.g [ SA.class_ (H.ClassName "nodes") ]
-                  (map (\n -> nodeMark hoverAct selectAct channels (nodeFlags n) n) renderNodes)
-              ] )
+              -- everything sits inside one `.zoom-group`; Hylograph.Interaction.Zoom
+              -- (attached in Main) drives drag-pan / wheel-zoom by transforming it.
+              [ SE.g [ SA.class_ (H.ClassName "zoom-group") ]
+                  ( bgLayer <> trafficLayer <> edgeLayer <>
+                  [ SE.g [ SA.class_ (H.ClassName "nodes") ]
+                      (map (\n -> nodeMark hoverAct selectAct channels (nodeFlags n) n) renderNodes)
+                  ] )
+              ]
           ]
     , rack: channelRack toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeSetAll live
     }

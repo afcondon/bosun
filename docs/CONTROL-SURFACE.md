@@ -53,6 +53,27 @@ Work is split across two Claude sessions; they meet at the serve HTTP contract.
 4. Graph becomes the primary live surface; the Cockpit table stays as a
    secondary view.
 
+## Control APIs — what exists vs autonomous behaviour (2026-06-17)
+
+Updated decision (Andrew): control affordances live **on the main-map nodes**, not
+the minimap — you want full identity (name/role/host) at the point of action so you
+can't kill the wrong thing. Safety = an **armed control channel** (toggle it on in
+the rack → nodes turn into split fill-buttons; off → inert), which subsumes the
+earlier "modal mode + timeout".
+
+- **EXISTS now (real, per-process):** start = `POST /control/spawn?port`, stop =
+  `/control/stop?port`, reboot = stop+spawn, reload = `/control/reload`. Enough for
+  the armed control-minimap: stopped node → whole-rect green = launch; running node
+  → split red/blue = stop | reboot; all manual, all real (red↔green transitions come
+  through the existing 1.5s /state poll).
+- **NOT YET — autonomous behaviour:** a stopped-but-`Always` process auto-returning;
+  crash-coupling so `binds-to`/`part-of` reboot together; failover. `bosun serve` is
+  a lazy-spawn proxy — it does NOT enact the IR's `restart{base,backoff}` or the
+  requirement-gradient coupling. The IR already MODELS both; enactment is missing.
+  Get it via either (a) a "supervisor mode" in serve honouring restart policy +
+  `binds-to`/`part-of` co-restart (engine session), or (b) the BEAM observer where
+  restart + `one_for_all = part-of` are native (`BEAM-OBSERVER.md`, Phase 2).
+
 ## Integration
 
 Light coupling — both sides can move in parallel against the contract above.
