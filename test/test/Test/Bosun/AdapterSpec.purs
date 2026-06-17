@@ -7,16 +7,19 @@ import Prelude
 import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.Adapters.Registry (ingestRegistry)
 import Bosun.Adapters.StartCommand (parseStartCommand)
-import Bosun.Atoms (unAbsPath)
+import Bosun.Adapters.Targets (ingestTargets)
+import Bosun.Atoms (mkHost, unAbsPath)
 import Bosun.Executor (Executor(..), ExecutorMechanism(..), mechanism)
 import Bosun.Health (Probe(..))
 import Bosun.Reachability (classify)
 import Bosun.Reconcile (exposureLabel)
 import Bosun.Selector (Selector(..))
+import Bosun.Target (ExecLoc(..), resolveTarget, unSshDest)
 import Data.Argonaut.Parser (jsonParser)
 import Data.Array (find, length)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
+import Data.Tuple (Tuple(..))
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (fail, shouldEqual)
 
@@ -103,3 +106,42 @@ spec = describe "Bosun.Adapters" do
             Just s -> do
               s.selectors `shouldEqual` [ Profile "tidal", Profile "full" ]
               exposureLabel (classify s.reachability) `shouldEqual` "none"
+
+  describe "ingestTargets" do
+    let
+      fixture =
+        """{
+          "macmini": {"ssh":"andrew@andrews-mac-mini","address":"andrews-mac-mini","workdir":"/Users/andrew/psd3/polyglot-deploy","env":{"PATH":"/usr/local/bin:$PATH"}},
+          "buildbox": {"workdir":"/srv"}
+        }"""
+
+    it "decodes an ssh host into a RemoteSsh target with workdir + env prefix" do
+      case jsonParser fixture of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> do
+          let t = resolveTarget (ingestTargets j) (Just (mkHost "macmini"))
+          case t.exec of
+            RemoteSsh d -> unSshDest d `shouldEqual` "andrew@andrews-mac-mini"
+            LocalExec -> fail "expected RemoteSsh"
+          t.address `shouldEqual` "andrews-mac-mini"
+          map unAbsPath t.workdir `shouldEqual` Just "/Users/andrew/psd3/polyglot-deploy"
+          t.envPrefix `shouldEqual` [ Tuple "PATH" "/usr/local/bin:$PATH" ]
+
+    it "a host with no ssh key is LocalExec; address defaults to the host name" do
+      case jsonParser fixture of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> do
+          let t = resolveTarget (ingestTargets j) (Just (mkHost "buildbox"))
+          case t.exec of
+            LocalExec -> pure unit
+            RemoteSsh _ -> fail "expected LocalExec (no ssh key)"
+          t.address `shouldEqual` "buildbox"
+
+    it "an unmapped host resolves to the safe local default (never an accidental ssh)" do
+      case jsonParser fixture of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> do
+          let t = resolveTarget (ingestTargets j) (Just (mkHost "unknown-host"))
+          case t.exec of
+            LocalExec -> pure unit
+            RemoteSsh _ -> fail "expected LocalExec for an unmapped host"

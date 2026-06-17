@@ -22,8 +22,9 @@ import Prelude
 
 import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.Adapters.Registry (ingestRegistry)
+import Bosun.Adapters.Targets (ingestTargets)
 import Bosun.Apply (Command(..), StagedCommand, applyScript)
-import Bosun.Target (defaultTargets)
+import Bosun.Target (TargetMap, defaultTargets)
 import Bosun.Atoms (AbsPath, Port, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkServiceId, unServiceId)
 import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (argv, readJsonFile, readYamlFile)
@@ -57,7 +58,13 @@ import Partial.Unsafe (unsafePartial)
 
 main :: Effect Unit
 main = do
-  args <- argv
+  rawArgs <- argv
+  -- `--targets <file>` is a global option (it can appear anywhere): pull it out
+  -- so the positional `apply`/`plan` forms below match unchanged, then layer the
+  -- file over the built-in defaults. Only `apply` actually consumes the map (it
+  -- is the sole command that renders host-bound commands).
+  let { targetsPath, rest: args } = extractTargets rawArgs
+  targets <- loadTargets targetsPath
   case args of
     [ "check", composePath, registryPath ] -> runCheck composePath registryPath
     [ "plan", composePath, registryPath ] -> runPlan composePath registryPath Nothing
@@ -69,11 +76,31 @@ main = do
     [ "serve", "--audit", registryPath ] -> runAudit (Just registryPath)
     [ "serve" ] -> runServeLive
     [ "serve", registryPath ] -> runServe registryPath
-    [ "apply", "--dry-run", composePath, registryPath ] -> runApplyDryRun composePath registryPath Nothing
-    [ "apply", "--dry-run", composePath, registryPath, snapshotPath ] -> runApplyDryRun composePath registryPath (Just snapshotPath)
-    [ "apply", composePath, registryPath ] -> runApply composePath registryPath Nothing
-    [ "apply", composePath, registryPath, snapshotPath ] -> runApply composePath registryPath (Just snapshotPath)
+    [ "apply", "--dry-run", composePath, registryPath ] -> runApplyDryRun targets composePath registryPath Nothing
+    [ "apply", "--dry-run", composePath, registryPath, snapshotPath ] -> runApplyDryRun targets composePath registryPath (Just snapshotPath)
+    [ "apply", composePath, registryPath ] -> runApply targets composePath registryPath Nothing
+    [ "apply", composePath, registryPath, snapshotPath ] -> runApply targets composePath registryPath (Just snapshotPath)
     _ -> runDemo
+
+-- | Pull an optional `--targets <path>` out of the argument vector wherever it
+-- | appears, returning the path and the remaining args.
+extractTargets :: Array String -> { targetsPath :: Maybe String, rest :: Array String }
+extractTargets args = case A.findIndex (_ == "--targets") args of
+  Just i
+    | Just p <- A.index args (i + 1) ->
+        { targetsPath: Just p
+        , rest: fromMaybe args (A.deleteAt i args >>= A.deleteAt i)
+        }
+  _ -> { targetsPath: Nothing, rest: args }
+
+-- | The built-in `defaultTargets`, with a `targets.json` layered on top (file
+-- | entries win per host — `Map.union` is left-biased).
+loadTargets :: Maybe String -> Effect TargetMap
+loadTargets = case _ of
+  Nothing -> pure defaultTargets
+  Just path -> do
+    j <- readJsonFile path
+    pure (Map.union (ingestTargets j) defaultTargets)
 
 -- ── bosun check <compose> <registry> ────────────────────────────────────────
 
@@ -125,8 +152,8 @@ runPlan composePath registryPath snapshotPath = do
 -- | steps as `# MANUAL:` comments). No mutation. Like `plan`, it refuses a
 -- | deployment that does not validate. Live execution (os-exec) is a deliberate
 -- | next step, to be run with the user present.
-runApplyDryRun :: String -> String -> Maybe String -> Effect Unit
-runApplyDryRun composePath registryPath snapshotPath = do
+runApplyDryRun :: TargetMap -> String -> String -> Maybe String -> Effect Unit
+runApplyDryRun targets composePath registryPath snapshotPath = do
   composeJson <- readYamlFile composePath
   registryJson <- readJsonFile registryPath
   observed <- maybe (pure Map.empty) (map decodeSnapshot <<< readJsonFile) snapshotPath
@@ -141,7 +168,7 @@ runApplyDryRun composePath registryPath snapshotPath = do
       log ""
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
     Right vd ->
-      log (renderScript (applyScript defaultTargets vd (plan vd { desired: vd, recorded: Nothing, observed })))
+      log (renderScript (applyScript targets vd (plan vd { desired: vd, recorded: Nothing, observed })))
 
 -- ── bosun apply <compose> <registry> [snapshot.json] ────────────────────────
 -- |
@@ -150,8 +177,8 @@ runApplyDryRun composePath registryPath snapshotPath = do
 -- | sequentially (concurrency is a later, Go-owned tier); a failed command
 -- | aborts the run before its dependents start. `# MANUAL:` steps are reported
 -- | and skipped. Refuses a deployment that does not validate.
-runApply :: String -> String -> Maybe String -> Effect Unit
-runApply composePath registryPath snapshotPath = do
+runApply :: TargetMap -> String -> String -> Maybe String -> Effect Unit
+runApply targets composePath registryPath snapshotPath = do
   composeJson <- readYamlFile composePath
   registryJson <- readJsonFile registryPath
   observed <- maybe (pure Map.empty) (map decodeSnapshot <<< readJsonFile) snapshotPath
@@ -167,7 +194,7 @@ runApply composePath registryPath snapshotPath = do
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
     Right vd -> do
       let
-        script = applyScript defaultTargets vd (plan vd { desired: vd, recorded: Nothing, observed })
+        script = applyScript targets vd (plan vd { desired: vd, recorded: Nothing, observed })
         stages = A.groupBy (\a b -> a.stage == b.stage) script
       if A.null stages then log "apply: nothing to do — the rig already matches desired state."
       else runStages 1 (map NEA.toArray stages)

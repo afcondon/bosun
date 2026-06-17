@@ -1,0 +1,8 @@
+{
+  "macmini": {
+    "ssh": "andrew@andrews-mac-mini",
+    "address": "andrews-mac-mini",
+    "workdir": "/Users/andrew/psd3/polyglot-deploy",
+    "env": { "PATH": "/usr/local/bin:/opt/homebrew/bin:$PATH" }
+  }
+}
