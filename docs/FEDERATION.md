@@ -324,11 +324,15 @@ don't have, don't foreclose it" guarantee, made structural.
   against the PBT harness, since "measured not asserted" is how this codebase
   earns its claims.
 
-## 10. Open questions
+## 10. Questions
 
-- Control plane vs. pure peer mesh vs. git-only: how much central machinery, if
-  any? (Leaning git-as-truth + agents + a *read-only* aggregating view = the
-  Chair.)
+**Resolved (AC + engine, 2026-06-17): the topology.** Source of truth is **signed
+git**; an **agent on every host**; the **Chair is a read-only aggregating view**,
+not a control plane. No central mutable store. This is the §3.5 / §4 picture,
+now a decision rather than a lean.
+
+Still open:
+
 - Identity & signing: Tailscale ACLs + git commit signing for the homelab; what's
   the larger-scale story (an org CA, SPIFFE-like IDs)?
 - Conflict semantics across hosts at scale: when do divergent observed states get
@@ -337,3 +341,51 @@ don't have, don't foreclose it" guarantee, made structural.
 - Does `Hedged`/`Tied` need real concurrency (Go/BEAM) or can a sync, deadline-
   driven approximation live in the no-Aff core? (Probably the former — and it's a
   good reason the *agent* is the Go/BEAM binary, not node.)
+
+## 11. Essential vs. accidental complexity — what we'll still hit
+
+The algebra (§3) is aimed squarely at k8s's *accidental* complexity: YAML
+templating, the non-composing tool sprawl (Helm + Kustomize + Terraform +
+operators), stringly-typed labels, per-resource controller duplication, a central
+mutable store. Those we expect to *delete*. But some of k8s's complexity is
+**essential — the problem domain's tax, not the tool's** — and intellectual
+honesty (and "no hidden tech debt") means naming it now, so that when we hit it we
+recognise it as the domain charging us, not as our design failing, and we pay it
+with the same typed taste rather than reaching for k8s's accidental machinery.
+
+The ones we should expect to meet:
+
+1. **The consensus boundary — the sharp one.** A join-semilattice / CvRDT (§3.1)
+   gives eventually-consistent *state aggregation*. It does **not** give
+   *coordination*: "exactly one primary," leader election, a single-writer lock —
+   these are CAP-limited consensus problems a CvRDT *cannot* solve under partition.
+   So `Alternative` failover (§3.2) is clean for *picking the first healthy
+   member*, but "ensure exactly **one** member is *the* primary" is a different,
+   harder problem. We sidestep it for **desired** state by making **git the sole
+   writer** (one totally-ordered writer ⇒ no split-brain on intent). But *runtime*
+   coordination still needs a real primitive — a lease, or a consensus library, or
+   — elegantly — the **BEAM's built-in `global` / leader-election** (one more
+   reason the Erlang column is special, §6). The claim "the merge is the consensus"
+   holds for aggregation and **must not be overextended to coordination.**
+2. **Scheduling / bin-packing.** Auto-placing services across hosts under resource
+   constraints is genuinely NP-hard; k8s's scheduler is complex because the problem
+   is. Today our facets assign `Host` *explicitly* (hand-placed) — fine and honest
+   at homelab scale, but the moment placement becomes automatic we inherit exactly
+   this. The handle is to keep it a separable, typed optimisation over the model,
+   not smeared through reconciliation.
+3. **Resources, QoS, eviction.** Limits, noisy-neighbour, OOM/eviction — unmodelled
+   today; essential at density. A `Resources` facet is a clean addition when needed.
+4. **Rollout availability budgets.** "How many replicas may be down at once"
+   (k8s PodDisruptionBudget) is a real constraint the `Alternative` cluster needs
+   layered on — failover picks a healthy member; the *budget* governs how
+   aggressively a rollout may remove members.
+5. **Version skew.** You cannot upgrade N agents atomically; control-plane↔agent
+   and agent↔agent version skew is essential at scale. The additive-only `/state`
+   contract (D-S1) is the right instinct's seed; the general answer is schema
+   evolution we design for, not against.
+
+The discipline: **the algebra earns the right to be simple by deleting accidental
+complexity, not by pretending the essential complexity isn't there.** Where we
+meet (1)–(5), we solve the *essential* problem — with types, with the smallest
+honest primitive (a BEAM lease beats a bespoke Raft) — and we stay suspicious of
+any solution that looks like it grew the baroqueness back.
