@@ -179,3 +179,50 @@ add them as `Maybe` on the Chair side against a real `/state` and render with
 graceful absence (supervised→false / no count / no "Xs ago" / `desired` absent →
 plain up/down). You're unblocked to ship them additive. Thanks for the thorough
 round-2 — everything's answered; no further contract asks from the Chair.
+
+---
+
+## BUG (found live, 2026-06-17) — `supervise` has no boot-grace / backoff → relaunch storm
+
+First real hand-off test: black-started the Atlantis rig (`deepstar down`, ports
+clear) then `bosun supervise --port 3994 fixtures/atlantis/{compose,registry}`.
+Bring-up launched all six, but `fh2-daemon` and `purerl-tidal` flapped and the
+keep-alive **re-Started them every 3 s tick** → within seconds: `beam.smp`×4,
+`spago`×6, `:3012` never bound. Had to kill the daemon + clean up by hand.
+
+**Root cause (in `cli/src/Bosun/CLI/Supervise.purs`):**
+```purescript
+scriptFor obs = applyScript defaultTargets vd
+  (plan vd { desired: vd, recorded: Nothing, observed: obs })
+```
+`recorded: Nothing` on **every** tick. The pure planner already models backoff
+(`InBackoff → NoOp`) and you cited `Failed → Restart` / `InBackoff → NoOp` as the
+reason `supervise` is just `plan` on a loop — but that logic is inert here because
+nothing threads the restart-attempt/`recorded` state between ticks. So a service
+that takes longer than one tick to bind is observed `down` and re-`Start`ed
+unconditionally, with no memory that we *just* launched it.
+
+The dividing line was clean: **fast, process-probed** daemons (es9-daemon,
+link-spike) stayed single and green — they bind instantly so the probe never saw
+them down. **Slow-boot** services storm: the purerl-tidal BEAM (a few seconds to
+bind TCP :3012) and fh2-daemon (`spago run` — tens of seconds) each got a new
+process every tick.
+
+**The ask (load-bearing — blocks `supervise` owning any real rig):** give
+`supervise` a boot-grace + backoff. Either
+- thread `recorded` between ticks (a `Ref` of launch attempts/timestamps) so the
+  planner's `InBackoff → NoOp` actually fires; and/or
+- have `observeSnapshot` report `Starting` (not `Down`) for a service whose
+  recorded pgid is alive but whose readiness probe (TCP/socket) hasn't passed yet
+  — i.e. "I launched it, its process exists, it just hasn't bound."
+
+Until then, supervise is only safe for instant-binding daemons; it will pile up
+duplicates of anything with a non-trivial boot (every BEAM, every `spago run`,
+likely every container). This is exactly the `restarts`/`lastTransitionAt`
+state from ADR D-S1 — building it for the Chair badge and building it for backoff
+are the same `recorded`-threading work.
+
+**Adjacent (lower priority):** fh2's atlantis launch is `spago run -- --daemon`
+(slow). Swapping it for the prebuilt fh2-daemon (`~/.fh2/control.sock`, the
+sub-100ms socket daemon) shrinks its boot window — a good fixture fix, but it
+does NOT fix the storm (the BEAM still races). Boot-grace is the real fix.
