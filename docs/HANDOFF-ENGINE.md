@@ -380,3 +380,65 @@ IR to build-tool conventions — don't).
 serving). For any daemon with a readiness signal — fh2's socket, the BEAM's port —
 probing readiness and using pgid-liveness only to distinguish `Starting` from
 `Down` is the more honest reading. fh2 is just where the gap first shows.
+
+---
+
+## RESOLUTION (engine session, 2026-06-17 pm) — both launch bugs fixed
+
+Thanks for the live hand-off run — the storm fix holding in production is the
+headline. Both launch bugs are fixed, pushed, and tested (114 green;
+go-conformance byte-identical, 35 Go files).
+
+### Bug 1 — typed `env` on `x-bosun.process` (DONE, the real fix)
+The `Process` executor already had an `env :: Array (Tuple EnvVar String)` field —
+it was just hardcoded `[]` in the compose adapter and ignored by `applyScript`.
+Wired it through:
+- **Adapter:** `x-bosun.process.env: { K: v }` now parses into that field
+  (`Bosun.Adapters.Compose.envOf`).
+- **Apply:** `processLaunch`/`processRestart` render it as a leading `KEY=VAL `
+  assignment, which `daemonize`'s `nohup env <cmd>` applies — the same mechanism
+  the `ATLAS_PORT=3210 julia …` startCommand already used.
+- **Fixture:** purerl-tidal converted from your inline `env ERL_LIBS=… erl …`
+  hack to typed data:
+  ```yaml
+  process:
+    command: erl -pa ebin -noshell -eval 'F = main@ps:main(), F()'
+    env:
+      ERL_LIBS: _build/default/lib
+  ```
+  Renders identically to your hack, but it's now inspectable/round-trippable, not
+  a string. (Values are unquoted — fine for paths/ports; a value with spaces
+  would need quoting and would also trip the known ssh single-quote papercut on
+  remote Process commands.) Your instinct was exactly right: irreducible launch
+  knowledge wants a typed home; we did NOT derive it (no "purerl ⇒ ERL_LIBS"
+  coupling).
+
+### Bug 2 — fh2 entrypoint (DONE) — and a hardware finding
+You nailed the cause: `node output/Main/index.js` imports the PS module but never
+calls `main()`. The fix is a toolchain-free runner — `fh2-config/run-daemon.mjs`
+(`import { main } from "./output/Main/index.js"; main();`), the analog of bosun's
+own `cli/run.js`. The fixture now launches `node run-daemon.mjs --daemon`.
+
+**Proven:** `node run-daemon.mjs --daemon-status` now actually runs `main()`
+(prints the status), and `--daemon` *starts* daemon mode. **Finding:** with the
+FH-2 NOT physically connected, it logs `✗ FH-2 MIDI port not found` and exits —
+so it won't bind `~/.fh2/control.sock` until the device is present. That's correct
+(the daemon shouldn't run without its hardware), and it's now HONEST: under
+supervise it fails→backs off with a logged reason, instead of the old silent
+no-op + empty log + perpetual `in-backoff`. **So when you re-run Atlantis: fh2
+will only go green with the FH-2 plugged in.** Build `fh2-config` once
+(`spago build`) so `output/Main/index.js` exists.
+
+### Heads-up — your supervise daemon is still running the OLD binary
+A `bosun supervise --port 3994` from your session is still live (it predates these
+fixes, so it has the old broken fh2 command + no typed env). Restart it against
+the rebuilt binary + updated `fixtures/atlantis` to pick up both fixes:
+`bosun supervise --port 3994 fixtures/atlantis/{compose.yml,registry.json}`.
+
+### The `env` design ask, and the liveness≠readiness note
+- `env` on Process: shipped as you asked — typed, not derived.
+- liveness≠readiness: still the honest end-state for a daemon with a real
+  readiness signal, and still the offered engine change (probe the socket for
+  readiness; use pgid-liveness only to split `Starting` from `Down`). Left as the
+  no-rush follow-up you flagged — fh2's prebuilt fast bind keeps the early-green
+  window small in the meantime.

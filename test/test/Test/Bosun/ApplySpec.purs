@@ -9,7 +9,7 @@ module Test.Bosun.ApplySpec where
 import Prelude
 
 import Bosun.Apply (applyScript, downScript)
-import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkDomain, mkHost, mkPort, mkServiceId)
+import Bosun.Atoms (AbsPath, EnvVar, Port, mkAbsPath, mkDomain, mkEnvVar, mkHost, mkPort, mkServiceId)
 import Bosun.Reachability (Address(..), BindScope(..), Reachability(..))
 import Bosun.Target (defaultTargets)
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
@@ -35,6 +35,10 @@ absPath s = unsafePartial (fromJust (mkAbsPath s))
 procLeaf :: String -> String -> String -> LooseService
 procLeaf name cwd cmd =
   (leaf name) { launch = { executor: Process { cwd: absPath cwd, command: cmd, env: [] }, localName: name } }
+
+procLeafEnv :: String -> String -> String -> Array (Tuple EnvVar String) -> LooseService
+procLeafEnv name cwd cmd env =
+  (leaf name) { launch = { executor: Process { cwd: absPath cwd, command: cmd, env }, localName: name } }
 
 containerLeaf :: String -> String -> LooseService
 containerLeaf name host =
@@ -88,6 +92,14 @@ spec = describe "Bosun.Apply" do
   it "Process Start with an env-var prefix is launched via `env` (not eaten by nohup)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "ATLAS_PORT=3210 run-a" ]) (snap []) \lines ->
       lines `shouldEqual` [ "cd /srv/a && ( nohup env ATLAS_PORT=3210 run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+
+  -- The typed `x-bosun.process.env` (e.g. purerl-tidal's rebar3
+  -- `ERL_LIBS=_build/default/lib`) renders as a leading `KEY=VAL ` assignment
+  -- that the `nohup env <cmd>` wrapper applies — typed data, same effect as the
+  -- inline-prefix path above, but inspectable instead of buried in the command.
+  it "Process Start with a typed env renders leading KEY=VAL assignments" $
+    withScript (mkDeployment [ procLeafEnv "a" "/srv/a" "erl -pa ebin" [ Tuple (mkEnvVar "ERL_LIBS") "_build/default/lib" ] ]) (snap []) \lines ->
+      lines `shouldEqual` [ "cd /srv/a && ( nohup env ERL_LIBS=_build/default/lib erl -pa ebin >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
 
   it "a Process command that already backgrounds itself is left as-is (no group captured)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a &" ]) (snap []) \lines ->

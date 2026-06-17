@@ -17,7 +17,7 @@ module Bosun.Adapters.Compose (ingestCompose) where
 
 import Prelude
 
-import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkDomain, mkHost, mkPort, mkRoutePath, mkServiceId)
+import Bosun.Atoms (AbsPath, EnvVar, Port, mkAbsPath, mkDomain, mkEnvVar, mkHost, mkPort, mkRoutePath, mkServiceId)
 import Bosun.Edge (DepOrdering(..), Gate(..), Requirement(..))
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Reachability (Address(..), BindScope(..), Reachability(..), hostPort, noNetwork)
@@ -34,7 +34,7 @@ import Data.Maybe (Maybe(..), fromMaybe, isJust, maybe)
 import Data.Set as Set
 import Data.String (Pattern(..))
 import Data.String as String
-import Data.Tuple (uncurry)
+import Data.Tuple (Tuple(..), uncurry)
 import Foreign.Object (Object)
 import Foreign.Object as FO
 
@@ -85,17 +85,30 @@ executorOf name o = case xbosunProcess o of
         })
       Nothing -> Unmanaged name
 
--- | `x-bosun.process: { cwd: <abs>, command: <str> }` → a `Process` executor.
--- | Requires an ABSOLUTE cwd (the SDI footgun, enforced by `mkAbsPath`); a
--- | missing/relative cwd or absent command ⇒ `Nothing` (falls back to the
--- | container/unmanaged path).
+-- | `x-bosun.process: { cwd: <abs>, command: <str>, env?: { K: v } }` → a
+-- | `Process` executor. Requires an ABSOLUTE cwd (the SDI footgun, enforced by
+-- | `mkAbsPath`); a missing/relative cwd or absent command ⇒ `Nothing` (falls
+-- | back to the container/unmanaged path). `env` is optional, typed launch
+-- | environment (e.g. rebar3's `ERL_LIBS=_build/default/lib` for a BEAM service)
+-- | — irreducible launch knowledge that wants a typed home, not to be buried in
+-- | the command string. Mirrors compose's native `environment:` / launchd's
+-- | `EnvironmentVariables`.
 xbosunProcess :: Object Json -> Maybe Executor
 xbosunProcess o = do
   xb <- FO.lookup "x-bosun" o >>= toObject
   pr <- FO.lookup "process" xb >>= toObject
   cwd <- str pr "cwd" >>= mkAbsPath
   command <- str pr "command"
-  pure (Process { cwd, command, env: [] })
+  pure (Process { cwd, command, env: envOf pr })
+
+-- `x-bosun.process.env { KEY: "val", … }` → typed launch env. Non-string values
+-- are skipped (launch env is strings); absent ⇒ `[]`.
+envOf :: Object Json -> Array (Tuple EnvVar String)
+envOf pr = case FO.lookup "env" pr >>= toObject of
+  Nothing -> []
+  Just eo -> A.mapMaybe pair (FO.toUnfoldable eo :: Array (Tuple String Json))
+  where
+  pair (Tuple k vj) = (\v -> Tuple (mkEnvVar k) v) <$> toString vj
 
 -- first "host:container" entry -> the published host port
 publishPort :: Object Json -> Maybe Port

@@ -27,7 +27,7 @@ module Bosun.Apply
 
 import Prelude
 
-import Bosun.Atoms (Port, ServiceId, unAbsPath, unPort, unServiceId)
+import Bosun.Atoms (EnvVar, Port, ServiceId, unAbsPath, unEnvVar, unPort, unServiceId)
 import Bosun.Executor (Executor(..))
 import Bosun.Plan (Change(..), Plan, changeRef, planSteps)
 import Bosun.Reachability (Address(..), addresses)
@@ -119,7 +119,7 @@ commandFor tmap change svc = map (wrap target) (raw change)
   -- `apply` blocks forever on the first foreground server (flask, julia, a dev
   -- server). `daemonize` backgrounds + log-redirects the command unless it
   -- already backgrounds itself (so a fixture that bakes in `… &` is untouched).
-  processLaunch pr = Shell { cwd: Just (unAbsPath pr.cwd), line: daemonize svc.id pr.command }
+  processLaunch pr = Shell { cwd: Just (unAbsPath pr.cwd), line: daemonize svc.id (envAssign pr.env <> pr.command) }
 
   -- Stop a Process by killing the PID `daemonize` recorded for it — Bosun's own
   -- record of what it launched, NOT "whatever holds the port". A missing PID
@@ -130,7 +130,7 @@ commandFor tmap change svc = map (wrap target) (raw change)
   -- Restart = stop the recorded PID, then relaunch (recording the new PID).
   processRestart pr = Shell
     { cwd: Just (unAbsPath pr.cwd)
-    , line: pidKill svc.id <> "; sleep 0.3; " <> daemonize svc.id pr.command
+    , line: pidKill svc.id <> "; sleep 0.3; " <> daemonize svc.id (envAssign pr.env <> pr.command)
     }
 
   raw :: Change -> Maybe Command
@@ -227,6 +227,15 @@ daemonize sid cmd
       -- the wrap the line ends in the pidfile redirect, runs synchronously in the
       -- caller's group, and the group-kill would reap the caller — the footgun.)
       "( nohup env " <> cmd <> " >" <> logPath sid <> " 2>&1 & " <> recordPgid sid <> " ) &"
+
+-- A Process's typed launch `env` rendered as leading `KEY=VAL ` assignments,
+-- which `daemonize`'s `nohup env <cmd>` then applies (same shell mechanism the
+-- `ATLAS_PORT=3210 julia …` startCommand already relies on). Empty ⇒ "" (a
+-- transparent passthrough). Values are unquoted, matching that precedent — these
+-- are paths/ports/identifiers; a value with spaces would need quoting (and would
+-- also trip the known ssh single-quote papercut for remote Process commands).
+envAssign :: Array (Tuple EnvVar String) -> String
+envAssign = foldMap \(Tuple k v) -> unEnvVar k <> "=" <> v <> " "
 
 logPath :: ServiceId -> String
 logPath sid = "/tmp/bosun-apply-" <> sanitizeId sid <> ".log"

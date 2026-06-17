@@ -8,7 +8,7 @@ import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.Adapters.Registry (ingestRegistry)
 import Bosun.Adapters.StartCommand (parseStartCommand)
 import Bosun.Adapters.Targets (ingestTargets)
-import Bosun.Atoms (mkHost, unAbsPath)
+import Bosun.Atoms (mkEnvVar, mkHost, unAbsPath)
 import Bosun.Executor (Executor(..), ExecutorMechanism(..), mechanism)
 import Bosun.Health (Probe(..))
 import Bosun.Reachability (classify)
@@ -126,6 +126,18 @@ spec = describe "Bosun.Adapters" do
           case find (\s -> s.localName == "purerl-tidal") svcs of
             Nothing -> fail "purerl-tidal not ingested"
             Just s -> map _.to s.rawDeps `shouldEqual` [ "es9-daemon" ]
+
+    it "x-bosun.process.env { K: v } parses into the Process executor's typed env" do
+      let pf = """{"services":{
+        "tidal":{"x-bosun":{"host":"mbp","process":{"cwd":"/abs/tidal","command":"erl -pa ebin","env":{"ERL_LIBS":"_build/default/lib"}}}}
+      }}"""
+      case jsonParser pf of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> case find (\s -> s.localName == "tidal") (ingestCompose j) of
+          Nothing -> fail "tidal not ingested"
+          Just s -> case s.executor of
+            Process p -> p.env `shouldEqual` [ Tuple (mkEnvVar "ERL_LIBS") "_build/default/lib" ]
+            _ -> fail "expected a Process executor"
 
     it "a relative or missing x-bosun.process cwd is NOT a Process (falls through to Unmanaged)" do
       let pf = """{"services":{"bad":{"x-bosun":{"process":{"cwd":"relative/dir","command":"./run"}}}}}"""

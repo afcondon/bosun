@@ -47,12 +47,15 @@ services:
       host: mbp
       process:
         cwd: /Users/afc/work/afc-work/music/live-coding/purerl-tidal
+        command: erl -pa ebin -noshell -eval 'F = main@ps:main(), F()'
         # ERL_LIBS puts the rebar3 deps (cowboy & co) on the BEAM code path —
-        # `erl -pa ebin` alone misses cowboy.app and the boot crashes. DeepStar
-        # supplied this as a per-service env entry; folded inline here since
-        # x-bosun.process has no env field (bosun's `nohup env <command>` wrapper
-        # runs `env ERL_LIBS=… erl …` correctly).
-        command: env ERL_LIBS=_build/default/lib erl -pa ebin -noshell -eval 'F = main@ps:main(), F()'
+        # `erl -pa ebin` alone misses cowboy.app and the boot crashes. Typed
+        # launch env (DeepStar carried it as a per-service [service.env]); bosun
+        # renders it as a leading `ERL_LIBS=… ` assignment that its `nohup env
+        # <command>` wrapper applies. Irreducible launch knowledge (rebar3's
+        # layout) — typed data, not buried in the command string.
+        env:
+          ERL_LIBS: _build/default/lib
       expose:
         - host: 3012
 
@@ -85,11 +88,12 @@ services:
       process:
         cwd: /Users/afc/work/afc-work/music/expert-sleepers/fh2-config
         # Launch the PREBUILT output, not `spago run` — no compile-at-launch, no
-        # PureScript toolchain as a runtime dep, sub-100ms bind (so the
-        # process-probe's early-green window collapses). `spago build` once;
-        # output/Main/index.js reads --daemon from argv exactly as `spago run --`
-        # did. (es9/link are prebuilt Rust binaries, purerl-tidal runs the
-        # compiled BEAM ebin — fh2 was the only build-at-launch outlier.)
-        command: node output/Main/index.js --daemon
+        # PureScript toolchain as a runtime dep. `spago build` once. The PS
+        # `output/Main/index.js` is a LIBRARY module (exports `main`, doesn't call
+        # it), so it needs a tiny runner that invokes it — fh2-config/run-daemon.mjs
+        # (the toolchain-free analog of bosun's cli/run.js). `--daemon` reaches
+        # main via argv. (es9/link are prebuilt Rust binaries, purerl-tidal runs
+        # the compiled BEAM ebin — fh2 was the only build-at-launch outlier.)
+        command: node run-daemon.mjs --daemon
       expose:
         - socket: /Users/afc/.fh2/control.sock
