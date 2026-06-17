@@ -14,3 +14,6 @@ node_modules/
 
 # Bosun's Chair bundle (build artifact: spago bundle -p bosun-chair)
 chair/app.js
+
+# printed/exported doc artifacts (generated from the .md sources)
+docs/*.pdf

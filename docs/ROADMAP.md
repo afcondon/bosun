@@ -46,6 +46,24 @@ The apply path *already ssh-wraps macmini commands.*
    real mini (`ssh andrew@andrews-mac-mini` + `docker compose up -d`), with
    Andrew present, dry-run first. This is the one genuinely new act — every
    prior live deploy was local (`fixtures/hello`).
+
+   *Survey done (2026-06-17, pre-compaction — the RESUME POINT):* the real
+   container stack is `polyglot-deploy/docker-compose.yml` (profiles
+   `core`/`minard`/`hypo`/…/`full`); the current non-Bosun deploy is
+   `polyglot-deploy/deploy-remote.sh user@host profile`, which **rsyncs build
+   artifacts to the mini, builds images there, then `docker compose --profile X
+   up -d`**. Bosun's macmini `apply` models the **compose-up step** (ssh-wrapped),
+   *not* the rsync+build prelude. Two framings: **(a)** Bosun orchestrates
+   compose-up only, images pre-staged via `deploy-remote.sh --build-only`
+   (smallest, **recommended first**); **(b)** Bosun models rsync+build as staged
+   commands too (more faithful, more to model). **Recommended start:** model the
+   `core` profile (edge + website) as a macmini *container* deployment, show a
+   `bosun apply --dry-run` of the ssh+`docker compose up -d` script (zero outward
+   effect), then live-fire with Andrew present. Note: `polyglot-deploy` still
+   wires the *old* hypo-punter `ee/ge-server` python — updating to the current
+   `purescript-python` exhibits is its own small co-design. Bonus: macmini
+   services are containers, so `bosun down` = `docker compose stop` already works
+   (apply↔down symmetry for this target, unlike the local-Process gap — task #8).
 3. **TailScale Funnel front.** Model the public endpoint as a `Published Domain`
    in the `Address` type (the ADDRESS-TYPE work added exactly this), and run the
    `tailscale funnel`/`serve` enablement as a staged command of `apply`.
