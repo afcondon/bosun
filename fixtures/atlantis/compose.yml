@@ -47,7 +47,12 @@ services:
       host: mbp
       process:
         cwd: /Users/afc/work/afc-work/music/live-coding/purerl-tidal
-        command: erl -pa ebin -noshell -eval 'F = main@ps:main(), F()'
+        # ERL_LIBS puts the rebar3 deps (cowboy & co) on the BEAM code path —
+        # `erl -pa ebin` alone misses cowboy.app and the boot crashes. DeepStar
+        # supplied this as a per-service env entry; folded inline here since
+        # x-bosun.process has no env field (bosun's `nohup env <command>` wrapper
+        # runs `env ERL_LIBS=… erl …` correctly).
+        command: env ERL_LIBS=_build/default/lib erl -pa ebin -noshell -eval 'F = main@ps:main(), F()'
       expose:
         - host: 3012
 
