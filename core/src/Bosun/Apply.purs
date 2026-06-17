@@ -25,17 +25,18 @@ module Bosun.Apply
 
 import Prelude
 
-import Bosun.Atoms (Host, ServiceId, unAbsPath, unHost, unServiceId)
+import Bosun.Atoms (ServiceId, unAbsPath, unServiceId)
 import Bosun.Executor (Executor(..))
 import Bosun.Plan (Change(..), Plan, changeRef, planSteps)
-import Bosun.Selector (Selector(..))
 import Bosun.Service (Service, ValidatedDeployment, unServiceRef, unValidatedDeployment)
+import Bosun.Target (ExecLoc(..), Target, TargetMap, resolveTarget, unSshDest)
 import Data.Array as A
 import Data.Foldable (foldMap)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), isJust)
 import Data.String (Pattern(..), Replacement(..))
 import Data.String as String
+import Data.Tuple (Tuple(..))
 
 -- | A launch action. `Shell` is a local command (optionally in a cwd); `Ssh`
 -- | runs an inner command on a remote login target; `Manual` is a documented
@@ -48,27 +49,44 @@ derive instance Eq Command
 
 type StagedCommand = { stage :: Int, service :: ServiceId, command :: Command }
 
--- | The ordered command script for a plan. `NoOp`s contribute nothing.
-applyScript :: ValidatedDeployment -> Plan -> Array StagedCommand
-applyScript vd p =
+-- | The ordered command script for a plan. `NoOp`s contribute nothing. The
+-- | `TargetMap` resolves each service's host to its enactment profile (ssh
+-- | login, remote workdir, env prefix) — so the same pure script renders
+-- | local for `mbp` and ssh-wrapped for `macmini`, with no host strings baked
+-- | into the planner.
+applyScript :: TargetMap -> ValidatedDeployment -> Plan -> Array StagedCommand
+applyScript tmap vd p =
   planSteps p # A.mapMaybe \step ->
     case Map.lookup (unServiceRef (changeRef step.change)) svcs of
       Nothing -> Nothing
-      Just svc -> case commandFor step.change svc of
+      Just svc -> case commandFor tmap step.change svc of
         Nothing -> Nothing
         Just command -> Just { stage: step.stage, service: svc.id, command }
   where
   svcs = (unValidatedDeployment vd).services
 
 -- | The command for one change on one service, `ssh`-wrapped for remote hosts.
--- | `Nothing` ⇒ a `NoOp` (no command needed).
-commandFor :: Change -> Service -> Maybe Command
-commandFor change svc = map (wrap svc.host) (raw change)
+-- | `Nothing` ⇒ a `NoOp` (no command needed). The service's host resolves to a
+-- | `Target` (`resolveTarget`); a `Container` op runs `docker compose` in that
+-- | target's `workdir` (so the remote shell finds the compose file) prefixed by
+-- | its `envPrefix` (so a non-interactive ssh shell finds `docker`), and `wrap`
+-- | ssh-wraps it when the target is remote.
+commandFor :: TargetMap -> Change -> Service -> Maybe Command
+commandFor tmap change svc = map (wrap target) (raw change)
   where
   name = svc.launch.localName
+  target = resolveTarget tmap svc.host
 
+  -- A named service is started/stopped explicitly, so no `--profile` flags are
+  -- needed (docker compose acts on a service named on the command line even when
+  -- its profile is inactive). Bosun has no profile-*selection* concept yet — it
+  -- enacts every service in the ingested deployment — so emitting the union of a
+  -- service's profile tags would be noise, not fidelity.
   docker :: String -> Command
-  docker verb = Shell { cwd: Nothing, line: "docker compose" <> profileFlags svc <> " " <> verb <> " " <> name }
+  docker verb = Shell
+    { cwd: map unAbsPath target.workdir
+    , line: envExports target.envPrefix <> "docker compose " <> verb <> " " <> name
+    }
 
   -- A Process is a long-running service, so a launch must be DETACHED — else
   -- `apply` blocks forever on the first foreground server (flask, julia, a dev
@@ -92,13 +110,14 @@ commandFor change svc = map (wrap svc.host) (raw change)
       Process _ -> Manual ("stop process (no managed handle): " <> name)
       ex -> manual ex
 
--- ssh-wrap only real shell commands bound for a remote host; Manual notes and
--- already-remote commands pass through unchanged.
-wrap :: Maybe Host -> Command -> Command
-wrap mh cmd = case cmd of
-  Shell _ -> case map unHost mh of
-    Just "macmini" -> Ssh "andrew@andrews-mac-mini" cmd
-    _ -> cmd
+-- ssh-wrap only real shell commands bound for a remote target; Manual notes and
+-- already-remote commands pass through unchanged. The ssh login comes from the
+-- resolved `Target`, not a host string baked in here.
+wrap :: Target -> Command -> Command
+wrap target cmd = case cmd of
+  Shell _ -> case target.exec of
+    RemoteSsh dest -> Ssh (unSshDest dest) cmd
+    LocalExec -> cmd
   _ -> cmd
 
 manual :: Executor -> Command
@@ -131,9 +150,8 @@ logPath sid = "/tmp/bosun-apply-" <> sanitize (unServiceId sid) <> ".log"
     String.replaceAll (Pattern ":") (Replacement "-")
       >>> String.replaceAll (Pattern "/") (Replacement "-")
 
-profileFlags :: Service -> String
-profileFlags svc = foldMap flag svc.selectors
-  where
-  flag = case _ of
-    Profile p -> " --profile " <> p
-    _ -> ""
+-- Render a target's env prefix as leading `export K=V && …` clauses, so the
+-- assignments take effect for the (non-interactive, remote) shell that runs the
+-- command. Empty prefix ⇒ empty string (transparent).
+envExports :: Array (Tuple String String) -> String
+envExports = foldMap \(Tuple k v) -> "export " <> k <> "=" <> v <> " && "

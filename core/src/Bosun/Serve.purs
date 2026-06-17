@@ -36,12 +36,13 @@ module Bosun.Serve
 
 import Prelude
 
-import Bosun.Atoms (Host, unAbsPath, unHost, unPort, unServiceId)
+import Bosun.Atoms (Host, mkHost, unAbsPath, unHost, unPort, unServiceId)
 import Bosun.Error (SdiViolation(..))
 import Bosun.Executor (Executor(..))
 import Bosun.Exposure (Exposure(..))
 import Bosun.Reachability (classify)
 import Bosun.Service (Deployment, LooseService, deploymentServices)
+import Bosun.Target (defaultTargets, networkAddr)
 import Data.Array as A
 import Data.Either (Either(..))
 import Data.Foldable (foldr)
@@ -175,14 +176,13 @@ classifyHost mh = case map unHost mh of
   Just other -> Left other
 
 -- | Where a remote service actually lives, as a tailnet URL on the same port.
--- | (`macmini` is the one named node today; other hosts pass through verbatim.)
+-- | The host's network address comes from the shared target table
+-- | (`Bosun.Target`), the same registry `apply` resolves ssh logins from —
+-- | so `macmini`'s tailnet name is described once, not in two places. A host
+-- | not in the table passes through verbatim (`networkAddr`'s fallback).
 redirectTarget :: String -> Int -> String
-redirectTarget host port = "http://" <> tailscaleAddr host <> ":" <> show port
-
-tailscaleAddr :: String -> String
-tailscaleAddr = case _ of
-  "macmini" -> "andrews-mac-mini"
-  other -> other
+redirectTarget host port =
+  "http://" <> networkAddr defaultTargets (mkHost host) <> ":" <> show port
 
 -- | Move the backend off the public port: replace the literal public port with
 -- | the internal port throughout the command (SDI's `rewriteCommand`). The

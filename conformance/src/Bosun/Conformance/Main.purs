@@ -16,6 +16,7 @@ import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Reachability (hostPort, noNetwork)
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Apply (applyScript)
+import Bosun.Target (defaultTargets)
 import Bosun.Plan (Snapshot, Status(..), plan)
 import Bosun.Reconcile (reconcile)
 import Bosun.Report (renderPlan, renderReport, renderScript)
@@ -59,7 +60,7 @@ planReport = withPlanFixture \vd ->
 -- | script the node binary does. This is the headline claim, gated.
 applyReport :: String
 applyReport = withPlanFixture \vd ->
-  renderScript (applyScript vd (plan vd { desired: vd, recorded: Nothing, observed: planObserved }))
+  renderScript (applyScript defaultTargets vd (plan vd { desired: vd, recorded: Nothing, observed: planObserved }))
 
 withPlanFixture :: (ValidatedDeployment -> String) -> String
 withPlanFixture f = case toEither (validate (reconcile Map.empty planFixture).deployment) of

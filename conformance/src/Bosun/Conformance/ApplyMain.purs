@@ -16,6 +16,7 @@ module Bosun.Conformance.ApplyMain where
 import Prelude
 
 import Bosun.Apply (Command(..), StagedCommand, applyScript)
+import Bosun.Target (defaultTargets)
 import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkHost, mkPort, mkProjectSlug)
 import Bosun.Executor (Executor(..))
 import Bosun.Reachability (hostPort)
@@ -50,7 +51,7 @@ main = do
   case toEither (validate r.deployment) of
     Left _ -> log "apply (Go column): fixture failed to validate (should not happen)"
     Right vd -> do
-      let script = applyScript vd (plan vd { desired: vd, recorded: Nothing, observed: Map.empty })
+      let script = applyScript defaultTargets vd (plan vd { desired: vd, recorded: Nothing, observed: Map.empty })
       log ("apply (Go column): " <> show (Array.length script) <> " command(s)")
       traverse_ runStep script
       log "apply (Go column): done."

@@ -23,6 +23,7 @@ import Prelude
 import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.Adapters.Registry (ingestRegistry)
 import Bosun.Apply (Command(..), StagedCommand, applyScript)
+import Bosun.Target (defaultTargets)
 import Bosun.Plan (plan)
 import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderCommand, renderReport, renderScript)
@@ -77,7 +78,7 @@ runDryRun composePath registryPath = do
     Left vErrors ->
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
     Right vd ->
-      log (renderScript (applyScript vd (plan vd { desired: vd, recorded: Nothing, observed: Map.empty })))
+      log (renderScript (applyScript defaultTargets vd (plan vd { desired: vd, recorded: Nothing, observed: Map.empty })))
 
 -- | Mirrors `Bosun.CLI.Main.runApply` (observed = empty: a from-scratch boot).
 runApply :: String -> String -> Effect Unit
@@ -96,7 +97,7 @@ runApply composePath registryPath = do
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
     Right vd -> do
       let
-        script = applyScript vd (plan vd { desired: vd, recorded: Nothing, observed: Map.empty })
+        script = applyScript defaultTargets vd (plan vd { desired: vd, recorded: Nothing, observed: Map.empty })
         stages = A.groupBy (\a b -> a.stage == b.stage) script
       if A.null stages then log "apply: nothing to do — the rig already matches desired state."
       else runStages 1 (map NEA.toArray stages)

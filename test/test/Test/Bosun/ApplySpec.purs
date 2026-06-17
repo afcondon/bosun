@@ -10,6 +10,7 @@ import Prelude
 
 import Bosun.Apply (applyScript)
 import Bosun.Atoms (AbsPath, mkAbsPath, mkHost, mkServiceId)
+import Bosun.Target (defaultTargets)
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Plan (Snapshot, Status(..), plan)
 import Bosun.Report (renderCommand)
@@ -51,7 +52,7 @@ withScript :: Deployment -> Snapshot -> (Array String -> Aff Unit) -> Aff Unit
 withScript d obs f = case toEither (validate d) of
   Left _ -> fail "fixture was expected to validate"
   Right vd ->
-    f (map (renderCommand <<< _.command) (applyScript vd (plan vd { desired: vd, recorded: Nothing, observed: obs })))
+    f (map (renderCommand <<< _.command) (applyScript defaultTargets vd (plan vd { desired: vd, recorded: Nothing, observed: obs })))
 
 spec :: Spec Unit
 spec = describe "Bosun.Apply" do
@@ -71,9 +72,14 @@ spec = describe "Bosun.Apply" do
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a &" ]) (snap []) \lines ->
       lines `shouldEqual` [ "cd /srv/a && run-a &" ]
 
-  it "macmini Container Start -> ssh-wrapped docker compose up" $
+  -- A macmini container resolves to the macmini Target: ssh login, the remote
+  -- compose workdir (so the file is found) and Docker Desktop's PATH (so a
+  -- non-interactive ssh shell finds `docker`) — all from the target table, no
+  -- host string in the planner.
+  it "macmini Container Start -> ssh-wrapped docker compose up, in the remote workdir with PATH" $
     withScript (mkDeployment [ containerLeaf "web" "macmini" ]) (snap []) \lines ->
-      lines `shouldEqual` [ "ssh andrew@andrews-mac-mini 'docker compose up -d web'" ]
+      lines `shouldEqual`
+        [ "ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH && docker compose up -d web'" ]
 
   it "a running service contributes no command (NoOp omitted)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) (snap [ Tuple "a" Running ]) \lines ->
