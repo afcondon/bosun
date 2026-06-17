@@ -74,10 +74,12 @@ the simplest model — the Chair polls three `/state`s and POSTs to the right on
 
 1. **Chair UI wiring** — the six buttons against `/state` + `/control`. The Chair
    session's work; the contract above is stable.
-2. **Multi-group control** — run one `supervise` per group (today: a fixed
-   `:3996`; make the status port a flag, e.g. `bosun supervise --port N`), or add
-   `/control/up?group=` to a multi-deployment daemon. The per-group-daemon model
-   needs only the port flag.
+2. **Multi-group control — DONE.** `bosun supervise [--port N] <compose>
+   <registry>` runs one supervisor per group, each on its own status port
+   (default 3996). The Chair runs three (polyglot-mbp / polyglot-macmini /
+   atlantis), polling + controlling each independently. Proven: two live at once
+   on :3996 / :3995. (A single multi-deployment daemon with `/control?group=` is
+   a possible future consolidation, not needed.)
 3. **Additive `/state` fields** (ADR D-S1: `supervised`/`restarts`/
    `lastTransitionAt`/`desired`) so the Chair sees restarts across its 1.5 s
    poll. All optional — never break the existing decode.
