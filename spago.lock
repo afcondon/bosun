@@ -112,13 +112,20 @@
         "path": "conformance",
         "core": {
           "dependencies": [
+            "argonaut-core",
+            "arrays",
+            "bosun-adapters",
             "bosun-core",
             "console",
             "effect",
+            "either",
+            "foreign-object",
             "maybe",
             "ordered-collections",
             "partial",
-            "prelude"
+            "prelude",
+            "strings",
+            "validation"
           ]
         },
         "test": {

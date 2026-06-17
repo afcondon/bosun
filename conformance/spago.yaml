@@ -15,6 +15,13 @@ package:
     - maybe
     - ordered-collections
     - partial
+    - strings
+    - arrays
+    - validation
+    - either
+    - argonaut-core
+    - foreign-object
     - bosun-core
+    - bosun-adapters
   run:
     main: Bosun.Conformance.Main
