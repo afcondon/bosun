@@ -233,6 +233,36 @@ richer type makes a future `bind-scope-overlap` refinement possible (see
 
 ---
 
+## D-S1 — The `/state` contract evolves additive-only; never a required field
+
+**Context.** Bosun's `/state` endpoint is consumed by Bosun's Chair, which polls
+it and decodes with an argonaut record decoder. Stage 2 (`supervise`,
+`ROADMAP.md`) adds per-route runtime fields (`supervised`, `restarts`,
+`lastTransitionAt`, `desired`) so self-healing restarts are observable across the
+Chair's 1.5 s poll. Question raised in the engine↔Chair round 2
+(`HANDOFF-CHAIR.md`): should any new field be *required* in the shared decoder?
+
+**Decision.** **No — `/state` fields are added additive/optional, never
+required.** The consumer set spans versions and modes: plain `serve` (no
+supervisor) emits none of the Stage 2 fields, and older `serve`/`supervise`
+binaries emit a subset. A required field would fail decode against exactly those
+producers — re-breaking the `serve`↔`supervise` contract *parity* from the
+opposite direction (the guarantee in `ROADMAP.md` Stage 2 / `HANDOFF-CHAIR.md`
+round 2 is that the Chair lights up against either mode unchanged). So the Chair adds each field as `Maybe`
+with graceful-absence rendering; the producer emits it only when meaningful. The
+floor of the contract stays `{routes,redirects,rejected}` with
+`RouteStatus{serviceId,publicPort,internalPort,up,pid}`.
+
+**Consequences.** `/state` can grow indefinitely without a flag-day: any field
+that some producer can't supply is simply absent, and every consumer must
+tolerate absence. The cost is that the decoder can never *enforce* a field's
+presence — semantic "is this a supervised producer?" must be inferred from a
+value (e.g. `supervised == true`) rather than from the field's existence. Cheap
+and correct given heterogeneous producers. (Failover's future `role`/`active`
+fields ride the same rule.)
+
+---
+
 ## Still open (deferred, not blocking)
 
 - **E10** — the full EdgeKind × tool *fidelity matrix* (which requirement

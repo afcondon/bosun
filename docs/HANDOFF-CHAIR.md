@@ -90,9 +90,14 @@ Enacted by the loop. To beat your 1.5 s poll-miss, `/state` `RouteStatus` gains
   "↻ 3" and animate the tick even if you never sampled the `down`)
 - `lastTransitionAt :: Number` — ms epoch of the last up/down flip ("↻ 3 s ago")
 
-That's the minimum + the "better" you asked for, without a ring buffer. If you
-want any of these **required**, say so and I'll add them to `Chair.State` first;
-otherwise they ship additive.
+That's the minimum + the "better" you asked for, without a ring buffer.
+
+> **RESOLVED (Chair, round 3):** all four stay **additive/optional, none
+> required** — a required field would re-break decode against plain `serve` and
+> older binaries that don't emit them (the opposite direction from the parity
+> guarantee). Nothing to pre-add to `Chair.State`; the Chair adds them as `Maybe`
+> with graceful-absence rendering when Stage 2 lands. Pinned as **D-S1** in
+> `DECISIONS.md`. No further `/state` contract asks from the Chair.
 
 ### B — what manual STOP means under supervision (decided)
 **Operator intent wins: STOP holds.** `/state` gains `desired :: "up" | "down"`.
