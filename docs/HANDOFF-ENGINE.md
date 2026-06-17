@@ -227,6 +227,39 @@ are the same `recorded`-threading work.
 sub-100ms socket daemon) shrinks its boot window — a good fixture fix, but it
 does NOT fix the storm (the BEAM still races). Boot-grace is the real fix.
 
+> **DECIDED 2026-06-17 (Andrew + engine) — fh2 launch swapped to prebuilt; the
+> general principle: supervise launches ARTIFACTS, not builds.**
+>
+> Two things converged here. (1) The process-probe early-green the Chair flagged:
+> `x-bosun.probe: process` makes fh2 read green the instant the spago/purs
+> process exists — before `~/.fh2/control.sock` binds. Cosmetic (not a storm),
+> because for a process-probed service `ready` and `groupAlive` are the same
+> signal, so the supervisor has no readiness info to withhold green. (2) The
+> deeper issue: `spago run` *compiles then runs*, dragging the whole PureScript
+> toolchain (spago/purs/node) onto the box as a launch-time dependency and making
+> a compile-failure a restart-time failure mode. (DeepStar even carries a
+> "stale-source" cross-check precisely to paper over what spago-run obscures.)
+>
+> **Fix applied:** `fixtures/atlantis` fh2-daemon now launches
+> `node output/Main/index.js --daemon` (the prebuilt output; reads `--daemon`
+> from argv exactly as `spago run --` did) instead of `spago run -- --daemon`.
+> `spago build` once; thereafter sub-100ms bind, no toolchain at launch, and the
+> early-green window collapses. es9/link already launch prebuilt Rust binaries
+> and purerl-tidal runs the compiled BEAM `ebin` — fh2 was the only
+> build-at-launch outlier.
+>
+> **Principle (ties to `feedback_minimize_system_complexity` + the quartermaster
+> thinking):** *build is a separate lifecycle phase from run.* Bosun supervises
+> running artifacts; it should never invoke the build toolchain. Any future rig
+> daemon added via `spago run` / a build-and-run wrapper should launch its
+> prebuilt output instead.
+>
+> **Alternative the engine offered (NOT taken, since the prebuilt swap is
+> simpler):** switch fh2 to `probe: socket` and refine `decide` so a `SocketReady`
+> service reads `Running` only when the socket exists AND `groupAlive` — the
+> `Observation` already carries both. That would kill the early-green *and* the
+> stale-socket hazard without changing the launch. Available if ever wanted.
+
 ---
 
 ## RESOLUTION (engine session, 2026-06-17) — boot-grace + backoff landed

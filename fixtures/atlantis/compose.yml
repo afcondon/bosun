@@ -79,6 +79,12 @@ services:
       probe: process
       process:
         cwd: /Users/afc/work/afc-work/music/expert-sleepers/fh2-config
-        command: spago run -- --daemon
+        # Launch the PREBUILT output, not `spago run` — no compile-at-launch, no
+        # PureScript toolchain as a runtime dep, sub-100ms bind (so the
+        # process-probe's early-green window collapses). `spago build` once;
+        # output/Main/index.js reads --daemon from argv exactly as `spago run --`
+        # did. (es9/link are prebuilt Rust binaries, purerl-tidal runs the
+        # compiled BEAM ebin — fh2 was the only build-at-launch outlier.)
+        command: node output/Main/index.js --daemon
       expose:
         - socket: /Users/afc/.fh2/control.sock
