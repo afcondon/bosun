@@ -19,10 +19,28 @@ k8s + Helm + Terraform + Kustomize + operators is the cautionary tale: a pile of
 non-composing, stringly-typed subsystems, each dimension of scale bolted on
 separately. The thesis here:
 
-> **k8s / docker / terraform / BEAM, as Jane Street would have built them.**
-> One typed core; composition is *algebraic*; enactment is *one* command algebra
-> with many interpreters; the same `validate` runs in the control plane and on
-> every agent; failure is a *value*, not an exception.
+> **The engineering taste of k8s / docker / terraform / BEAM, as Jane Street
+> would have brought it.** One typed core; composition is *algebraic*; enactment
+> is *one* command algebra with many interpreters; the same `validate` runs in the
+> control plane and on every agent; failure is a *value*, not an exception.
+
+**What this is — and what it is NOT.** It is **not "an FP version of k8s."** That
+framing would smuggle in k8s's *ontology* (Pods, Services, the container-and-
+cloud-microservices worldview) and its *scope* (orchestrating web services in a
+datacenter). Bosun is a **generic substrate for distributed process management**:
+*any* process, *any* executor (container, launchd/systemd, a raw `nohup`'d
+process, a BEAM-internal child), *any* host, *any* runtime. k8s's domain —
+containers at cloud scale — is **one specialisation** of that substrate; the
+eurorack live-coding rig (es9-daemon, link-spike, purerl-tidal), the homelab, the
+dev-service router (the SDI replacement), and BEAM-internal voices are others.
+
+This is the place for cold-eyed realism: **a general hostility to k8s's
+*accidental* complexity does not preclude stealing its best *ideas* — it would be
+stupid to do otherwise.** k8s solved real problems and some of its techniques are
+excellent (level-triggered reconcile, a tiny consensus kernel under a big
+eventually-consistent layer, leases for leader election — see §11). We steal the
+**techniques**, not the **ontology**, and we apply them to the *general* problem,
+not k8s's slice of it.
 
 The discipline this doc imposes on itself: **confront every extra dimension of
 Enterprise scale now, in the type design, even though the homelab implementation
@@ -265,19 +283,50 @@ model, so none becomes a bolted-on subsystem later."
 | Agent upgrade / the bootstrap problem | ssh `apply` re-deploys the agent; agent self-update is a deployment like any other | §7 |
 | The latency tail itself | §3.3 combinators on both `apply` and `observe` | design |
 
-## 6. The BEAM card
+## 6. The BEAM — two distinct roles, don't conflate them
 
-The Erlang column is not just a third conformance target — it is a **distribution
-substrate the other columns can't match**. `bosun-core` on purerl + distributed
-Erlang gives agents that form an **OTP cluster natively**: node discovery,
-monitors, supervision trees, and message passing are the runtime, not a library
-we write. The control↔agent mesh could *be* the BEAM node mesh; failover could
-ride OTP supervision (`one_for_all`/`rest_for_one`/`one_for_one` — already mapped
-to Bosun's requirement gradient in `BEAM-OBSERVER.md`). This is a genuinely
-special option no ssh/Go-only design has. Caveats: it pins those agents to the
-purerl runtime, and BEAM distribution has its own security model (cookies / TLS
-distribution) to take seriously. Treat as the elegant endgame for the hosts that
-warrant it, with the Go agent as the universal floor.
+There are **two** entirely separate ways the BEAM shows up. They were blurred in
+an earlier draft; keeping them apart matters, because one is the concrete
+near-term goal and the other is speculative upside, and **the first does not
+require the second.**
+
+### 6A. BEAM as a thing Bosun *looks into* (the original goal — Stage 3)
+
+The motivating want: **see and manage the sub-processes *inside* a BEAM app**,
+rather than treating it as one opaque box. purerl-tidal runs a per-voice OTP
+supervision tree; today Bosun sees it as a single leaf node. The goal is to see
+*inside* — voices appearing/vanishing as you live-code, click-to-restart a voice.
+This is ROADMAP **Stage 3** / `BEAM-OBSERVER.md`, with two flavours:
+
+- **A1 — self-report.** purerl-tidal emits its supervision tree as JSON over its
+  existing WS verb surface; Bosun ingests it as just another *observe source*; the
+  node deepens from a leaf into a sub-supervisor. **Bosun stays on node/Go — it
+  never runs on the BEAM.** A small change in the *purerl-tidal* repo; nothing
+  else needed. **This is the concrete, cheap, near-term target.**
+- **A2 — native introspection.** `which_children` / `process_info` directly,
+  control via `supervisor:restart_child`. Generic, no self-report — but needs a
+  Bosun *foothold* on the BEAM (edge FFI), i.e. a sliver of 6B.
+
+Here the BEAM is the **observed subject**, not Bosun's runtime.
+
+### 6B. BEAM as *Bosun's own runtime* (the bigger leverage — optional endgame)
+
+`bosun-core` compiled via purerl so the **agents themselves** are BEAM nodes and
+inherit distributed Erlang: node discovery, monitors, supervision trees, message
+passing as the *runtime*, not a library we write. The control↔agent mesh could
+*be* the BEAM node mesh; failover could ride OTP supervision (`one_for_all` /
+`rest_for_one` / `one_for_one` — already mapped to Bosun's requirement gradient in
+`BEAM-OBSERVER.md`). A genuinely special option no ssh/Go-only design has.
+
+**The narrowest, highest-value slice of 6B is the consensus primitive** (§11.1):
+the BEAM's built-in `global` / leader-election is exactly the small coordination
+kernel the semilattice can't provide — and you can adopt *just that sliver*
+(a coordination foothold) without recompiling all of Bosun to the BEAM.
+
+Caveats: 6B pins those agents to the purerl runtime, and BEAM distribution has its
+own security model (cookies / TLS distribution) to take seriously. Treat 6B as the
+elegant endgame for the hosts that warrant it, with the **Go agent as the
+universal floor** and **6A (A1) as the thing to build first.**
 
 ## 7. The bootstrap ladder — ssh doesn't go away, it goes *first*
 
@@ -355,18 +404,33 @@ with the same typed taste rather than reaching for k8s's accidental machinery.
 
 The ones we should expect to meet:
 
-1. **The consensus boundary — the sharp one.** A join-semilattice / CvRDT (§3.1)
-   gives eventually-consistent *state aggregation*. It does **not** give
-   *coordination*: "exactly one primary," leader election, a single-writer lock —
-   these are CAP-limited consensus problems a CvRDT *cannot* solve under partition.
+1. **The consensus boundary — the sharp one, and there's a theorem behind it.**
+   You can't *prevent* a partition; the only real design choices are what each
+   side does *during* it and how you reconcile *on reconnection*. And whether that
+   reconnection is clean is a **type property of the thing being merged** — stated
+   precisely by the **CALM theorem** (Hellerstein): *a computation needs no
+   coordination iff it is **monotone**.*
+   - **Monotone / semilattice state** (desired config, observed-state aggregation,
+     "the set of replicas that exist"): both sides stay available and writable
+     through the partition, and reconnection is *just the merge* — associative,
+     commutative, idempotent, so order of reconnection doesn't matter. **No
+     coordination, ever.** This is Bosun's `reconcile` (§3.1); the partition is a
+     non-problem here.
+   - **Non-monotone decisions** (a choice that *invalidates other possibilities* —
+     "this is *the* primary," "this unique action fired exactly once"): a merge
+     can't fix it, because two partitioned sides may have made *conflicting
+     irreversible* decisions. CAP bites; you must pick C or A.
+
    So `Alternative` failover (§3.2) is clean for *picking the first healthy
-   member*, but "ensure exactly **one** member is *the* primary" is a different,
-   harder problem. We sidestep it for **desired** state by making **git the sole
-   writer** (one totally-ordered writer ⇒ no split-brain on intent). But *runtime*
-   coordination still needs a real primitive — a lease, or a consensus library, or
-   — elegantly — the **BEAM's built-in `global` / leader-election** (one more
-   reason the Erlang column is special, §6). The claim "the merge is the consensus"
-   holds for aggregation and **must not be overextended to coordination.**
+   member*, but "ensure exactly **one** member is *the* primary" is non-monotone
+   and genuinely harder. We sidestep it for **desired** state by making **git the
+   sole writer** (one totally-ordered writer ⇒ no split-brain on intent). But
+   *runtime* coordination still needs a real primitive — a lease, a consensus
+   library, or — elegantly — the **BEAM's built-in `global` / leader-election**
+   (§6B). **The discipline: push everything you can into the monotone layer; spend
+   consensus only on the irreducibly-singular decisions, and keep that surface as
+   tiny as possible.** "The merge is the consensus" holds for *aggregation* and
+   **must not be overextended to coordination.**
 2. **Scheduling / bin-packing.** Auto-placing services across hosts under resource
    constraints is genuinely NP-hard; k8s's scheduler is complex because the problem
    is. Today our facets assign `Host` *explicitly* (hand-placed) — fine and honest
@@ -383,6 +447,46 @@ The ones we should expect to meet:
    and agent↔agent version skew is essential at scale. The additive-only `/state`
    contract (D-S1) is the right instinct's seed; the general answer is schema
    evolution we design for, not against.
+
+### 11a. What in k8s is *actually* coordination (and the rest isn't)
+
+The pay-off of the CALM lens: most of k8s's "many nearly-the-same concepts" turn
+out **not** to be coordination at all, which tells us exactly what's worth
+stealing and what's just k8s's ontology.
+
+- **Pod** — the scheduling / co-location unit. Essential complexity, but from
+  *scheduling* (§11.2), not consensus.
+- **ReplicaSet / Deployment / StatefulSet / DaemonSet** — the near-duplicates that
+  feel redundant. They're not coordination; they're different *identity / lifecycle
+  policies* over "a set of replicas": ReplicaSet = N interchangeable; Deployment =
+  + rollout (§11.4); **DaemonSet = one per node** (literally our "agent on every
+  host"); **StatefulSet = stable identity + ordered startup** — and *that* one
+  brushes coordination, because stable identities are how you bootstrap a quorum's
+  members. In Bosun terms these are the `Alternative` cluster (§3.2) + an identity
+  policy + a rollout strategy — not new machinery.
+- **Service / Endpoints / kube-proxy** — service discovery + load-balancing: the
+  *read side* of `<|>` ("route to a healthy member"), the data plane. Not consensus.
+- **etcd** — *this* is where k8s actually does consensus (Raft). One component.
+- **Lease** — leader election, built on etcd's compare-and-swap, so exactly one
+  controller-manager / scheduler is active. This is the minimal coordination
+  primitive — k8s's version of "the smallest honest primitive."
+
+And the deep one: **k8s controllers are level-triggered reconcile loops** —
+idempotent, re-observe-actual-state-and-re-converge-to-desired, *not* edge-
+triggered on an event stream. That is *precisely* "reconcile on reconnection,"
+and *precisely* our semilattice fold (§3.1) — level-triggered is **why** a
+controller survives a partition: it never needed to have seen every event, just
+the current actual state.
+
+**The punchline: k8s's own architecture is already "a tiny consensus kernel
+(etcd + Lease) under a big eventually-consistent, level-triggered reconcile
+layer (the controllers)."** That is the *same shape* this doc proposes — which is
+reassuring, not embarrassing. Our improvements over it are exactly two: (a) the AP
+reconcile layer is **one typed algebraic `meet`** instead of dozens of bespoke
+stringly-typed controllers; and (b) we can choose a **far lighter consensus
+primitive** for the kernel — a BEAM `global` lease — instead of standing up and
+operating an etcd cluster. Steal the *shape* and the *techniques* (level-triggered
+reconcile, the small-kernel/big-AP split, leases); leave the *ontology*.
 
 The discipline: **the algebra earns the right to be simple by deleting accidental
 complexity, not by pretending the essential complexity isn't there.** Where we
