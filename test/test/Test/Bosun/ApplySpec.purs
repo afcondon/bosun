@@ -8,7 +8,7 @@ module Test.Bosun.ApplySpec where
 
 import Prelude
 
-import Bosun.Apply (applyScript)
+import Bosun.Apply (applyScript, downScript)
 import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkDomain, mkHost, mkPort, mkServiceId)
 import Bosun.Reachability (Address(..), BindScope(..), Reachability(..))
 import Bosun.Target (defaultTargets)
@@ -69,23 +69,41 @@ withScript d obs f = case toEither (validate d) of
   Right vd ->
     f (map (renderCommand <<< _.command) (applyScript defaultTargets vd (plan vd { desired: vd, recorded: Nothing, observed: obs })))
 
+-- assert on the rendered teardown (down) command lines, in reverse boot order
+withDownScript :: Deployment -> (Array String -> Aff Unit) -> Aff Unit
+withDownScript d f = case toEither (validate d) of
+  Left _ -> fail "fixture was expected to validate"
+  Right vd -> f (map (renderCommand <<< _.command) (downScript defaultTargets vd))
+
 spec :: Spec Unit
 spec = describe "Bosun.Apply" do
 
-  it "Process Start -> local, daemonized (long-running service, not ssh-wrapped)" $
+  it "Process Start -> local, daemonized, recording its process group (not ssh-wrapped)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && nohup env run-a >/tmp/bosun-apply-a.log 2>&1 &" ]
+      lines `shouldEqual` [ "cd /srv/a && ( nohup env run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
 
   -- A startCommand may carry a leading env-var assignment (e.g. the julia atlas:
   -- `ATLAS_PORT=3210 julia …`). Bare `nohup VAR=val prog` makes nohup exec the
   -- string `VAR=val` — the `env` prefix lets the shell-style assignment through.
   it "Process Start with an env-var prefix is launched via `env` (not eaten by nohup)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "ATLAS_PORT=3210 run-a" ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && nohup env ATLAS_PORT=3210 run-a >/tmp/bosun-apply-a.log 2>&1 &" ]
+      lines `shouldEqual` [ "cd /srv/a && ( nohup env ATLAS_PORT=3210 run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
 
-  it "a Process command that already backgrounds itself is left as-is" $
+  it "a Process command that already backgrounds itself is left as-is (no group captured)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a &" ]) (snap []) \lines ->
       lines `shouldEqual` [ "cd /srv/a && run-a &" ]
+
+  -- Stop kills the process GROUP Bosun recorded at launch (reaping the whole
+  -- nohup→server tree) — its own processes, not whatever holds the port —
+  -- tolerant of a missing file (task #8, recorded-PGID half).
+  it "down: a Process Stop kills the recorded process group (Bosun's own, tolerant if absent)" $
+    withDownScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) \lines ->
+      lines `shouldEqual` [ "kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true" ]
+
+  it "Process Restart -> kill the recorded group, then relaunch (recording the new one)" $
+    withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) (snap [ Tuple "a" Failed ]) \lines ->
+      lines `shouldEqual`
+        [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; sleep 0.3; ( nohup env run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
 
   -- A macmini container resolves to the macmini Target: ssh login, the remote
   -- compose workdir (so the file is found) and Docker Desktop's PATH (so a
