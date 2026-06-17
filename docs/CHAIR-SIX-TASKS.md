@@ -80,9 +80,15 @@ the simplest model — the Chair polls three `/state`s and POSTs to the right on
    atlantis), polling + controlling each independently. Proven: two live at once
    on :3996 / :3995. (A single multi-deployment daemon with `/control?group=` is
    a possible future consolidation, not needed.)
-3. **Additive `/state` fields** (ADR D-S1: `supervised`/`restarts`/
-   `lastTransitionAt`/`desired`) so the Chair sees restarts across its 1.5 s
-   poll. All optional — never break the existing decode.
+3. **Additive `/state` fields (ADR D-S1) — DONE (2026-06-17).** `supervise`
+   `/state` now emits top-level `"supervised": true` + a parallel
+   `"supervision": { "<id>": { restarts, fails, lastTransitionAt,
+   suspendedUntil } }` ALONGSIDE the unchanged `services` string map (older
+   decoders keep working). Plus the **boot-grace + backoff** fix
+   (`Bosun.Supervisor`) that closes the relaunch-storm blocker — so `supervise`
+   can now own a real slow-boot rig (the Atlantis hand-off is unblocked). See
+   `docs/HANDOFF-ENGINE.md` "RESOLUTION" for the full answer to the Chair's
+   round-2 asks A–F. Rides go-conformance (`scripts/go-supervise-conf.sh`).
 
 ## Known papercuts surfaced here (fix alongside the above)
 - **ssh single-quote escaping**: an ssh-wrapped command containing single quotes
