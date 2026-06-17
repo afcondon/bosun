@@ -93,6 +93,28 @@
     /* ── top nav (view switch) ── */
     .nav { margin-top: 18px; display: flex; gap: 8px; }
     .btn.active { background: var(--ink); color: #fff; }
+    .brand-btn { font: inherit; background: none; border: none; padding: 0; cursor: pointer; }
+    .brand-btn:hover { color: var(--accent); text-decoration: underline; }
+    .nav-grp { display: inline-flex; align-items: center; gap: 8px; }
+    .ctx { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
+
+    /* ── project picker (landing) ── */
+    .picker-h { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--accent); margin: 28px 0 2px; border-bottom: 2px solid var(--ink); padding-bottom: 6px; }
+    .picker-h:first-child { margin-top: 4px; }
+    .proj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; margin: 14px 0 8px; }
+    .proj-card {
+      display: block; text-align: left; font: inherit; cursor: pointer;
+      background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--line);
+      padding: 14px 16px; transition: border-color 0.12s, box-shadow 0.12s;
+    }
+    .proj-card:hover { border-color: var(--ink); box-shadow: 0 1px 0 var(--line); }
+    .proj-card.ctl { border-left-color: var(--up); }
+    .proj-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .proj-label { font-weight: 700; font-size: 14px; letter-spacing: -0.01em; }
+    .proj-port { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--up); font-weight: 600; }
+    .proj-port.view { color: var(--muted); font-weight: 400; text-transform: uppercase; letter-spacing: 0.06em; }
+    .proj-blurb { color: var(--muted); font-size: 12.5px; margin-top: 6px; line-height: 1.45; }
 
     /* ── ingestion: source picker ── */
     .picker { margin-top: 28px; background: var(--panel); border: 1px solid var(--line); padding: 18px 20px; }

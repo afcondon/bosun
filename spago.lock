@@ -47,6 +47,8 @@
             "maybe",
             "ordered-collections",
             "prelude",
+            "routing",
+            "routing-duplex",
             "strings",
             "tuples",
             "web-dom",
@@ -2310,6 +2312,36 @@
         "prelude"
       ]
     },
+    "routing": {
+      "type": "registry",
+      "version": "11.0.0",
+      "integrity": "sha256-ESRRNnqLU6K1t1DMIpr5tBx3603PcHjfPzh4oeQSJ/c=",
+      "dependencies": [
+        "arrays",
+        "control",
+        "effect",
+        "either",
+        "foldable-traversable",
+        "foreign",
+        "integers",
+        "js-uri",
+        "lists",
+        "maybe",
+        "newtype",
+        "numbers",
+        "ordered-collections",
+        "partial",
+        "prelude",
+        "refs",
+        "semirings",
+        "strings",
+        "tuples",
+        "validation",
+        "web-dom",
+        "web-events",
+        "web-html"
+      ]
+    },
     "routing-duplex": {
       "type": "registry",
       "version": "0.7.0",
@@ -2337,6 +2369,17 @@
       "integrity": "sha256-EJrxtKt5xC7TYjBZrSBO/J7Aw3DmtilYjt4olpAXWVc=",
       "dependencies": [
         "unsafe-coerce"
+      ]
+    },
+    "semirings": {
+      "type": "registry",
+      "version": "7.0.0",
+      "integrity": "sha256-wjcUvWi+KK4pktI1PAJKjPFTBPeSeIZniTi30VlYtSs=",
+      "dependencies": [
+        "foldable-traversable",
+        "lists",
+        "newtype",
+        "prelude"
       ]
     },
     "spec": {

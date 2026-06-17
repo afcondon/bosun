@@ -19,6 +19,7 @@ import Affjax.ResponseFormat as RF
 import Affjax.Web as AX
 import Bosun.View (AliasEntry, AliasOverride(..), AnalyzeRequest, AnalyzeResult, ConflictView, DeployErrorView, DivergenceView, RouteBacking, ServiceInstanceView, SvcView, ValidationView(..), analyzeRequestCodec, analyzeResultCodec)
 import Chair.Graph (Channel, GroupMode(..), NodeLive(..), allChannels, graphView, layoutPositions, nextMode)
+import Chair.Routes (Route(..), routeCodec)
 import Chair.State (RedirectInfo, RejectInfo, RouteStatus, StateView, decodeStateView)
 import Data.Argonaut.Decode.Error (printJsonDecodeError)
 import Data.Array as Array
@@ -33,7 +34,7 @@ import Data.Set as Set
 import Data.String as String
 import Data.Tuple.Nested (type (/\), (/\))
 import Effect (Effect)
-import Effect.Aff (Aff, Milliseconds(..), delay)
+import Effect.Aff (Aff, Milliseconds(..), delay, launchAff_)
 import Hylograph.Transition.Easing (EasingType(..))
 import Hylograph.Transition.Engine (TransitionState, currentValue, isComplete, start, tick, transitionWith)
 import Hylograph.Transition.Interpolate (Point, lerpPoint)
@@ -45,6 +46,8 @@ import Halogen.HTML.Properties as HP
 import Halogen.VDom.Driver (runUI)
 import Data.Traversable (traverse)
 import Hylograph.Interaction.Zoom (ZoomHandle, attachNativeZoom)
+import Routing.Duplex (parse, print)
+import Routing.Hash (matchesWith, setHash)
 import Web.DOM (Element)
 import Web.DOM.ParentNode (QuerySelector(..), querySelector)
 import Web.HTML (window)
@@ -68,11 +71,22 @@ corpusDir = "/Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/polyglot-2026-0
 fixturesDir :: String
 fixturesDir = "/Users/afc/work/afc-work/ShapedSteer/bosun/fixtures"
 
-data View = Cockpit | Ingestion | Graph
-derive instance Eq View
+-- | A Project is the unit you pick and operate on: a validated deployment (with
+-- | a `supervise` daemon you can drive) or a study fixture (view-only). `key` is
+-- | the url slug used in `#/graph/<key>`. `supervise` is the daemon's status/
+-- | control port — `Just` ⇒ controllable; `Nothing` ⇒ no control surface.
+type Project =
+  { key :: String
+  , label :: String
+  , blurb :: String
+  , compose :: String
+  , registry :: String
+  , supervise :: Maybe Int
+  }
 
 type State =
-  { view :: View
+  { route :: Route
+  , currentProject :: Maybe Project
   -- cockpit (pillar 0)
   , cockpit :: Maybe StateView
   , cockErr :: Maybe String
@@ -81,7 +95,6 @@ type State =
   -- ingestion (pillar 1)
   , composePath :: String
   , registryPath :: String
-  , fixtureKey :: String      -- which named fixture the graph dropdown has loaded
   , analysis :: Maybe AnalyzeResult
   , anaErr :: Maybe String
   , anaLoading :: Boolean
@@ -115,12 +128,11 @@ data Action
   | Spawn Int
   | Stop Int
   | Reboot Int
-  | Goto View
+  | NavTo Route               -- set the hash; the hashchange drives the view
   | SetCompose String
   | SetRegistry String
   | LoadCorpus
   | LoadPaths String String   -- set compose+registry paths, then analyze
-  | LoadFixture String        -- pick a named fixture from the top-nav dropdown
   | RunAnalyze
   -- editable aliases (C2)
   | SetMergeName String
@@ -138,18 +150,27 @@ data Action
   | ToggleArm
   | ResetZoom
 
+-- the router speaks to the component through this query: `matchesWith` fires
+-- `Navigate` on every hash change (and once for the initial hash).
+data Query a = Navigate Route a
+
 main :: Effect Unit
 main = HA.runHalogenAff do
   body <- HA.awaitBody
-  void (runUI component unit body)
+  halogenIO <- runUI component unit body
+  -- the house pattern (HeresiarchHalogen): one codec parses the hash and drives
+  -- the component; navigation elsewhere just sets the hash and rides this loop.
+  void $ H.liftEffect $ matchesWith (parse routeCodec) \old new ->
+    when (old /= Just new) $ launchAff_ $ void $
+      halogenIO.query $ H.mkTell $ Navigate new
 
-component :: forall q i o. H.Component q i o Aff
+component :: forall i o. H.Component Query i o Aff
 component =
   H.mkComponent
     { initialState: \_ ->
-        { view: Ingestion
+        { route: Projects, currentProject: Nothing
         , cockpit: Nothing, cockErr: Nothing, ticks: 0, busy: false
-        , composePath: "", registryPath: "", fixtureKey: "", analysis: Nothing, anaErr: Nothing, anaLoading: false
+        , composePath: "", registryPath: "", analysis: Nothing, anaErr: Nothing, anaLoading: false
         , overrides: [], mergeName: "", mergeCanon: ""
         , graphFocus: Nothing, graphSelect: Nothing, groupMode: ByDeps
         , livePos: Map.empty, anim: Nothing, animGen: 0
@@ -158,8 +179,35 @@ component =
         , zoom: Nothing
         }
     , render
-    , eval: H.mkEval H.defaultEval { handleAction = handleAction, initialize = Just Initialize }
+    , eval: H.mkEval H.defaultEval
+        { handleAction = handleAction
+        , handleQuery = handleQuery
+        , initialize = Just Initialize
+        }
     }
+
+-- the router's only message: apply a parsed Route. Each route does its view-
+-- specific setup (a Graph route loads its project's analysis and re-attaches
+-- pan/zoom once the svg mounts).
+handleQuery :: forall o a. Query a -> H.HalogenM State Action () o Aff (Maybe a)
+handleQuery (Navigate route a) = do
+  case route of
+    GraphR key -> do
+      H.modify_ _ { route = route }
+      cur <- H.gets _.currentProject
+      when (map _.key cur /= Just key) (openProject key)
+      void (H.fork attachZoom)
+    _ -> H.modify_ _ { route = route }
+  pure (Just a)
+
+-- load a project by key: point compose/registry at it, remember it (so the poll
+-- and control target its supervise daemon), and analyze.
+openProject :: forall o. String -> H.HalogenM State Action () o Aff Unit
+openProject key = case Array.find (\p -> p.key == key) projects of
+  Nothing -> H.modify_ _ { currentProject = Nothing, anaErr = Just ("unknown project: " <> key) }
+  Just p -> do
+    H.modify_ _ { currentProject = Just p, composePath = p.compose, registryPath = p.registry }
+    runAnalyze
 
 handleAction :: forall o. Action -> H.HalogenM State Action () o Aff Unit
 handleAction = case _ of
@@ -175,9 +223,9 @@ handleAction = case _ of
   Reboot port -> do
     control ("/control/stop?port=" <> show port)
     control ("/control/spawn?port=" <> show port)
-  Goto v -> do
-    H.modify_ _ { view = v }
-    when (v == Graph) (void (H.fork attachZoom))   -- (re)attach once the svg mounts
+  -- navigation is hash-first: set the hash and let `matchesWith` drive the view,
+  -- so the URL and the rendered view are always the same fact.
+  NavTo route -> H.liftEffect (setHash (print routeCodec route))
   ResetZoom -> do
     mh <- H.gets _.zoom
     H.liftEffect (maybe (pure unit) _.resetZoom mh)
@@ -188,11 +236,6 @@ handleAction = case _ of
   LoadPaths c r -> do
     H.modify_ _ { composePath = c, registryPath = r }
     runAnalyze
-  LoadFixture key -> case Array.find (\f -> f.key == key) fixtures of
-    Nothing -> pure unit
-    Just f -> do
-      H.modify_ _ { composePath = f.compose, registryPath = f.registry, fixtureKey = key }
-      runAnalyze
   RunAnalyze -> runAnalyze
   SetMergeName x -> H.modify_ _ { mergeName = x }
   SetMergeCanon x -> H.modify_ _ { mergeCanon = x }
@@ -223,12 +266,21 @@ handleAction = case _ of
     H.modify_ \s -> s { overrides = fromMaybe s.overrides (Array.deleteAt i s.overrides) }
     runAnalyze
 
--- ── cockpit (pillar 0) — talk to bosun serve ─────────────────────────────────
+-- ── cockpit (pillar 0) — talk to the current group's daemon ──────────────────
+
+-- which daemon do we poll and command? The selected project's `supervise` port
+-- when it has one (one daemon per group, B-model); otherwise the legacy serve
+-- on :3997 (the Cockpit's demo source, and any view-only fixture).
+controlBase :: State -> String
+controlBase s = case s.currentProject >>= _.supervise of
+  Just port -> "http://localhost:" <> show port
+  Nothing -> serveBase
 
 control :: forall o. String -> H.HalogenM State Action () o Aff Unit
 control path = do
+  base <- H.gets controlBase
   H.modify_ _ { busy = true }
-  _ <- H.liftAff (AX.post RF.ignore (serveBase <> path) Nothing)
+  _ <- H.liftAff (AX.post RF.ignore (base <> path) Nothing)
   H.modify_ _ { busy = false }
   refresh
 
@@ -238,27 +290,60 @@ pollLoop = do
   refresh
   pollLoop
 
--- ── named fixtures (the top-nav dropdown) ────────────────────────────────────
+-- ── projects (the picker) ────────────────────────────────────────────────────
 
-type FixtureDef = { key :: String, label :: String, compose :: String, registry :: String }
+-- The three live deployments — each backed by its own `bosun supervise` daemon
+-- on its own port (B-model: one group at a time). These are the safe engine
+-- fixtures; spawning them never touches the real rig.
+deployments :: Array Project
+deployments =
+  [ { key: "polyglot-mbp"
+    , label: "Polyglot · MBP"
+    , blurb: "native processes — site + python + julia (supervise :3996)"
+    , compose: fixturesDir <> "/proctest/compose.yml"
+    , registry: fixturesDir <> "/proctest/registry.json"
+    , supervise: Just 3996
+    }
+  , { key: "polyglot-macmini"
+    , label: "Polyglot · MacMini"
+    , blurb: "container stack — docker compose over ssh (supervise :3995)"
+    , compose: fixturesDir <> "/macmini/compose.yml"
+    , registry: fixturesDir <> "/macmini/registry.json"
+    , supervise: Just 3995
+    }
+  , { key: "atlantis"
+    , label: "Atlantis · live-coding rig"
+    , blurb: "process tier — es9 · link · fh2 · purerl-tidal · calypso (supervise :3994)"
+    , compose: fixturesDir <> "/atlantis/compose.yml"
+    , registry: fixturesDir <> "/atlantis/registry.json"
+    , supervise: Just 3994
+    }
+  ]
 
-fixtures :: Array FixtureDef
-fixtures =
-  [ topo "valid"     "topology ✓ (valid)"
-  , topo "faults"    "topology ✗ (faults)"
-  , topo "gradient"  "gradient (all 5 marks)"
-  , topo "exposure"  "exposure (ramp)"
-  , topo "multihost" "multi-host"
-  , topo "colocation" "co-location"
-  , topo "live"      "◉ live demo"
-  , { key: "corpus", label: "frozen corpus", compose: corpusDir <> "/docker-compose.yml", registry: corpusDir <> "/registry.json" }
+-- Study fixtures — view-only (no supervise daemon), kept for exploring the
+-- ingestion/validation surface and the structural channels.
+studyFixtures :: Array Project
+studyFixtures =
+  [ topo "valid"      "topology ✓ (valid)"     "a clean validated deployment"
+  , topo "faults"     "topology ✗ (faults)"    "illegal-state families that survive validation"
+  , topo "gradient"   "gradient (all 5 marks)" "every requirement mark on one graph"
+  , topo "exposure"   "exposure (ramp)"        "the exposure ramp public→internal"
+  , topo "multihost"  "multi-host"             "services spread across hosts"
+  , topo "colocation" "co-location"            "co-located services on one host"
+  , topo "live"       "◉ live demo"            "the serve safe-fixture (control via :3997)"
+  , { key: "corpus", label: "frozen corpus", blurb: "the Detect corpus snapshot"
+    , compose: corpusDir <> "/docker-compose.yml", registry: corpusDir <> "/registry.json", supervise: Nothing }
   ]
   where
-  topo dir label =
-    { key: dir, label
+  topo dir label blurb =
+    { key: dir, label, blurb
     , compose: fixturesDir <> "/topologies/" <> dir <> "/compose.yml"
     , registry: fixturesDir <> "/topologies/" <> dir <> "/registry.json"
+    , supervise: Nothing
     }
+
+projects :: Array Project
+projects = deployments <> studyFixtures
 
 -- ── pivot animation (Hylograph interpolation engine) ─────────────────────────
 
@@ -312,7 +397,8 @@ animLoop gen = do
 
 refresh :: forall o. H.HalogenM State Action () o Aff Unit
 refresh = do
-  res <- H.liftAff (AX.get RF.json (serveBase <> "/state"))
+  base <- H.gets controlBase
+  res <- H.liftAff (AX.get RF.json (base <> "/state"))
   H.modify_ \s -> case res of
     Left err -> s { cockErr = Just (AX.printError err), ticks = s.ticks + 1 }
     Right resp -> case decodeStateView resp.body of
@@ -345,8 +431,8 @@ runAnalyze = do
       Right a -> st { anaLoading = false, analysis = Just a, anaErr = Nothing
                     , livePos = layoutPositions st.groupMode a, anim = Nothing
                     , graphSelect = Nothing }   -- a stale selection wouldn't exist in the new graph
-  v <- H.gets _.view
-  when (v == Graph) (void (H.fork attachZoom))   -- the svg (re)mounts with the new graph
+  r <- H.gets _.route
+  when (isGraphRoute r) (void (H.fork attachZoom))   -- the svg (re)mounts with the new graph
 
 -- ── pan / zoom (Hylograph.Interaction.Zoom over the main SVG) ─────────────────
 
@@ -395,13 +481,19 @@ render s =
     , HH.div [ cls "appbody" ] (appBody s)
     ]
 
+isGraphRoute :: Route -> Boolean
+isGraphRoute = case _ of
+  GraphR _ -> true
+  _ -> false
+
 appBody :: forall m. State -> Array (H.ComponentHTML Action () m)
-appBody s = case s.view of
-  Graph -> case s.analysis of
+appBody s = case s.route of
+  Projects -> [ HH.section [ cls "mainpane pad" ] [ renderProjects s ] ]
+  GraphR _ -> case s.analysis of
     Nothing ->
       [ HH.section [ cls "mainpane pad" ]
           [ maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text e ]) s.anaErr
-          , HH.p [ cls "muted" ] [ HH.text "choose a topology in the top bar — the graph renders the same AnalyzeResult the Ingestion view uses." ]
+          , HH.p [ cls "muted" ] [ HH.text "loading the project graph…" ]
           ]
       ]
     Just a ->
@@ -419,54 +511,43 @@ appBody s = case s.view of
             [ HH.div [ cls "dock-h" ] [ HH.text "channels" ], g.rack ]
         , g.overlay
         ]
-  Ingestion -> [ HH.section [ cls "mainpane pad" ] [ renderIngestion s ] ]
-  Cockpit -> [ HH.section [ cls "mainpane pad" ] [ renderCockpit s ] ]
+  IngestionR -> [ HH.section [ cls "mainpane pad" ] [ renderIngestion s ] ]
+  CockpitR -> [ HH.section [ cls "mainpane pad" ] [ renderCockpit s ] ]
 
--- the shallow top nav: brand · view switcher · view-specific controls · status.
+-- the shallow top nav: brand (→ picker) · context · graph controls · status.
 topNav :: forall m. State -> H.ComponentHTML Action () m
 topNav s =
   HH.header [ cls "appnav" ]
-    [ HH.span [ cls "brand" ] [ HH.text "Bosun’s Chair" ]
-    , viewSelect s
-    , case s.view of
-        Graph -> graphNav s
-        _ -> HH.text ""
+    [ HH.button [ cls "brand brand-btn", HE.onClick \_ -> NavTo Projects ] [ HH.text "Bosun’s Chair" ]
+    , case s.route of
+        Projects -> HH.span [ cls "muted" ] [ HH.text "choose a project" ]
+        GraphR _ -> graphNav s
+        IngestionR -> navLabel "ingestion"
+        CockpitR -> navLabel "cockpit"
     , HH.span [ cls "nav-spacer" ] []
     -- in Graph view the fixed runtime overlay owns the top-right corner and the
     -- up/down count, so the nav chip would be redundant; show it elsewhere.
-    , case s.view of
-        Graph -> HH.text ""
+    , case s.route of
+        GraphR _ -> HH.text ""
         _ -> HH.span [ cls "status" ] [ HH.text serveStatus ]
     ]
   where
+  navLabel t = HH.span [ cls "nav-grp" ]
+    [ HH.span [ cls "ctx" ] [ HH.text t ]
+    , HH.button [ cls "btn xs", HE.onClick \_ -> NavTo Projects ] [ HH.text "← projects" ]
+    ]
   serveStatus = case s.cockErr of
     Just _ -> "serve ✕"
     Nothing -> case s.cockpit of
       Nothing -> "serve …"
       Just v -> "serve ◉ " <> show (Array.length (Array.filter _.up v.routes)) <> "/" <> show (Array.length v.routes) <> " up"
 
-viewSelect :: forall m. State -> H.ComponentHTML Action () m
-viewSelect s =
-  HH.select [ cls "sel", HE.onValueChange gotoOf ]
-    [ vopt "ingestion" "Ingestion" (s.view == Ingestion)
-    , vopt "graph" "Graph" (s.view == Graph)
-    , vopt "cockpit" "Cockpit" (s.view == Cockpit)
-    ]
-  where
-  vopt val label sel = HH.option [ HP.value val, HP.selected sel ] [ HH.text label ]
-  gotoOf = case _ of
-    "graph" -> Goto Graph
-    "cockpit" -> Goto Cockpit
-    _ -> Goto Ingestion
-
--- graph-specific nav cluster: fixture chooser, grouping, mark all/none.
+-- graph-specific nav cluster: project label · grouping · mark all/none · zoom.
 graphNav :: forall m. State -> H.ComponentHTML Action () m
 graphNav s =
   HH.span [ cls "nav-grp" ]
-    [ HH.select [ cls "sel", HE.onValueChange LoadFixture ]
-        ( [ HH.option [ HP.value "", HP.selected (s.fixtureKey == "") ] [ HH.text "load fixture…" ] ]
-            <> map (\f -> HH.option [ HP.value f.key, HP.selected (s.fixtureKey == f.key) ] [ HH.text f.label ]) fixtures
-        )
+    [ HH.button [ cls "btn xs", HE.onClick \_ -> NavTo Projects ] [ HH.text "← projects" ]
+    , HH.span [ cls "ctx" ] [ HH.text (maybe "—" _.label s.currentProject) ]
     , HH.select [ cls "sel", HE.onValueChange setGroupOf ]
         [ gopt ByDeps "deps", gopt ByHost "host", gopt ByPack "pack" ]
     , HH.span [ cls "muted" ] [ HH.text "marks" ]
@@ -485,6 +566,32 @@ graphNav s =
     "host" -> SetGroupMode ByHost
     "pack" -> SetGroupMode ByPack
     _ -> SetGroupMode ByDeps
+
+-- ── projects picker (landing) ────────────────────────────────────────────────
+
+renderProjects :: forall m. State -> H.ComponentHTML Action () m
+renderProjects s =
+  HH.div [ cls "picker-page" ]
+    [ maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text e ]) s.anaErr
+    , HH.h2 [ cls "picker-h" ] [ HH.text "Deployments" ]
+    , HH.p [ cls "muted" ] [ HH.text "each backed by a bosun supervise daemon — live status and control" ]
+    , HH.div [ cls "proj-grid" ] (map (projCard s true) deployments)
+    , HH.h2 [ cls "picker-h" ] [ HH.text "Study fixtures" ]
+    , HH.p [ cls "muted" ] [ HH.text "view-only — explore the ingestion / validation surface and the structural channels" ]
+    , HH.div [ cls "proj-grid" ] (map (projCard s false) studyFixtures)
+    ]
+
+projCard :: forall m. State -> Boolean -> Project -> H.ComponentHTML Action () m
+projCard _ controllable p =
+  HH.button [ cls ("proj-card" <> if controllable then " ctl" else ""), HE.onClick \_ -> NavTo (GraphR p.key) ]
+    [ HH.div [ cls "proj-top" ]
+        [ HH.span [ cls "proj-label" ] [ HH.text p.label ]
+        , case p.supervise of
+            Just port -> HH.span [ cls "proj-port" ] [ HH.text (":" <> show port) ]
+            Nothing -> HH.span [ cls "proj-port view" ] [ HH.text "view" ]
+        ]
+    , HH.div [ cls "proj-blurb" ] [ HH.text p.blurb ]
+    ]
 
 -- ── cockpit view ─────────────────────────────────────────────────────────────
 

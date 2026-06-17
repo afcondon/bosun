@@ -31,6 +31,8 @@ package:
     - argonaut-codecs
     - codec-argonaut
     - strings
+    - routing
+    - routing-duplex
     - bosun-core
   bundle:
     module: Chair.Main
