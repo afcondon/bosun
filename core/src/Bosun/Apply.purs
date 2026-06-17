@@ -25,9 +25,10 @@ module Bosun.Apply
 
 import Prelude
 
-import Bosun.Atoms (ServiceId, unAbsPath, unServiceId)
+import Bosun.Atoms (Port, ServiceId, unAbsPath, unPort, unServiceId)
 import Bosun.Executor (Executor(..))
 import Bosun.Plan (Change(..), Plan, changeRef, planSteps)
+import Bosun.Reachability (Address(..), addresses)
 import Bosun.Service (Service, ValidatedDeployment, unServiceRef, unValidatedDeployment)
 import Bosun.Target (ExecLoc(..), Target, TargetMap, resolveTarget, unSshDest)
 import Data.Array as A
@@ -56,12 +57,15 @@ type StagedCommand = { stage :: Int, service :: ServiceId, command :: Command }
 -- | into the planner.
 applyScript :: TargetMap -> ValidatedDeployment -> Plan -> Array StagedCommand
 applyScript tmap vd p =
-  planSteps p # A.mapMaybe \step ->
+  planSteps p # A.concatMap \step ->
     case Map.lookup (unServiceRef (changeRef step.change)) svcs of
-      Nothing -> Nothing
-      Just svc -> case commandFor tmap step.change svc of
-        Nothing -> Nothing
-        Just command -> Just { stage: step.stage, service: svc.id, command }
+      Nothing -> []
+      Just svc ->
+        -- a step yields the launch command (if any) THEN any publish commands
+        -- (e.g. `tailscale funnel` for a service with a Published address),
+        -- both at this step's stage so the publish follows the launch in order.
+        map (\command -> { stage: step.stage, service: svc.id, command })
+          (A.fromFoldable (commandFor tmap step.change svc) <> publishCommands tmap step.change svc)
   where
   svcs = (unValidatedDeployment vd).services
 
@@ -109,6 +113,41 @@ commandFor tmap change svc = map (wrap target) (raw change)
       Container _ -> docker "stop"
       Process _ -> Manual ("stop process (no managed handle): " <> name)
       ex -> manual ex
+
+-- | Commands that PUBLISH a service after it launches — the network-exposure
+-- | half of enactment, distinct from the launch itself. A service whose
+-- | `reachability` carries a `Published` address (a public DNS name) gets a
+-- | `tailscale funnel` enabling its listening port on the public internet, run
+-- | on (and so ssh-wrapped to) the service's host. Idempotent (`--bg` persists),
+-- | so it rides every Start/Restart harmlessly. Only fires when there is BOTH a
+-- | Published address and a concrete listening port to proxy to.
+publishCommands :: TargetMap -> Change -> Service -> Array Command
+publishCommands tmap change svc = case change of
+  Start _ -> funnel
+  Restart _ _ -> funnel
+  _ -> []
+  where
+  target = resolveTarget tmap svc.host
+  addrs = A.fromFoldable (addresses svc.reachability)
+  published = A.any isPublished addrs
+  listenPort = A.head (A.mapMaybe listenPortOf addrs)
+  funnel = case published, listenPort of
+    true, Just port ->
+      [ wrap target (Shell
+          { cwd: Nothing
+          , line: envExports target.envPrefix <> "tailscale funnel --bg " <> show (unPort port)
+          }) ]
+    _, _ -> []
+
+isPublished :: Address -> Boolean
+isPublished = case _ of
+  Published _ -> true
+  _ -> false
+
+listenPortOf :: Address -> Maybe Port
+listenPortOf = case _ of
+  Listening l -> Just l.port
+  _ -> Nothing
 
 -- ssh-wrap only real shell commands bound for a remote target; Manual notes and
 -- already-remote commands pass through unchanged. The ssh login comes from the

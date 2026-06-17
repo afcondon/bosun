@@ -9,7 +9,8 @@ module Test.Bosun.ApplySpec where
 import Prelude
 
 import Bosun.Apply (applyScript)
-import Bosun.Atoms (AbsPath, mkAbsPath, mkHost, mkServiceId)
+import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkDomain, mkHost, mkPort, mkServiceId)
+import Bosun.Reachability (Address(..), BindScope(..), Reachability(..))
 import Bosun.Target (defaultTargets)
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Plan (Snapshot, Status(..), plan)
@@ -19,6 +20,7 @@ import Bosun.Validate (validate)
 import Data.Either (Either(..))
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromJust)
+import Data.Set as Set
 import Data.Tuple (Tuple(..))
 import Data.Validation.Semigroup (toEither)
 import Effect.Aff (Aff)
@@ -43,6 +45,19 @@ containerLeaf name host =
         , localName: name
         }
     }
+
+-- a container on `host` that ALSO declares a Published (public-domain) address
+-- alongside its host:80 listener — the edge/Funnel shape.
+publishedLeaf :: String -> String -> LooseService
+publishedLeaf name host =
+  (containerLeaf name host)
+    { reachability = Reachability (Set.fromFoldable
+        [ Listening { bind: AllIfaces, port: port_ 80 }
+        , Published (mkDomain "andrews-mac-mini.vaquita-paradise.ts.net")
+        ]) }
+
+port_ :: Int -> Port
+port_ n = unsafePartial (fromJust (mkPort n))
 
 snap :: Array (Tuple String Status) -> Snapshot
 snap = Map.fromFoldable <<< map (\(Tuple n st) -> Tuple (mkServiceId n) st)
@@ -79,7 +94,16 @@ spec = describe "Bosun.Apply" do
   it "macmini Container Start -> ssh-wrapped docker compose up, in the remote workdir with PATH" $
     withScript (mkDeployment [ containerLeaf "web" "macmini" ]) (snap []) \lines ->
       lines `shouldEqual`
-        [ "ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH && docker compose up -d web'" ]
+        [ "ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && docker compose up -d web'" ]
+
+  -- A service with a Published address gets a SECOND command after its launch:
+  -- `tailscale funnel` enabling its listening port on the public internet.
+  it "a Published macmini service ALSO emits a tailscale funnel publish step" $
+    withScript (mkDeployment [ publishedLeaf "edge" "macmini" ]) (snap []) \lines ->
+      lines `shouldEqual`
+        [ "ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && docker compose up -d edge'"
+        , "ssh andrew@andrews-mac-mini 'export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && tailscale funnel --bg 80'"
+        ]
 
   it "a running service contributes no command (NoOp omitted)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) (snap [ Tuple "a" Running ]) \lines ->

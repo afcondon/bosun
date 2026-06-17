@@ -17,6 +17,14 @@ services:
       dockerfile: docker/Dockerfile
     ports:
       - "80:80"
+    # The edge is the public face: it listens on host :80 AND is published to the
+    # internet at the mini's Funnel domain. x-bosun.expose REPLACES the ports
+    # default, so we restate the host:80 listener alongside the Published domain;
+    # the Published address makes `apply` emit a `tailscale funnel` step.
+    x-bosun:
+      expose:
+        - host: 80
+        - domain: andrews-mac-mini.vaquita-paradise.ts.net
     depends_on:
       - website
     networks:

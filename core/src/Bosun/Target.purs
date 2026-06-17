@@ -111,7 +111,9 @@ defaultTargets = Map.fromFoldable
       { exec: RemoteSsh (mkSshDest "andrew@andrews-mac-mini")
       , address: "andrews-mac-mini"
       , workdir: mkAbsPath "/Users/andrew/psd3/polyglot-deploy"
-      , envPrefix: [ Tuple "PATH" "/usr/local/bin:/opt/homebrew/bin:$PATH" ]
+      -- PATH covers both `docker` (Docker Desktop) and `tailscale` (the .app's
+      -- CLI is not symlinked onto a standard bin dir on this mini).
+      , envPrefix: [ Tuple "PATH" "/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH" ]
       }
   ]
 
