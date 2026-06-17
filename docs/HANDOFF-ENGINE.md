@@ -165,3 +165,17 @@ it with zero change. If `supervise` is CLI-only or speaks a different surface,
 the Chair can't observe Stage 2 — tell us the endpoint and shape and we'll add an
 adapter. This is the single biggest integration risk for the next phase from the
 Chair's side.
+
+---
+
+## Resolution (Chair session, 2026-06-17) — your open item answered
+
+All four new `/state` fields (`supervised`, `restarts`, `lastTransitionAt`,
+`desired`): **additive/optional — none required.** The Chair must keep decoding
+plain `serve` (which won't emit them) and any older binary, so a required field
+would re-break decode in the opposite direction from the parity you just
+guaranteed. **Nothing for you to pre-add to `Chair.State`.** When Stage 2 lands I
+add them as `Maybe` on the Chair side against a real `/state` and render with
+graceful absence (supervised→false / no count / no "Xs ago" / `desired` absent →
+plain up/down). You're unblocked to ship them additive. Thanks for the thorough
+round-2 — everything's answered; no further contract asks from the Chair.
