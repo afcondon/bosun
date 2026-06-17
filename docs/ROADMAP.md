@@ -64,6 +64,28 @@ The apply path *already ssh-wraps macmini commands.*
    `purescript-python` exhibits is its own small co-design. Bonus: macmini
    services are containers, so `bosun down` = `docker compose stop` already works
    (apply↔down symmetry for this target, unlike the local-Process gap — task #8).
+
+   *Progress — the dry-run is now RUNNABLE, on both columns (2026-06-17).* The
+   macmini script used to be unrunnable (`ssh … 'docker compose up -d <svc>'`
+   with no `cd`, no PATH, plus the union of all 9 profile tags as noise) and the
+   ssh login was hardcoded in `Apply`, the tailnet address separately in `Serve`.
+   Closed principledly: a typed `Bosun.Target` descriptor (`{ exec, address,
+   workdir, envPrefix }`) that both facets resolve from, threaded through
+   `applyScript`/`commandFor`; `defaultTargets` is the built-in layer (macmini =
+   the real `deploy-remote.sh` recipe), and a `targets.json` (`--targets`,
+   `Bosun.Adapters.Targets`) is the GitOps override on top. `fixtures/
+   polyglot-core/` is the real core profile (edge + website). `bosun apply
+   --dry-run` now emits, in boot order (website then edge):
+   `ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export
+   PATH=/usr/local/bin:/opt/homebrew/bin:$PATH && docker compose up -d <svc>'`.
+   **The Gnomon-Go `ApplyCliMain --dry-run` emits this BYTE-IDENTICAL to node on
+   the core fixture** — so the binary that will do the live-fire is proven.
+   94 tests green; go-conformance still byte-identical (35 Go files). **What
+   remains is only the live ssh fire itself — to be done WITH Andrew present
+   (the one genuinely-new outward act).** Prerequisite: the `core` images must
+   already exist on the mini (`deploy-remote.sh andrew@andrews-mac-mini core
+   ~/psd3 --build-only`, framing (a)); Bosun models the compose-up step, not the
+   rsync+build prelude.
 3. **TailScale Funnel front.** Model the public endpoint as a `Published Domain`
    in the `Address` type (the ADDRESS-TYPE work added exactly this), and run the
    `tailscale funnel`/`serve` enablement as a staged command of `apply`.
