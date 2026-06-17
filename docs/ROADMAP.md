@@ -250,3 +250,21 @@ This is mostly *additions to existing seams*, not new architecture:
 
 So: a launchd-aware executor + a `launchctl`/`ps`-backed observe probe, landing
 with the resident `supervise` mode. Noted; continuing with the plan as written.
+
+**`down` / teardown — per-executor stop verbs, NO unmanaged-process shim
+(AC 2026-06-17).** Bosun's `Stop` enactment is principled *per executor* and
+should stay that way:
+- **Container** — `docker compose stop` (already implemented; works ssh-wrapped
+  for macmini). The MacMini deploy is containers, so apply↔down symmetry already
+  holds there.
+- **launchd / systemd** — `launchctl bootout` / `systemctl stop` (the
+  launchd-executor work above).
+- **Unmanaged local `Process`** — currently `# MANUAL: stop process (no managed
+  handle)`, and it must STAY honestly Manual until done properly. **Do NOT ship a
+  stop-by-port (`lsof … | kill`) or pgrep-by-command heuristic** — it stops
+  "whatever holds the port," not "what Bosun launched," and would be the kind of
+  shim that hides the missing real feature. The two principled options: (a) the
+  Stage-2 resident **supervisor holds the child handle** and kills its own PID
+  (the natural home); or (b) a stateless `bosun down` reads launched PIDs from
+  `WorldState.recorded` (the reserved D-7/D-8 slot) that `apply` writes. Tracked
+  as a task; lands with Stage 2, not before.
