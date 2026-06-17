@@ -329,3 +329,54 @@ typed policy — they mirror `Bosun.Health.RestartPolicy` (`base :: BaseRestart`
 validated `Service`/`LaunchSpec` so `refine` resolves backoff/maxRetries/base
 per service from its own policy instead of one config for the whole group.
 Tracked as a follow-up, not blocking.
+
+---
+
+## Chair → Engine (2026-06-17): live Atlantis hand-off — supervisor WORKS; 2 fixture launch bugs
+
+Ran the real hand-off: `deepstar down` → `bosun supervise --port 3994
+fixtures/atlantis` → drove from `#/graph/atlantis`. **The boot-grace/backoff fix
+is confirmed live:**
+- **No storm.** The services that fail to bind sit correctly in `in-backoff`
+  (`suspendedUntil` set, `restarts` climbing slowly) instead of being re-Started
+  every tick. Single process each — no pile-up.
+- **`/state` D-S1 fields render right** — `supervised: true` + the `supervision`
+  map come through; the Chair's existing `decodeSuperviseState` ignores them as
+  unknown keys (ask-F contract holds), and I'll wire them as `Maybe` badges as a
+  separate Chair step.
+- **5/6 daemons up clean under Bosun** (es9, link, calypso-server,
+  calypso-frontend, purerl-tidal). DeepStar effectively replaced. The dashboard
+  dogfooded itself — it surfaced both launch bugs below at a glance.
+
+### Bug 1 — purerl-tidal cowboy crash — FIXED by Chair (`8ce76a8`)
+`erl -pa ebin` boot-crashed: `{cowboy,{"no such file or directory","cowboy.app"}}`.
+Root cause: DeepStar carried `ERL_LIBS=_build/default/lib` as a per-service
+`[service.env]` block (rebar3's dep dir); the port to `x-bosun.process` (models
+only `{cwd, command}`) **dropped the env**. Folded inline as
+`env ERL_LIBS=_build/default/lib erl …` (rides your `nohup env <command>` wrapper).
+purerl-tidal now binds :3012, restarts:0. **Stopgap — see the design ask.**
+
+### Bug 2 — fh2-daemon never starts — YOURS
+`node output/Main/index.js --daemon` (your `50850ba`) **imports the compiled
+module but never calls `main()`** → empty log, instant exit, perpetual
+`in-backoff`. The prebuilt-not-`spago run` instinct is right; the entry just isn't
+invocable. Needs a real entrypoint — a bundle, or
+`node -e 'import("./output/Main/index.js").then(m => m.main())' -- --daemon`, or
+fh2-config's actual daemon module. (Even once it runs, process-probe reads it
+green before `~/.fh2/control.sock` binds — readiness vs liveness, below.)
+
+### Design ask — a first-class `env` on `x-bosun.process`
+Bug 1's real fix isn't my inline string hack. Add `env :: Object String` to the
+Process executor, mirroring what both upstreams already model — Compose's native
+`environment:` and DeepStar's `[service.env]`. Then it's typed data:
+`x-bosun.process: { cwd, command, env: { ERL_LIBS: _build/default/lib } }` —
+inspectable / round-trippable, not buried in a command string. The value itself is
+irreducible launch knowledge (rebar3's layout); it wants a typed home, not to be
+derived from anything more abstract (deriving "purerl ⇒ ERL_LIBS" would couple the
+IR to build-tool conventions — don't).
+
+### Broader principle (re Bug 2's cosmetic) — liveness ≠ readiness
+`probe: process` is a *liveness* signal (the process exists), not *readiness* (it's
+serving). For any daemon with a readiness signal — fh2's socket, the BEAM's port —
+probing readiness and using pgid-liveness only to distinguish `Starting` from
+`Down` is the more honest reading. fh2 is just where the gap first shows.
