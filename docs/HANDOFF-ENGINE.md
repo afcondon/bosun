@@ -93,3 +93,61 @@ of them never touches the real rig.
 To exercise auto-restart once you build it: spawn a route, kill its backend pid
 out from under serve, and confirm `/state` shows it return to `up:true` with
 `restarts` incremented — that's exactly the red→green the Chair will animate.
+
+---
+
+## Plan-review asks (2026-06-17, round 2) — please make sure the plan covers these
+
+The Chair MVP is shipped (`ad86153`). Three things that aren't obvious from the
+list above but determine whether the next phase lands cleanly:
+
+### A. The poll-miss problem — restarts must be observable, not just enacted
+The Chair polls `/state` every **1.5 s**. A supervised process that crashes and
+is respawned **faster than one poll interval** never shows as `down` — the Chair
+samples `up:true` both before and after and animates *nothing*. So the headline
+"goes red then green on its own" demo silently fails for any fast restart.
+
+Fix is on your side and cheap: make restarts observable across poll boundaries.
+Minimum = the `restarts :: Int` counter already proposed (the Chair shows it tick
+even if it missed the red). Better = `lastTransitionAt` / `lastExit { code, at }`,
+or a tiny per-route ring buffer of recent up/down transitions, so the Chair can
+render "↻ restarted 3 s ago (×4)" for a flap it never directly sampled. **Please
+budget one of these into the supervisor design — without it the demo is a
+coin-flip.** (We can also drop the Chair poll to ~500 ms, but that papers over it
+rather than fixing it, and still misses sub-500 ms restarts.)
+
+### B. What does manual STOP mean for a *supervised* process?
+The armed control surface has a STOP button. If a route is under an `Always`
+restart policy and the user stops it, two readings collide:
+- supervision wins → serve immediately respawns it → the STOP button looks
+  broken (node flicks red then green, user didn't ask for that); or
+- the manual stop **suspends the policy** → it stays down until a manual launch.
+
+The Chair needs the second to be a coherent surface (stop means stop). **Please
+decide and encode this** — ideally a route can be in a "manually held down /
+policy-suspended" state that `/state` exposes (e.g. `held :: Boolean` or a
+tri-state `desired: up|down|auto`), so the Chair can show "stopped by you (auto-
+restart suspended)" vs "down + will self-heal". Without it, STOP under
+supervision is ambiguous.
+
+### C. Atomic `/control/restart` is load-bearing once supervision exists
+Listed as "optional/cosmetic" above, but it stops being cosmetic under
+supervision: the Chair's reboot = stop-then-spawn opens a window where the
+supervisor may race the Chair's own spawn (both trying to bring the node back),
+and/or the transient `down` trips a co-restart of a `part-of` group. An atomic
+serve-side restart closes both. **Please promote it to "needed alongside the
+supervisor," not a nice-to-have.**
+
+### D. Contract hygiene
+Add any new `/state` fields as **optional/additive** — the Chair's argonaut
+record decoder ignores unknown keys, so additive is safe, but a new *required*
+field breaks decode. If you want a field required, ping the Chair side and we'll
+add it to `Chair.State` first. And please confirm the IR field name for the
+restart policy (`Always` / `once` / …) so the Chair can badge supervised routes.
+
+### E. Coupling — flip the group in one poll window
+No contract change needed (the Chair derives the `part-of` / `binds-to` group
+structurally from the edges). One ask: when you co-restart a coupled group, try
+to have `/state` reflect all members down→up within the **same poll window**, so
+the Chair's blast-amber reads as one coherent event rather than a stutter of
+independent flickers.
