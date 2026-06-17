@@ -31,6 +31,7 @@ import Bosun.CLI.IO (argv, readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeSnapshot)
 import Bosun.CLI.Audit (runAudit)
 import Bosun.CLI.Serve (runServe, runServeLive, runServePlan)
+import Bosun.CLI.Supervise (runSupervise)
 import Bosun.Edge (Gate(..), Requirement(..))
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Reachability (hostPort, noNetwork)
@@ -82,6 +83,7 @@ main = do
     [ "apply", composePath, registryPath, snapshotPath ] -> runApply targets composePath registryPath (Just snapshotPath)
     [ "down", "--dry-run", composePath, registryPath ] -> runDownDryRun targets composePath registryPath
     [ "down", composePath, registryPath ] -> runDown targets composePath registryPath
+    [ "supervise", composePath, registryPath ] -> runSupervise composePath registryPath
     _ -> runDemo
 
 -- | Pull an optional `--targets <path>` out of the argument vector wherever it
