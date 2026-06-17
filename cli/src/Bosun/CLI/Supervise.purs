@@ -40,7 +40,7 @@ import Data.Either (Either(..))
 import Data.Foldable (intercalate, traverse_)
 import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..))
+import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Tuple (Tuple(..))
 import Data.Validation.Semigroup (toEither)
 import Effect (Effect)
@@ -61,14 +61,17 @@ type SuperviseConfig =
 
 foreign import superviseImpl :: EffectFn1 SuperviseConfig Unit
 
-statusPort :: Int
-statusPort = 3996
+defaultStatusPort :: Int
+defaultStatusPort = 3996
 
 intervalMs :: Int
 intervalMs = 3000
 
-runSupervise :: String -> String -> Effect Unit
-runSupervise composePath registryPath = do
+-- | `bosun supervise [--port N] <compose> <registry>`. The status port defaults
+-- | to 3996; pass `--port` to run one supervisor PER GROUP, each on its own port
+-- | (a group = one deployment), so the Chair polls/controls each independently.
+runSupervise :: Maybe Int -> String -> String -> Effect Unit
+runSupervise mPort composePath registryPath = do
   composeJson <- readYamlFile composePath
   registryJson <- readJsonFile registryPath
   let
@@ -131,7 +134,8 @@ runSupervise composePath registryPath = do
           _ -> pure ("unknown control verb: " <> verb)
       log "supervise: initial bring-up…"
       bringUp
-      runEffectFn1 superviseImpl { statusPort, intervalMs, tick, stateBody, control }
+      runEffectFn1 superviseImpl
+        { statusPort: fromMaybe defaultStatusPort mPort, intervalMs, tick, stateBody, control }
 
 -- Minimal `/state` JSON: desired up/down + each service's observed status.
 -- (Mirrors Main's `statusToken`; consolidate both into a shared snapshot codec

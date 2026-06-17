@@ -47,6 +47,7 @@ import Data.Array as A
 import Data.Array.NonEmpty as NEA
 import Data.Either (Either(..), either)
 import Data.Foldable (intercalate)
+import Data.Int as Int
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromJust, fromMaybe, maybe)
 import Data.Traversable (traverse)
@@ -60,12 +61,17 @@ import Partial.Unsafe (unsafePartial)
 main :: Effect Unit
 main = do
   rawArgs <- argv
-  -- `--targets <file>` is a global option (it can appear anywhere): pull it out
-  -- so the positional `apply`/`plan` forms below match unchanged, then layer the
-  -- file over the built-in defaults. Only `apply` actually consumes the map (it
-  -- is the sole command that renders host-bound commands).
-  let { targetsPath, rest: args } = extractTargets rawArgs
-  targets <- loadTargets targetsPath
+  -- Global options (`--targets <file>`, `--port <n>`) can appear anywhere: pull
+  -- them out so the positional `apply`/`plan`/`supervise` forms below match
+  -- unchanged. `--targets` layers a file over the built-in target defaults
+  -- (consumed by `apply`); `--port` overrides `supervise`'s status port so you
+  -- can run one supervisor per group on its own port.
+  let
+    tf = takeFlag "--targets" rawArgs
+    pf = takeFlag "--port" tf.rest
+    args = pf.rest
+    supPort = pf.value >>= Int.fromString
+  targets <- loadTargets tf.value
   case args of
     [ "check", composePath, registryPath ] -> runCheck composePath registryPath
     [ "plan", composePath, registryPath ] -> runPlan composePath registryPath Nothing
@@ -83,19 +89,20 @@ main = do
     [ "apply", composePath, registryPath, snapshotPath ] -> runApply targets composePath registryPath (Just snapshotPath)
     [ "down", "--dry-run", composePath, registryPath ] -> runDownDryRun targets composePath registryPath
     [ "down", composePath, registryPath ] -> runDown targets composePath registryPath
-    [ "supervise", composePath, registryPath ] -> runSupervise composePath registryPath
+    [ "supervise", composePath, registryPath ] -> runSupervise supPort composePath registryPath
     _ -> runDemo
 
--- | Pull an optional `--targets <path>` out of the argument vector wherever it
--- | appears, returning the path and the remaining args.
-extractTargets :: Array String -> { targetsPath :: Maybe String, rest :: Array String }
-extractTargets args = case A.findIndex (_ == "--targets") args of
+-- | Pull an optional `<name> <value>` flag out of the argument vector wherever
+-- | it appears, returning the value and the remaining args (so the positional
+-- | command forms match unchanged).
+takeFlag :: String -> Array String -> { value :: Maybe String, rest :: Array String }
+takeFlag name args = case A.findIndex (_ == name) args of
   Just i
-    | Just p <- A.index args (i + 1) ->
-        { targetsPath: Just p
+    | Just v <- A.index args (i + 1) ->
+        { value: Just v
         , rest: fromMaybe args (A.deleteAt i args >>= A.deleteAt i)
         }
-  _ -> { targetsPath: Nothing, rest: args }
+  _ -> { value: Nothing, rest: args }
 
 -- | The built-in `defaultTargets`, with a `targets.json` layered on top (file
 -- | entries win per host — `Map.union` is left-biased).
