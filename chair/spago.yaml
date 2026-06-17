@@ -31,6 +31,7 @@ package:
     - argonaut-codecs
     - codec-argonaut
     - strings
+    - foreign-object
     - routing
     - routing-duplex
     - bosun-core

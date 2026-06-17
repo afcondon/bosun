@@ -20,7 +20,7 @@ import Affjax.Web as AX
 import Bosun.View (AliasEntry, AliasOverride(..), AnalyzeRequest, AnalyzeResult, ConflictView, DeployErrorView, DivergenceView, RouteBacking, ServiceInstanceView, SvcView, ValidationView(..), analyzeRequestCodec, analyzeResultCodec)
 import Chair.Graph (Channel, GroupMode(..), NodeLive(..), allChannels, graphView, layoutPositions, nextMode)
 import Chair.Routes (Route(..), routeCodec)
-import Chair.State (RedirectInfo, RejectInfo, RouteStatus, StateView, decodeStateView)
+import Chair.State (RedirectInfo, RejectInfo, RouteStatus, StateView, SuperviseState, decodeStateView, decodeSuperviseState)
 import Data.Argonaut.Decode.Error (printJsonDecodeError)
 import Data.Array as Array
 import Data.Codec.Argonaut as CA
@@ -33,6 +33,7 @@ import Data.Set (Set)
 import Data.Set as Set
 import Data.String as String
 import Data.Tuple.Nested (type (/\), (/\))
+import Foreign.Object as FO
 import Effect (Effect)
 import Effect.Aff (Aff, Milliseconds(..), delay, launchAff_)
 import Hylograph.Transition.Easing (EasingType(..))
@@ -87,8 +88,10 @@ type Project =
 type State =
   { route :: Route
   , currentProject :: Maybe Project
-  -- cockpit (pillar 0)
+  -- cockpit (pillar 0) — serve /state (routes/redirects/rejected)
   , cockpit :: Maybe StateView
+  -- supervise /state (desired + serviceId→status), when the project has a daemon
+  , superv :: Maybe SuperviseState
   , cockErr :: Maybe String
   , ticks :: Int
   , busy :: Boolean
@@ -125,9 +128,11 @@ data Action
   = Initialize
   | Refresh
   | Reload
-  | Spawn Int
-  | Stop Int
-  | Reboot Int
+  | Spawn Int                 -- serve: spawn a route by port (Cockpit table)
+  | Stop Int                  -- serve: stop a route by port (Cockpit table)
+  | GroupUp                   -- supervise: POST /control/up — bring the group up
+  | GroupDown                 -- supervise: POST /control/down — hold the group down
+  | Restart String            -- supervise: POST /control/restart?service=<id>
   | NavTo Route               -- set the hash; the hashchange drives the view
   | SetCompose String
   | SetRegistry String
@@ -169,7 +174,7 @@ component =
   H.mkComponent
     { initialState: \_ ->
         { route: Projects, currentProject: Nothing
-        , cockpit: Nothing, cockErr: Nothing, ticks: 0, busy: false
+        , cockpit: Nothing, superv: Nothing, cockErr: Nothing, ticks: 0, busy: false
         , composePath: "", registryPath: "", analysis: Nothing, anaErr: Nothing, anaLoading: false
         , overrides: [], mergeName: "", mergeCanon: ""
         , graphFocus: Nothing, graphSelect: Nothing, groupMode: ByDeps
@@ -206,8 +211,12 @@ openProject :: forall o. String -> H.HalogenM State Action () o Aff Unit
 openProject key = case Array.find (\p -> p.key == key) projects of
   Nothing -> H.modify_ _ { currentProject = Nothing, anaErr = Just ("unknown project: " <> key) }
   Just p -> do
-    H.modify_ _ { currentProject = Just p, composePath = p.compose, registryPath = p.registry }
+    -- a fresh project: drop any armed state and the previous daemon's snapshot so
+    -- a stale armed mode can't command the new (or wrong) daemon.
+    H.modify_ _ { currentProject = Just p, composePath = p.compose, registryPath = p.registry
+                , armed = false, superv = Nothing, cockpit = Nothing }
     runAnalyze
+    refresh
 
 handleAction :: forall o. Action -> H.HalogenM State Action () o Aff Unit
 handleAction = case _ of
@@ -218,11 +227,11 @@ handleAction = case _ of
   Reload -> control "/control/reload"
   Spawn port -> control ("/control/spawn?port=" <> show port)
   Stop port -> control ("/control/stop?port=" <> show port)
-  -- reboot = stop then spawn (serve has no atomic restart); the 1.5s /state poll
-  -- shows the node flip red→green on its own.
-  Reboot port -> do
-    control ("/control/stop?port=" <> show port)
-    control ("/control/spawn?port=" <> show port)
+  -- supervise control: whole-group up/down (desired-state, stop HOLDS) + atomic
+  -- per-element restart. All POST to the current project's supervise daemon.
+  GroupUp -> control "/control/up"
+  GroupDown -> control "/control/down"
+  Restart svc -> control ("/control/restart?service=" <> svc)
   -- navigation is hash-first: set the hash and let `matchesWith` drive the view,
   -- so the URL and the rendered view are always the same fact.
   NavTo route -> H.liftEffect (setHash (print routeCodec route))
@@ -298,8 +307,8 @@ pollLoop = do
 deployments :: Array Project
 deployments =
   [ { key: "polyglot-mbp"
-    , label: "Polyglot · MBP"
-    , blurb: "native processes — site + python + julia (supervise :3996)"
+    , label: "Proctest · MBP"
+    , blurb: "native-process supervision — safe smoke fixture (supervise :3996)"
     , compose: fixturesDir <> "/proctest/compose.yml"
     , registry: fixturesDir <> "/proctest/registry.json"
     , supervise: Just 3996
@@ -397,13 +406,20 @@ animLoop gen = do
 
 refresh :: forall o. H.HalogenM State Action () o Aff Unit
 refresh = do
-  base <- H.gets controlBase
+  s0 <- H.get
+  let base = controlBase s0
   res <- H.liftAff (AX.get RF.json (base <> "/state"))
+  -- a supervise project speaks the {desired, services} shape; serve speaks
+  -- {routes,redirects,rejected}. Decode the one this daemon emits.
   H.modify_ \s -> case res of
     Left err -> s { cockErr = Just (AX.printError err), ticks = s.ticks + 1 }
-    Right resp -> case decodeStateView resp.body of
-      Left e -> s { cockErr = Just (printJsonDecodeError e), ticks = s.ticks + 1 }
-      Right v -> s { cockpit = Just v, cockErr = Nothing, ticks = s.ticks + 1 }
+    Right resp -> case s.currentProject >>= _.supervise of
+      Just _ -> case decodeSuperviseState resp.body of
+        Left e -> s { cockErr = Just (printJsonDecodeError e), ticks = s.ticks + 1 }
+        Right v -> s { superv = Just v, cockpit = Nothing, cockErr = Nothing, ticks = s.ticks + 1 }
+      Nothing -> case decodeStateView resp.body of
+        Left e -> s { cockErr = Just (printJsonDecodeError e), ticks = s.ticks + 1 }
+        Right v -> s { cockpit = Just v, superv = Nothing, cockErr = Nothing, ticks = s.ticks + 1 }
 
 -- ── ingestion (pillar 1) — talk to chair-server ──────────────────────────────
 
@@ -498,10 +514,15 @@ appBody s = case s.route of
       ]
     Just a ->
       let
-        handlers = { hover: HoverNode, select: SelectNode, toggleChan: ToggleChannel, arm: ToggleArm, spawn: Spawn, stop: Stop, reboot: Reboot }
-        live = maybe Map.empty (\sv -> liveMap sv a) s.cockpit
-        ctrl = maybe Map.empty (\sv -> controlMap sv a) s.cockpit
-        g = graphView handlers s.armed s.groupMode s.channels s.livePos s.graphFocus s.graphSelect live ctrl a
+        handlers = { hover: HoverNode, select: SelectNode, toggleChan: ToggleChannel, arm: ToggleArm, groupUp: GroupUp, groupDown: GroupDown, restart: Restart }
+        -- live status from whichever daemon backs this project; control + desired
+        -- only from a supervise daemon (serve-backed projects are status-only here).
+        live = case s.superv of
+          Just sv -> superviseLive sv a
+          Nothing -> maybe Map.empty (\c -> liveMap c a) s.cockpit
+        ctrl = maybe Map.empty (\sv -> superviseCtrl sv a) s.superv
+        desired = map (\sv -> sv.desired == "up") s.superv
+        g = graphView handlers s.armed s.groupMode s.channels s.livePos s.graphFocus s.graphSelect live ctrl desired a
       in
         -- main on top, the structural rack docked as a horizontal strip along the
         -- bottom (one row, scrolls sideways); the runtime overlay floats fixed in
@@ -676,12 +697,10 @@ renderIngestion s =
 -- | aren't serve-managed.
 liveMap :: StateView -> AnalyzeResult -> Map String NodeLive
 liveMap sv a =
-  Map.fromFoldable (map (\i -> i.localName /\ statusFor (canonOf i)) a.instances)
+  Map.fromFoldable (map (\i -> i.localName /\ statusFor (canonOf a i)) a.instances)
   where
   routeStatus = Map.fromFoldable (map (\r -> r.serviceId /\ (if r.up then LiveUp else LiveDown)) sv.routes)
   redirectIds = Set.fromFoldable (map _.serviceId sv.redirects)
-  aliasM = Map.fromFoldable (map (\e -> e.from /\ e.to) a.reconcile.aliases)
-  canonOf i = fromMaybe (maybe i.localName (\p -> p <> ":" <> i.role) i.project) (Map.lookup i.localName aliasM)
   statusFor canon = case Map.lookup canon routeStatus of
     Just s -> s
     Nothing -> if Set.member canon redirectIds then LiveRedirect else LiveUnknown
@@ -695,9 +714,45 @@ controlMap sv a =
   Map.fromFoldable (Array.mapMaybe entry a.instances)
   where
   portByCanon = Map.fromFoldable (map (\r -> r.serviceId /\ r.publicPort) sv.routes)
-  aliasM = Map.fromFoldable (map (\e -> e.from /\ e.to) a.reconcile.aliases)
-  canonOf i = fromMaybe (maybe i.localName (\p -> p <> ":" <> i.role) i.project) (Map.lookup i.localName aliasM)
-  entry i = map (\p -> i.localName /\ p) (Map.lookup (canonOf i) portByCanon)
+  entry i = map (\p -> i.localName /\ p) (Map.lookup (canonOf a i) portByCanon)
+
+-- | The canonical serviceId for an instance — node `localName` bridged to the
+-- | `projectSlug:role` the daemons key by, via `reconcile.aliases` (else the
+-- | instance's own `project:role`). Shared by every correlation map.
+canonOf :: AnalyzeResult -> ServiceInstanceView -> String
+canonOf a i =
+  fromMaybe (maybe i.localName (\p -> p <> ":" <> i.role) i.project)
+    (Map.lookup i.localName aliasM)
+  where aliasM = Map.fromFoldable (map (\e -> e.from /\ e.to) a.reconcile.aliases)
+
+-- | supervise /state → each graph node's runtime status. `services` is keyed by
+-- | canonical serviceId; we look each node up through the same `canonOf` bridge.
+-- | The richer supervise tokens collapse onto the Chair's 4-state NodeLive:
+-- | running/starting/completed-ok → up; failed/down/in-backoff → down (the alarm
+-- | + blast); anything else → unknown (no dot).
+superviseLive :: SuperviseState -> AnalyzeResult -> Map String NodeLive
+superviseLive sv a =
+  Map.fromFoldable (map (\i -> i.localName /\ statusFor (canonOf a i)) a.instances)
+  where
+  statusFor canon = maybe LiveUnknown tokenToLive (FO.lookup canon sv.services)
+
+tokenToLive :: String -> NodeLive
+tokenToLive = case _ of
+  "running" -> LiveUp
+  "starting" -> LiveUp
+  "completed-ok" -> LiveUp
+  "failed" -> LiveDown
+  "down" -> LiveDown
+  "in-backoff" -> LiveDown
+  _ -> LiveUnknown
+
+-- | supervise /state → each supervised node's serviceId (the atomic-restart
+-- | target). A node is controllable iff its canonical id is in `services`.
+superviseCtrl :: SuperviseState -> AnalyzeResult -> Map String String
+superviseCtrl sv a =
+  Map.fromFoldable (Array.mapMaybe entry a.instances)
+  where
+  entry i = let c = canonOf a i in if FO.member c sv.services then Just (i.localName /\ c) else Nothing
 
 ladder :: forall m. State -> AnalyzeResult -> H.ComponentHTML Action () m
 ladder s a =

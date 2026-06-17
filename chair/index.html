@@ -251,6 +251,28 @@
       border-color: var(--reject); animation: armedCorner 1.5s ease-in-out infinite;
     }
     .runtime-overlay.armed .ro-title, .runtime-overlay.armed .ro-hint { color: var(--reject); }
+    /* when the panel is a div (armed, or a non-supervise status-only group) the
+       whole-panel click no longer arms, so don't imply it's clickable. */
+    div.runtime-overlay { cursor: default; }
+    div.runtime-overlay:hover { border-color: var(--line); box-shadow: 0 4px 16px rgba(0,0,0,0.10); }
+    div.runtime-overlay.armed:hover { border-color: var(--reject); }
+    /* armed whole-group controls (tasks 1–5): up = confirmatory green, down = the
+       alarm red (stop means stop — auto-restart suspended). */
+    .ro-controls { display: flex; gap: 6px; }
+    .ro-btn {
+      flex: 1; font: inherit; font-size: 11px; font-weight: 600; padding: 5px 0;
+      border-radius: 5px; border: 1px solid; cursor: pointer; letter-spacing: 0.02em;
+      font-variant-numeric: tabular-nums;
+    }
+    .ro-btn.up { color: #1a7f37; border-color: #9bd3ad; background: #f1faf3; }
+    .ro-btn.up:hover { background: #1a7f37; color: #fff; border-color: #1a7f37; }
+    .ro-btn.down { color: var(--reject); border-color: #e6b3ae; background: #fdf3f2; }
+    .ro-btn.down:hover { background: var(--reject); color: #fff; border-color: var(--reject); }
+    .ro-disarm {
+      font: inherit; font-size: 10px; color: var(--reject); background: none; border: none;
+      cursor: pointer; text-align: center; letter-spacing: 0.03em; padding: 0;
+    }
+    .ro-disarm:hover { text-decoration: underline; }
     .graph-legend { display: flex; gap: 40px; flex-wrap: wrap; margin-top: 18px; font-size: 12px; color: var(--muted); }
     .leg-grp { display: flex; flex-direction: column; gap: 5px; }
     .leg-h {

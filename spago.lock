@@ -36,6 +36,7 @@
             "effect",
             "either",
             "foldable-traversable",
+            "foreign-object",
             "halogen",
             "halogen-svg-elems",
             "http-methods",

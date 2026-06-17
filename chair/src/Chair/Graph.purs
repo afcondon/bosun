@@ -30,7 +30,7 @@ import Data.Foldable (foldl, maximum, minimum)
 import Data.Int (round, toNumber)
 import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromMaybe, maybe)
+import Data.Maybe (Maybe(..), fromMaybe, isJust, maybe)
 import Data.Set (Set)
 import Data.Set as Set
 import Data.String (joinWith)
@@ -308,12 +308,9 @@ liveUpColor = SA.RGB 56 158 86
 liveRedirectColor :: SA.Color
 liveRedirectColor = SA.RGB 92 116 196
 
--- armed-control fills (ChControl). Saturated, high-contrast against white text:
--- launch a stopped node = confirmatory green; stop = the alarm red (the same
--- emergency hue everywhere); reboot = a deliberate blue (stop-then-spawn).
-launchColor :: SA.Color
-launchColor = SA.RGB 38 150 78
-
+-- armed-control fill for the per-node ⟳ restart button: a deliberate blue,
+-- distinct from the alarm red (down) and every source-border hue. (Group up/down
+-- are CSS-styled HTML buttons on the runtime overlay, not SVG fills.)
 rebootColor :: SA.Color
 rebootColor = SA.RGB 52 104 196
 
@@ -495,27 +492,30 @@ layoutPositions mode a =
     Map.fromFoldable (map (\n -> n.id /\ { x: n.x, y: n.y }) nodes)
 
 -- the callbacks the view raises back to Main. The read-only interactions
--- (hover/select/toggleChan) plus the three armed-control commands, each keyed by
--- the node's serve public port. Bundled into one record so the (already wide)
--- graphView signature stays legible as control grows.
+-- (hover/select/toggleChan) plus the armed-control commands against a `bosun
+-- supervise` daemon: a whole-group up/down (tasks 1–5) and a per-element atomic
+-- restart keyed by serviceId (task 6). Bundled into one record so the (already
+-- wide) graphView signature stays legible.
 type Handlers act =
   { hover :: Maybe String -> act        -- node hover (Nothing on leave) → brush
   , select :: Maybe String -> act       -- node click → blast-radius selection
   , toggleChan :: Channel -> act         -- rack thumbnail → toggle a structural channel
   , arm :: act                           -- runtime overlay click → toggle armed control
-  , spawn :: Int -> act                  -- armed: launch a stopped route (publicPort)
-  , stop :: Int -> act                   -- armed: stop a running route
-  , reboot :: Int -> act                 -- armed: stop-then-spawn a running route
+  , groupUp :: act                       -- armed: POST /control/up — bring the whole group up
+  , groupDown :: act                     -- armed: POST /control/down — hold the group down
+  , restart :: String -> act             -- armed: POST /control/restart?service=<id> (atomic)
   }
 
 -- Returns the main pane, the (structural) channel rack, and the fixed runtime
 -- overlay SEPARATELY so the app shell can dock the rack along the bottom, park
 -- the overlay in the top-right corner, and give the rest to the main view.
 -- `armed` is the control mode (the overlay toggles it); `ctrl` maps a node id →
--- its serve public port (serve-managed routes only), so when armed those nodes
--- become start/stop/reboot fill-buttons.
-graphView :: forall act m. Handlers act -> Boolean -> GroupMode -> Set Channel -> Map String Point -> Maybe String -> Maybe String -> Map String NodeLive -> Map String Int -> AnalyzeResult -> { main :: H.ComponentHTML act () m, rack :: H.ComponentHTML act () m, overlay :: H.ComponentHTML act () m }
-graphView h armed mode channels livePos focus select live ctrl a =
+-- its supervise `serviceId` (supervised nodes only), so when armed those nodes
+-- become ⟳ restart fill-buttons; `desired` is the group's supervise desired-state
+-- (`Just true` = up, `Just false` = held down, `Nothing` = not a supervise group,
+-- so group control is unavailable).
+graphView :: forall act m. Handlers act -> Boolean -> GroupMode -> Set Channel -> Map String Point -> Maybe String -> Maybe String -> Map String NodeLive -> Map String String -> Maybe Boolean -> AnalyzeResult -> { main :: H.ComponentHTML act () m, rack :: H.ComponentHTML act () m, overlay :: H.ComponentHTML act () m }
+graphView h armed mode channels livePos focus select live ctrl desired a =
   let
     chOn ch = Set.member ch channels
     insts = a.instances
@@ -592,12 +592,10 @@ graphView h armed mode channels livePos focus select live ctrl a =
       , circleR: Map.lookup n.id packRes.radii   -- Just r in pack mode → render as a circle
       , live: dotLiveOf n.id                       -- on-node status dot (hidden when armed)
       , liveWillFall: liveStatusOf n.id /= LiveDown && Set.member n.id liveBlast
-      -- armed control: Just when armed AND serve manages this node (it has a public
-      -- port). `running` reads the raw live map so the button is always correct.
-      , control:
-          if armed
-            then map (\port -> { port, running: Map.lookup n.id live == Just LiveUp }) (Map.lookup n.id ctrl)
-            else Nothing
+      -- armed control: Just <serviceId> when armed AND this node is supervised
+      -- (its serviceId is in the daemon's /state). The node becomes a ⟳ restart
+      -- button; group up/down lives on the runtime overlay.
+      , control: if armed then Map.lookup n.id ctrl else Nothing
       }
     -- the SVG layers, each gated by its channel. The ByDeps axis is BASE (it
     -- names the boot-order direction, not placement). Placement bands, traffic
@@ -632,7 +630,7 @@ graphView h armed mode channels livePos focus select live ctrl a =
                       <> (if showSpof then " · ⚠ " <> show (Set.size cutVerts) <> " cut-vertices · " <> show (Set.size bridgeSet) <> " bridges" else "")
                       <> (if hasLive then " · ◉ live: " <> show liveUpN <> " up · " <> show (Array.length downIds) <> " down" else "")) ]
                 ]
-                <> (if armed then [ HH.span [ cls "armed-banner" ] [ HH.text "⚠ ARMED — a click starts / stops / reboots a real service" ] ] else [])
+                <> (if armed then [ HH.span [ cls "armed-banner" ] [ HH.text "⚠ ARMED — a click ⟳ restarts a real service; ▲▼ brings the whole group up / down" ] ] else [])
               )
           , SE.svg
               [ SA.viewBox 0.0 0.0 maxX maxY
@@ -648,7 +646,7 @@ graphView h armed mode channels livePos focus select live ctrl a =
               ]
           ]
     , rack: channelRack h.toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeSetAll
-    , overlay: runtimeOverlay h.arm armed maxX maxY nodes live
+    , overlay: runtimeOverlay h armed desired maxX maxY nodes live
     }
 
 -- append the dim marker class when brushing has pushed this element to the back
@@ -884,7 +882,7 @@ type NodeFlags =
   , circleR :: Maybe Number -- Just r ⇒ pack mode: render the node AS a circle of radius r
   , live :: NodeLive        -- runtime status from serve /state (the overlay dot)
   , liveWillFall :: Boolean -- transitively depends on a node serve reports DOWN
-  , control :: Maybe { port :: Int, running :: Boolean }  -- Just ⇒ armed + serve-managed
+  , control :: Maybe String -- Just serviceId ⇒ armed + supervised → a ⟳ restart button
   }
 
 nodeMark :: forall act m. Handlers act -> Set Channel -> NodeFlags -> Node -> H.ComponentHTML act () m
@@ -916,17 +914,18 @@ nodeMark h channels flags n =
   -- legible card, since a split packed circle would be too small to hit safely);
   -- otherwise the node IS its pack circle (pack mode) or the 150×42 card.
   body = case flags.control of
-    Just ct -> controlBody ct
+    Just svc -> controlBody svc
     Nothing -> case flags.circleR of
       Just r -> circleBody r
       Nothing -> cardBody
 
-  -- the armed control surface: a stopped route is a single green LAUNCH button;
-  -- a running route splits into red STOP (left) | blue REBOOT (right). The node
-  -- name + role/host stay drawn on top (white) so you always have full identity
-  -- at the point of action. Labels are pointer-events:none (CSS) so clicks fall
-  -- through to the button rect beneath.
-  controlBody ct =
+  -- the armed control surface: a supervised node becomes a single ⟳ RESTART
+  -- button (atomic /control/restart?service=). Group up/down is on the runtime
+  -- overlay (it's a whole-deployment act, not per-node). The node name + role/host
+  -- stay drawn on top (white) so you always have full identity at the point of
+  -- action; the live-status halo/dot still shows whether it's up. Labels are
+  -- pointer-events:none (CSS) so clicks fall through to the button rect beneath.
+  controlBody svc =
     let
       sub = clip 22 (n.mech <> maybe "" (\hst -> " · " <> hst) n.host)
       nameLine = SE.text
@@ -939,33 +938,19 @@ nodeMark h channels flags n =
         , SA.fontSize (SA.FontSizeLength (SA.Px 8.5)), SA.fill paper, SA.fillOpacity 0.8
         , SA.class_ (H.ClassName "ctrl-label") ]
         [ HH.text sub ]
-      verb x t = SE.text
-        [ SA.x x, SA.y 39.5, SA.textAnchor SA.AnchorMiddle
+      verb t = SE.text
+        [ SA.x (nodeW / 2.0), SA.y 39.5, SA.textAnchor SA.AnchorMiddle
         , SA.fontSize (SA.FontSizeLength (SA.Px 9.0)), SA.fill paper
         , SA.class_ (H.ClassName "ctrl-label") ]
         [ HH.text t ]
     in
-      if ct.running then
-        [ SE.rect
-            [ SA.x 0.0, SA.y 0.0, SA.width nodeW, SA.height nodeH, SA.rx 5.0
-            , SA.fill rebootColor, SA.class_ (H.ClassName "ctrl-btn")
-            , HE.onClick \_ -> h.reboot ct.port ]
-        , SE.rect
-            [ SA.x 0.0, SA.y 0.0, SA.width (nodeW / 2.0), SA.height nodeH, SA.rx 5.0
-            , SA.fill alarm, SA.class_ (H.ClassName "ctrl-btn")
-            , HE.onClick \_ -> h.stop ct.port ]
-        , nameLine, subLine
-        , verb (nodeW * 0.25) "■ stop"
-        , verb (nodeW * 0.75) "⟳ reboot"
-        ]
-      else
-        [ SE.rect
-            [ SA.x 0.0, SA.y 0.0, SA.width nodeW, SA.height nodeH, SA.rx 5.0
-            , SA.fill launchColor, SA.class_ (H.ClassName "ctrl-btn")
-            , HE.onClick \_ -> h.spawn ct.port ]
-        , nameLine, subLine
-        , verb (nodeW / 2.0) "▶ launch"
-        ]
+      [ SE.rect
+          [ SA.x 0.0, SA.y 0.0, SA.width nodeW, SA.height nodeH, SA.rx 5.0
+          , SA.fill rebootColor, SA.class_ (H.ClassName "ctrl-btn")
+          , HE.onClick \_ -> h.restart svc ]
+      , nameLine, subLine
+      , verb "⟳ restart"
+      ]
 
   -- the runtime status dot (serve /state), top-left so it never collides with the
   -- right-edge exposure badge. Unknown draws nothing → the overlay is invisible on
@@ -1216,34 +1201,56 @@ channelRack toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeS
       ]
 
 -- the fixed runtime overlay (top-right corner): ONE panel that unifies live
--- status and control. Disarmed it shows the runtime minimap — a dot per
--- serve-managed node, green up / red down / indigo redirect — and an at-a-glance
--- N/M-up count. It IS the arm toggle (no separate affordance): clicking it arms
--- the destructive control mode, at which point its dots GREY OUT (their job has
--- moved to the on-map fill-buttons) and it wears the armed-red frame. Clicking
--- again disarms. Spatially congruent with the main view (same viewBox), so the
--- corner dot for a node sits where that node sits on the big map.
+-- status and control over the current project's `bosun supervise` daemon.
+-- Disarmed it shows the runtime minimap — a dot per supervised node, green up /
+-- red down — and an N/M-up count; for a supervise group it IS the arm toggle (no
+-- separate affordance), clicking it arms the destructive control mode. Armed, the
+-- dots GREY OUT (their job moved to the on-map ⟳ buttons), it wears the armed-red
+-- frame, and it grows the whole-group controls: ▲ up all / ▼ down all + disarm.
+-- `desired` is the daemon's group state: `Just false` = manually HELD DOWN
+-- (auto-restart suspended); `Nothing` = not a supervise group → status-only, no
+-- arming. Spatially congruent with the main view (same viewBox).
 runtimeOverlay
   :: forall act m
-   . act -> Boolean -> Number -> Number -> Array Node -> Map String NodeLive
+   . Handlers act -> Boolean -> Maybe Boolean -> Number -> Number -> Array Node -> Map String NodeLive
   -> H.ComponentHTML act () m
-runtimeOverlay armAct armed maxX maxY nodes live =
-  HH.button
-    [ cls (if armed then "runtime-overlay armed" else "runtime-overlay")
-    , HE.onClick \_ -> armAct
-    ]
+runtimeOverlay h armed desired maxX maxY nodes live =
+  if armable && not armed
+    -- disarmed + controllable: the whole panel is the arm toggle (Andrew's
+    -- "no separate affordance").
+    then HH.button [ cls "runtime-overlay", HE.onClick \_ -> h.arm ] (head <> minimap <> [ hint "click to arm control" ])
+    else HH.div [ cls (if armed then "runtime-overlay armed" else "runtime-overlay") ]
+      ( head <> minimap <> footer )
+  where
+  armable = isJust desired
+  heldDown = desired == Just false
+  title
+    | armed = "⚠ ARMED · control"
+    | heldDown = "runtime · held down"
+    | otherwise = "runtime"
+  head =
     [ HH.div [ cls "ro-head" ]
-        [ HH.span [ cls "ro-title" ] [ HH.text (if armed then "⚠ ARMED · control" else "runtime") ]
+        [ HH.span [ cls "ro-title" ] [ HH.text title ]
         , HH.span [ cls "ro-count" ] [ HH.text (show upN <> "/" <> show total <> " up") ]
         ]
-    , SE.svg
+    ]
+  minimap =
+    [ SE.svg
         [ SA.viewBox 0.0 0.0 maxX maxY, SA.width 168.0, SA.height 84.0
         , SA.class_ (H.ClassName "ro-svg")
         ]
         (map dotFor nodes)
-    , HH.div [ cls "ro-hint" ] [ HH.text (if armed then "click to disarm" else "click to arm control") ]
     ]
-  where
+  footer
+    | armed =
+        [ HH.div [ cls "ro-controls" ]
+            [ HH.button [ cls "ro-btn up", HE.onClick \_ -> h.groupUp ] [ HH.text "▲ up all" ]
+            , HH.button [ cls "ro-btn down", HE.onClick \_ -> h.groupDown ] [ HH.text "▼ down all" ]
+            ]
+        , HH.button [ cls "ro-disarm", HE.onClick \_ -> h.arm ] [ HH.text "click to disarm" ]
+        ]
+    | otherwise = [ hint "status only — not a supervise group" ]
+  hint t = HH.div [ cls "ro-hint" ] [ HH.text t ]
   statusOf n = fromMaybe LiveUnknown (Map.lookup n.id live)
   total = Array.length (Array.filter (\n -> statusOf n /= LiveUnknown) nodes)
   upN = Array.length (Array.filter (\n -> statusOf n == LiveUp) nodes)

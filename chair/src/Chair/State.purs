@@ -9,12 +9,15 @@ module Chair.State
   , RejectInfo
   , StateView
   , decodeStateView
+  , SuperviseState
+  , decodeSuperviseState
   ) where
 
 import Data.Argonaut.Core (Json)
 import Data.Argonaut.Decode (JsonDecodeError, decodeJson)
 import Data.Either (Either)
 import Data.Maybe (Maybe)
+import Foreign.Object (Object)
 
 type RouteStatus =
   { serviceId :: String
@@ -43,3 +46,18 @@ type StateView =
 -- optional/nullable, matching serve emitting `pid: null` when a backend is down.
 decodeStateView :: Json -> Either JsonDecodeError StateView
 decodeStateView = decodeJson
+
+-- | The OTHER `/state` shape — what `bosun supervise` emits (NOT serve's
+-- | routes/redirects/rejected, despite the handoff's "same shape" claim). It's a
+-- | group desired-state plus a serviceId → status-token map:
+-- |   { "desired": "up"|"down", "services": { "<serviceId>": "running"|… } }
+-- | Keyed by canonical serviceId, which is exactly the Chair's correlation key —
+-- | the `services` object maps node↔status through the same `canonOf` bridge as
+-- | serve. `desired` is the manual-hold indicator (down ⇒ auto-restart suspended).
+type SuperviseState =
+  { desired :: String
+  , services :: Object String
+  }
+
+decodeSuperviseState :: Json -> Either JsonDecodeError SuperviseState
+decodeSuperviseState = decodeJson
