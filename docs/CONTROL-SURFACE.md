@@ -29,14 +29,25 @@ Work is split across two Claude sessions; they meet at the serve HTTP contract.
 
 ## Chair session (frontend — `chair/`)
 
-1. **Live overlay (read-only, modeless first):** poll `/state` (Cockpit already
-   does), pass live `RouteStatus`-by-serviceId + the alias map into `graphView`;
-   each node gets a status dot (green up / red down / grey unknown). Composes
-   with every layout (deps/host/pack) like any other channel.
-2. **Blast-from-down:** a node serve reports `down` auto-drives the existing
-   blast-radius amber, so live fallout is visible.
-3. **Control modal (next increment):** explicit mode toggle with a TIMEOUT and a
-   loud banner — you must not kill a service while exploring. In control mode a
+1. **Live overlay (read-only, modeless first):** ✅ DONE (2026-06-17). The Cockpit
+   poll already fills `s.cockpit`; `Chair.Main.liveMap` correlates it to graph
+   nodes and `graphView` takes a `Map String NodeLive` channel. Each node gets a
+   status dot — green up / red (pulsing) down / indigo redirect (421) / **nothing**
+   for unknown, so the overlay is silent on non-serve fixtures (truly modeless, no
+   toggle). Composes with every layout (deps/host/pack) and every other channel.
+   - **Correlation:** node id = `localName`; /state keys by `projectSlug:role`.
+     `reconcile.aliases` (ingested → canonical) bridges merged compose+registry;
+     where there's no alias, the instance's own `project:role` is the canonical id.
+2. **Blast-from-down:** ✅ DONE. Any node serve reports `down` auto-drives the
+   blast-radius amber over its transitive dependents (always on, no click).
+   - **Demo fixture:** `fixtures/topologies/live/{compose.yml,registry.json}` — the
+     compose (containerised) + registry (native) facets of the six services the
+     SAFE serve fixture admits; reconcile bridges them by directory basename so each
+     pair is one node whose canonical id == the serve serviceId. Load it with the
+     **◉ live demo** button in the Graph toolbar. Stop `ledger:api` (port 8194) in
+     the Cockpit and watch almost the whole graph wash amber.
+3. **Control modal (NEXT — not yet built):** explicit mode toggle with a TIMEOUT and
+   a loud banner — you must not kill a service while exploring. In control mode a
    node click offers spawn/stop/restart via `/control/*`. Decision (Andrew):
    modal, timeout, maximum visual clarity about which mode you're in.
 4. Graph becomes the primary live surface; the Cockpit table stays as a

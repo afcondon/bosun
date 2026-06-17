@@ -1,0 +1,76 @@
+# LIVE fixture — the compose (containerised) facet of the six services that the
+# SAFE serve fixture (fixtures/serve/registry.json) admits. Paired with the
+# registry facet in ./registry.json: reconcile bridges the two by shared
+# directory basename (compose build-context ↔ registry startCommand cwd), so each
+# pair collapses to ONE node whose canonical id is the registry's projectSlug:role
+# — which is exactly the serviceId `bosun serve` keys /state by. That is what lets
+# the Chair's live overlay light a status dot on each graph node.
+#
+# Service names == registry projectNames == build-context basenames, so the graph
+# (which renders raw instances, nubbed by localName) shows one node per service
+# with compose's dependency edges and placement.
+#
+# Dependency shape (→ = depends-on), chosen so the lenses have something to show:
+#   gallery-web → gallery-api        gallery-api is a shared dep (cut-vertex)
+#   atlas-web   → gallery-api        …two frontends funnel through it
+#   gallery-api → ledger-api         ledger-api is the deepest shared dep
+#   archive-api → ledger-api         cross-MACHINE edge (macmini → mbp): fragile
+#   minard-web  → archive-api
+#
+# Kill ledger-api (stop it in the Cockpit) and the blast-from-down amber should
+# wash gallery-api, gallery-web, atlas-web, archive-api, minard-web — almost
+# everything — because it sits under the whole graph.
+services:
+  gallery-web:
+    build: { context: ./gallery-web }
+    x-bosun:
+      place: [mbp, edge]
+      expose:
+        - { host: 8190 }
+    depends_on:
+      gallery-api: { condition: service_started }
+
+  gallery-api:
+    build: { context: ./gallery-api }
+    x-bosun:
+      place: [mbp, core]
+      expose:
+        - { internal: 8191 }
+      requires:
+        ledger-api: requires
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8191/health"]
+
+  atlas-web:
+    build: { context: ./atlas-web }
+    x-bosun:
+      place: [mbp, edge]
+      expose:
+        - { host: 8192 }
+    depends_on:
+      gallery-api: { condition: service_started }
+
+  ledger-api:
+    build: { context: ./ledger-api }
+    x-bosun:
+      place: [mbp, core]
+      expose:
+        - { internal: 8194 }
+
+  minard-web:
+    build: { context: ./minard-web }
+    x-bosun:
+      place: [macmini, web]
+      expose:
+        - { host: 8193 }
+    depends_on:
+      archive-api: { condition: service_started }
+
+  archive-api:
+    build: { context: ./archive-api }
+    x-bosun:
+      place: [macmini, data]
+      expose:
+        - { internal: 8195 }
+      requires:
+        ledger-api: requires

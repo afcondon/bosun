@@ -86,3 +86,21 @@ toggle **↹ group** and hover nodes.
 - `buildHostNodes` is intentionally a *re-position* of `buildNodes` (not a
   separate layout) so every other channel (fill, badge, marks) just works in
   both modes — and so the animated pivot in (1) is purely a position tween.
+
+## Live dashboard + small-multiples rack (2026-06-17)
+
+- **Live overlay** (CONTROL-SURFACE.md steps 1–2): the graph reads serve /state
+  (the Cockpit poll) as a `NodeLive` channel — status dots (up/down/redirect),
+  pulsing down-halo, and blast-from-down (a down node auto-washes its dependents
+  amber). Correlation = `reconcile.aliases` → `project:role` (the /state key).
+  Demo fixture `fixtures/topologies/live/` + the **◉ live demo** button.
+- **Channel rack** (Andrew's small-multiples idea): every mark is now its own
+  `Channel` (source/depth/exposure/placement/dependency/traffic/SPOF/live). The
+  main view composites the enabled `Set Channel`; a rack of dot/edge thumbnails —
+  same viewBox, scaled small — shows each channel ALONE and toggles it. Replaces
+  the symbolic legend (a thumbnail shows the real data, not a glyph). Default =
+  all on (clutter is a fine resting state — never force a view-flip for hygiene);
+  all-off = bare neutral cards. `⚠ SPOF` button retired into the rack.
+- Same principle as the pivot: each channel is an orthogonal layer, so the rack
+  is just "render layer N alone" — the small multiple is the main view minus the
+  other layers. No per-channel special-casing.

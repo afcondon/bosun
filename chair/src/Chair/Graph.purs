@@ -16,7 +16,7 @@
 -- |
 -- | Force layout, the boot-order tight DAG, host hulls and the deck-of-cards
 -- | are later increments (docs/GRAPH-GRAMMAR.md §12).
-module Chair.Graph (graphView, layoutPositions, GroupMode(..), nextMode, modeLabel) where
+module Chair.Graph (graphView, layoutPositions, GroupMode(..), NodeLive(..), Channel(..), allChannels, nextMode, modeLabel) where
 
 import Prelude
 
@@ -67,6 +67,59 @@ modeLabel = case _ of
   ByDeps -> "↹ group: deps"
   ByHost -> "↹ group: host"
   ByPack -> "↹ group: pack"
+
+-- ── live runtime status (the dashboard overlay) ──────────────────────────────
+
+-- | A node's status as `bosun serve` reports it via /state, correlated to the
+-- | graph node through `reconcile.aliases` (Main owns the mapping). This is a
+-- | SEPARATE channel from every structural one — it overlays a status dot and,
+-- | for a down node, auto-drives the blast-radius amber over its dependents
+-- | (CONTROL-SURFACE.md). `LiveUnknown` is the default and renders NOTHING (the
+-- | node isn't serve-managed, e.g. a non-correlated fixture), so the overlay is
+-- | self-effacing — modeless, no toggle.
+data NodeLive
+  = LiveUp        -- serve route, backend running
+  | LiveDown      -- serve route, backend stopped → the failure that blasts
+  | LiveRedirect  -- a 421 redirect — lives on another host (not proxied here)
+  | LiveUnknown   -- not serve-managed → no dot
+
+derive instance Eq NodeLive
+
+-- ── display channels (the small-multiples rack) ──────────────────────────────
+
+-- | Each orthogonal mark the graph can show is its OWN channel. The main view
+-- | composites the enabled set; the rack shows each channel alone as a dot-only
+-- | (or edge-only) small multiple that doubles as its toggle and its legend.
+-- | Default is everything on — a cluttered full view is a legitimate resting
+-- | state (Andrew: don't force a view-flip for optical hygiene). The base layer
+-- | (neutral cards + labels at their positions) is always drawn; with every
+-- | channel off you get bare dots.
+data Channel
+  = ChSource       -- node border hue = provenance (§2.9)
+  | ChDepth        -- node fill = boot depth ramp
+  | ChExposure     -- right-edge openness badge
+  | ChPlacement    -- failure-domain bands + cross-host edge hue
+  | ChRequirement  -- the dependency edges + midpoint requirement marks
+  | ChTraffic      -- reverse-proxy route edges
+  | ChSpof         -- structural cut-vertex halos + bridge edges
+  | ChLive         -- runtime status dots + blast-from-down
+
+derive instance Eq Channel
+derive instance Ord Channel
+
+allChannels :: Array Channel
+allChannels = [ ChSource, ChDepth, ChExposure, ChPlacement, ChRequirement, ChTraffic, ChSpof, ChLive ]
+
+channelLabel :: Channel -> String
+channelLabel = case _ of
+  ChSource -> "source"
+  ChDepth -> "boot depth"
+  ChExposure -> "exposure"
+  ChPlacement -> "placement"
+  ChRequirement -> "dependency"
+  ChTraffic -> "traffic"
+  ChSpof -> "SPOF"
+  ChLive -> "live status"
 
 -- ── layout constants ─────────────────────────────────────────────────────────
 
@@ -203,6 +256,14 @@ ink = SA.RGB 26 26 26
 faint :: SA.Color
 faint = SA.RGB 150 150 150
 
+-- neutral marks: the resting hue when a channel is OFF (a card whose source
+-- channel is hidden) and the un-encoded dots in a small multiple.
+neutral :: SA.Color
+neutral = SA.RGB 205 209 216
+
+neutralBorder :: SA.Color
+neutralBorder = SA.RGB 176 182 192
+
 paper :: SA.Color
 paper = SA.RGB 255 255 255
 
@@ -234,6 +295,26 @@ blastColor = SA.RGB 224 146 46
 -- violet/amber/indigo/grey). Provisional pending the holistic attention pass.
 traffic :: SA.Color
 traffic = SA.RGB 90 150 165
+
+-- live-status dot hues (the runtime overlay). Up is a calm confirmatory green
+-- (distinct from the teal traffic and the green source border); down REUSES the
+-- alarm red (a down service IS the structural emergency); redirect is a cool
+-- indigo "lives elsewhere". Unknown never draws.
+liveUpColor :: SA.Color
+liveUpColor = SA.RGB 56 158 86
+
+liveRedirectColor :: SA.Color
+liveRedirectColor = SA.RGB 92 116 196
+
+-- a PUNCHIER version of the depth ramp, for the dot-only small multiple: the
+-- main-card ramp (layerRamp) is deliberately pale and vanishes shrunk to a dot
+-- on near-white, reading as "empty" and colliding with the genuinely-hollow
+-- no-value dots. Same channel, same semantic (lighter = starts earlier), but a
+-- saturated light→deep blue so the gradient reads and the dot is clearly filled.
+depthThumb :: Number -> SA.Color
+depthThumb f =
+  let lerp hi lo = round (hi - f * (hi - lo))
+  in SA.RGB (lerp 200.0 36.0) (lerp 216.0 78.0) (lerp 240.0 150.0)
 
 -- node fill = dependency depth, a calm light sequential ramp (lighter = starts
 -- earlier). A RETAINED channel (Andrew, 2026-06-15): it survives a layout pivot
@@ -402,9 +483,10 @@ layoutPositions mode a =
   in
     Map.fromFoldable (map (\n -> n.id /\ { x: n.x, y: n.y }) nodes)
 
-graphView :: forall act m. (Maybe String -> act) -> (Maybe String -> act) -> GroupMode -> Boolean -> Map String Point -> Maybe String -> Maybe String -> AnalyzeResult -> H.ComponentHTML act () m
-graphView hoverAct selectAct mode showSpof livePos focus select a =
+graphView :: forall act m. (Maybe String -> act) -> (Maybe String -> act) -> (Channel -> act) -> GroupMode -> Set Channel -> Map String Point -> Maybe String -> Maybe String -> Map String NodeLive -> AnalyzeResult -> H.ComponentHTML act () m
+graphView hoverAct selectAct toggleChan mode channels livePos focus select live a =
   let
+    chOn ch = Set.member ch channels
     insts = a.instances
     edges = edgesOf insts
     routes = trafficOf insts
@@ -448,18 +530,52 @@ graphView hoverAct selectAct mode showSpof livePos focus select a =
       Nothing -> case focus of
         Nothing -> false
         Just fid -> not (from == fid || to == fid)
-    -- structural SPOFs, computed from the dependency graph's shape (§8.7)
+    -- structural SPOFs, computed from the dependency graph's shape (§8.7).
+    -- Computed UNCONDITIONALLY (the rack thumbnail always previews them); the
+    -- MAIN view gates them by the ChSpof channel.
     spofG = spofGraph (map _.id nodes) edges
-    cutVerts = if showSpof then articulationPoints spofG else Set.empty
-    bridgeSet = if showSpof then Set.fromFoldable (map (\(Tuple x y) -> normEdge x y) (bridges spofG)) else Set.empty
+    showSpof = chOn ChSpof
+    cutVertsAll = articulationPoints spofG
+    bridgeSetAll = Set.fromFoldable (map (\(Tuple x y) -> normEdge x y) (bridges spofG))
+    cutVerts = if showSpof then cutVertsAll else Set.empty
+    bridgeSet = if showSpof then bridgeSetAll else Set.empty
     isBridge from to = Set.member (normEdge from to) bridgeSet
+    -- live overlay: which nodes serve reports DOWN, and the auto-blast over their
+    -- transitive dependents (§14.5 driven by reality, not a click). The MAIN view
+    -- gates by ChLive (so liveOf reads Unknown when off); the rack uses the raw
+    -- `live` map so its thumbnail always previews.
+    liveOf id = if chOn ChLive then fromMaybe LiveUnknown (Map.lookup id live) else LiveUnknown
+    downIds = Array.filter (\n -> liveOf n.id == LiveDown) nodes
+    liveBlast = foldl (\acc n -> Set.union acc (blastRadius edges n.id)) Set.empty downIds
+    hasLive = Array.any (\n -> liveOf n.id /= LiveUnknown) nodes
+    liveUpN = Array.length (Array.filter (\n -> liveOf n.id == LiveUp) nodes)
     nodeFlags n =
       { dim: nodeDim n
       , cutVertex: Set.member n.id cutVerts
       , killed: select == Just n.id
       , willFall: select /= Just n.id && Set.member n.id blastSet
       , circleR: Map.lookup n.id packRes.radii   -- Just r in pack mode → render as a circle
+      , live: liveOf n.id
+      , liveWillFall: liveOf n.id /= LiveDown && Set.member n.id liveBlast
       }
+    -- the SVG layers, each gated by its channel. The ByDeps axis is BASE (it
+    -- names the boot-order direction, not placement). Placement bands, traffic
+    -- routes and the dependency edges each switch off with their channel — with
+    -- everything off you're left with the neutral cards (bare dots).
+    bgLayer = case mode of
+      ByDeps -> [ axisLayer maxX ]
+      ByHost -> if chOn ChPlacement then [ swimlaneLayer nodes ] else []
+      ByPack -> if chOn ChPlacement then [ circleLayer packCirc ] else []
+    trafficLayer =
+      if chOn ChTraffic
+        then [ SE.g [ SA.class_ (H.ClassName "traffic") ]
+                 (Array.mapMaybe (\r -> trafficLine (edgeDim r.from r.to) posOf r) routes) ]
+        else []
+    edgeLayer =
+      if chOn ChRequirement
+        then [ SE.g [ SA.class_ (H.ClassName "edges") ]
+                 (Array.mapMaybe (\e -> edgeLine (edgeDim e.from e.to) (isBridge e.from e.to) (chOn ChPlacement) posOf e) edges) ]
+        else []
   in
     HH.div [ cls "graph" ]
       [ HH.div [ cls "graph-meta" ]
@@ -471,24 +587,18 @@ graphView hoverAct selectAct mode showSpof livePos focus select a =
                         ByDeps -> "loose view (left → right = boot order)"
                         ByHost -> "grouped by host"
                         ByPack -> "packed by placement")
-                  <> (if showSpof then " · ⚠ " <> show (Set.size cutVerts) <> " cut-vertices · " <> show (Set.size bridgeSet) <> " bridges" else "")) ]
+                  <> (if showSpof then " · ⚠ " <> show (Set.size cutVerts) <> " cut-vertices · " <> show (Set.size bridgeSet) <> " bridges" else "")
+                  <> (if hasLive then " · ◉ live: " <> show liveUpN <> " up · " <> show (Array.length downIds) <> " down" else "")) ]
           ]
       , SE.svg
           [ SA.viewBox 0.0 0.0 maxX maxY, SA.width maxX, SA.height maxY
           , SA.class_ (H.ClassName "graph-svg")
           ]
-          ( (case mode of
-              ByDeps -> [ axisLayer maxX ]
-              ByHost -> [ swimlaneLayer nodes ]
-              ByPack -> [ circleLayer packCirc ]) <>
-          [ SE.g [ SA.class_ (H.ClassName "traffic") ]
-              (Array.mapMaybe (\r -> trafficLine (edgeDim r.from r.to) posOf r) routes)
-          , SE.g [ SA.class_ (H.ClassName "edges") ]
-              (Array.mapMaybe (\e -> edgeLine (edgeDim e.from e.to) (isBridge e.from e.to) posOf e) edges)
-          , SE.g [ SA.class_ (H.ClassName "nodes") ]
-              (map (\n -> nodeMark hoverAct selectAct (nodeFlags n) n) renderNodes)
+          ( bgLayer <> trafficLayer <> edgeLayer <>
+          [ SE.g [ SA.class_ (H.ClassName "nodes") ]
+              (map (\n -> nodeMark hoverAct selectAct channels (nodeFlags n) n) renderNodes)
           ] )
-      , legend
+      , channelRack toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeSetAll live
       ]
 
 -- append the dim marker class when brushing has pushed this element to the back
@@ -506,10 +616,11 @@ edgeLine
   :: forall act m
    . Boolean
   -> Boolean
+  -> Boolean
   -> (String -> Maybe Node)
   -> Edge
   -> Maybe (H.ComponentHTML act () m)
-edgeLine dim bridge posOf e = do
+edgeLine dim bridge showPlace posOf e = do
   from <- posOf e.from
   to <- posOf e.to
   let
@@ -523,8 +634,9 @@ edgeLine dim bridge posOf e = do
     -- local (grey); diverge only deep (same machine, different host) → mild;
     -- diverge at the top (different machine/region) → the fragile network
     -- boundary (strong amber). §14.6 generalised from flat cross-host to the path.
+    -- The cross-host hue belongs to the PLACEMENT channel — neutral when it's off.
     shared = sharedPrefixLen from.place to.place
-    diverges = from.place /= to.place && not (Array.null from.place) && not (Array.null to.place)
+    diverges = showPlace && from.place /= to.place && not (Array.null from.place) && not (Array.null to.place)
     boundaryColor
       | not diverges = edgeColor
       | shared == 0 = crossHostColor       -- different machine — most fragile
@@ -720,10 +832,12 @@ type NodeFlags =
   , killed :: Boolean       -- the blast-radius selection (§14.5)
   , willFall :: Boolean     -- transitively depends on the killed node
   , circleR :: Maybe Number -- Just r ⇒ pack mode: render the node AS a circle of radius r
+  , live :: NodeLive        -- runtime status from serve /state (the overlay dot)
+  , liveWillFall :: Boolean -- transitively depends on a node serve reports DOWN
   }
 
-nodeMark :: forall act m. (Maybe String -> act) -> (Maybe String -> act) -> NodeFlags -> Node -> H.ComponentHTML act () m
-nodeMark hoverAct selectAct flags n =
+nodeMark :: forall act m. (Maybe String -> act) -> (Maybe String -> act) -> Set Channel -> NodeFlags -> Node -> H.ComponentHTML act () m
+nodeMark hoverAct selectAct channels flags n =
   -- positioned by a `translate` on the group, children at LOCAL 0,0 — so a layout
   -- pivot changes only this transform and the browser CSS-tweens the move
   -- (§6.1 object constancy). The reordering in graphView keeps Halogen reusing
@@ -735,20 +849,43 @@ nodeMark hoverAct selectAct flags n =
     , HE.onMouseLeave \_ -> hoverAct Nothing
     , HE.onClick \_ -> selectAct (Just n.id)
     ]
-    ( halos <> body )
+    ( halos <> body <> liveDot )
   where
+  chOn ch = Set.member ch channels
+  -- the card's fill is the depth ramp (ChDepth) and its border is the source hue
+  -- (ChSource); each falls back to a neutral when its channel is off.
+  cardFill = if n.ghost then paper else if chOn ChDepth then layerRamp n.depth else paper
+  cardStroke = if n.ghost then faint else if chOn ChSource then srcColor n.source else neutralBorder
   -- in pack mode the node IS its pack circle (centred on the card-box centre);
   -- elsewhere it's the 150×42 card. Same source/depth/exposure channels apply.
   body = case flags.circleR of
     Just r -> circleBody r
     Nothing -> cardBody
 
+  -- the runtime status dot (serve /state), top-left so it never collides with the
+  -- right-edge exposure badge. Unknown draws nothing → the overlay is invisible on
+  -- non-correlated fixtures. On top of the body so it reads over the fill.
+  liveDot = case flags.live of
+    LiveUnknown -> []
+    st ->
+      let
+        Tuple dx dy = case flags.circleR of
+          Just r -> let cr = max 6.0 (r - 4.0) in Tuple (nodeW / 2.0 - 0.66 * cr) (nodeH / 2.0 - 0.66 * cr)
+          Nothing -> Tuple 8.5 8.5
+      in
+        [ SE.circle
+            [ SA.cx dx, SA.cy dy, SA.r 5.0
+            , SA.fill (liveColor st), SA.stroke paper, SA.strokeWidth 1.6
+            , SA.class_ (H.ClassName (if st == LiveDown then "live-dot down" else "live-dot"))
+            ]
+        ]
+
   cardBody =
     [ SE.rect
         [ SA.x 0.0, SA.y 0.0, SA.width nodeW, SA.height nodeH, SA.rx 5.0
-        , SA.fill (if n.ghost then paper else layerRamp n.depth)
+        , SA.fill cardFill
         , SA.fillOpacity (if n.ghost then 0.4 else 1.0)
-        , SA.stroke (if n.ghost then faint else srcColor n.source)
+        , SA.stroke cardStroke
         , SA.strokeWidth (if n.ghost then 1.0 else 1.8)
         ]
     , SE.text
@@ -761,7 +898,7 @@ nodeMark hoverAct selectAct flags n =
         , SA.fontSize (SA.FontSizeLength (SA.Px 9.5)), SA.fill faint
         ]
         [ HH.text (if n.ghost then "undefined — no source" else (n.mech <> maybe "" (\h -> " · " <> h) n.host)) ]
-    ] <> exposureBadge n
+    ] <> (if chOn ChExposure then exposureBadge n else [])
 
   -- a leaf circle filling its pack slot (drawn a touch inside r for a gap),
   -- centred on the card-box centre so the position tween is unchanged.
@@ -770,9 +907,9 @@ nodeMark hoverAct selectAct flags n =
     in
       [ SE.circle
           [ SA.cx (nodeW / 2.0), SA.cy (nodeH / 2.0), SA.r cr
-          , SA.fill (if n.ghost then paper else layerRamp n.depth)
+          , SA.fill cardFill
           , SA.fillOpacity (if n.ghost then 0.4 else 1.0)
-          , SA.stroke (if n.ghost then faint else srcColor n.source)
+          , SA.stroke cardStroke
           , SA.strokeWidth (if n.ghost then 1.0 else 1.8)
           ]
       , SE.text
@@ -788,7 +925,40 @@ nodeMark hoverAct selectAct flags n =
   halos =
     (if flags.killed then [ haloRing flags.circleR alarm 6.5 ] else [])
       <> (if flags.willFall then [ haloRing flags.circleR blastColor 6.5 ] else [])
+      -- live fallout (serve says a dependency is down) — same amber as the
+      -- interactive blast, a touch tighter so the two read as one phenomenon.
+      <> (if flags.liveWillFall then [ haloRing flags.circleR blastColor 5.0 ] else [])
+      -- a node serve reports DOWN: a pulsing alarm ring (the CSS class animates it)
+      <> (if flags.live == LiveDown then [ liveDownHalo flags.circleR ] else [])
       <> (if flags.cutVertex then [ haloRing flags.circleR alarm 3.5 ] else [])
+
+-- the live-status dot hue (down reuses the structural alarm red — a down service
+-- IS the emergency the SPOF lens warns about).
+liveColor :: NodeLive -> SA.Color
+liveColor = case _ of
+  LiveUp -> liveUpColor
+  LiveDown -> alarm
+  LiveRedirect -> liveRedirectColor
+  LiveUnknown -> faint
+
+-- the pulsing alarm ring around a node serve reports DOWN. Like haloRing but a
+-- touch heavier and tagged `live-down-halo` so the stylesheet animates it — a
+-- real outage draws the eye without an interaction.
+liveDownHalo :: forall act m. Maybe Number -> H.ComponentHTML act () m
+liveDownHalo circleR = case circleR of
+  Just r ->
+    SE.circle
+      [ SA.cx (nodeW / 2.0), SA.cy (nodeH / 2.0), SA.r (max 6.0 (r - 4.0) + 8.0)
+      , SA.fill paper, SA.fillOpacity 0.0, SA.stroke alarm, SA.strokeWidth 2.8
+      , SA.class_ (H.ClassName "live-down-halo")
+      ]
+  Nothing ->
+    SE.rect
+      [ SA.x (-8.0), SA.y (-8.0)
+      , SA.width (nodeW + 16.0), SA.height (nodeH + 16.0), SA.rx 13.0
+      , SA.fill paper, SA.fillOpacity 0.0, SA.stroke alarm, SA.strokeWidth 2.8
+      , SA.class_ (H.ClassName "live-down-halo")
+      ]
 
 -- an alarm/warning ring just outside the node, drawn behind it (a SPOF halo or
 -- a blast-radius wash). `off` is how far the ring sits outside the node edge.
@@ -868,51 +1038,84 @@ addrValue a = case a.kind of
 clip :: Int -> String -> String
 clip n s = if length s > n then take (n - 1) s <> "…" else s
 
--- a small HTML legend so the marks are readable without prior knowledge.
-legend :: forall act m. H.ComponentHTML act () m
-legend =
-  HH.div [ cls "graph-legend" ]
-    [ HH.div [ cls "leg-grp" ]
-        [ HH.span [ cls "leg-h" ] [ HH.text "edge midpoint (requirement)" ]
-        , leg "○" "wants (soft)"
-        , leg "◉" "requires (hard, waits)"
-        , leg "●" "requisite (must pre-exist)"
-        , leg "○○" "binds-to (crash-coupled)"
-        , leg "●●" "part-of (reverse lifecycle)"
-        ]
-    , HH.div [ cls "leg-grp" ]
-        [ HH.span [ cls "leg-h" ] [ HH.text "node border (source)" ]
-        , leg "▮" "compose / registry / plist / systemd / overlay"
-        , leg "▒" "fill = boot depth (lighter starts earlier)"
-        , leg "▢" "ghost = dangling dependency"
-        ]
-    , HH.div [ cls "leg-grp" ]
-        [ HH.span [ cls "leg-h" ] [ HH.text "edges" ]
-        , leg "──" "dependency (lifecycle)"
-        , leg "╌╌" "route (traffic, labelled /path)"
-        , leg "▬" "amber = crosses hosts (network boundary)"
-        ]
-    , HH.div [ cls "leg-grp" ]
-        [ HH.span [ cls "leg-h" ] [ HH.text "exposure (right of node)" ]
-        , leg "●" "openness dot: warm = wide/internet · cool = local/cluster"
-        , leg ":p" "the address value (port / path / domain / socket)"
-        , leg "—" "no dot = no inbound surface (worker)"
-        ]
-    , HH.div [ cls "leg-grp" ]
-        [ HH.span [ cls "leg-h" ] [ HH.text "structural SPOF (⚠ toggle)" ]
-        , leg "▢" "red halo = cut-vertex (loss partitions the graph)"
-        , leg "▬" "red edge = bridge (single link, no redundant path)"
-        ]
-    , HH.div [ cls "leg-grp" ]
-        [ HH.span [ cls "leg-h" ] [ HH.text "blast radius (click a node)" ]
-        , leg "▢" "red = the killed node · amber = what stops with it"
-        , leg "↺" "click it again (or load) to clear"
-        ]
-    ]
+-- the small-multiples rack: one thumbnail per channel, drawn in the SAME
+-- coordinate space as the main view (viewBox letterboxes it small), so each is
+-- spatially congruent with the big diagram. Each thumbnail IS that channel's
+-- legend (it shows the actual data, not a symbol), its isolated view (read one
+-- relationship without leaving the full diagram), and its toggle. All on = the
+-- full composite; all off = bare neutral cards. Dot sizes are derived from the
+-- thumbnail scale so they read at a constant screen size whatever the extent.
+channelRack
+  :: forall act m
+   . (Channel -> act) -> Set Channel -> Number -> Number
+  -> Array Node -> Array Edge -> Array Route -> Set String -> Set (Tuple String String)
+  -> Map String NodeLive -> H.ComponentHTML act () m
+channelRack toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeSetAll live =
+  HH.div [ cls "graph-rack" ] (map thumb allChannels)
   where
-  leg sym txt =
-    HH.span [ cls "leg" ]
-      [ HH.span [ cls "leg-sym" ] [ HH.text sym ], HH.text txt ]
+  sc = min (150.0 / max 1.0 maxX) (96.0 / max 1.0 maxY)
+  rData = 5.0 / sc
+  sw = 1.4 / sc
+  ew = 1.6 / sc
+  bw = 3.2 / sc
+
+  posOf id = Array.find (\n -> n.id == id) nodes
+  machines = Array.sort (Array.nub (Array.mapMaybe (\n -> Array.head n.place) nodes))
+  cxOf n = n.x + nodeW / 2.0
+  cyOf n = n.y + nodeH / 2.0
+
+  dot2 n fill strk = SE.circle
+    [ SA.cx (cxOf n), SA.cy (cyOf n), SA.r rData
+    , SA.fill fill, SA.stroke strk, SA.strokeWidth sw ]
+  hollow n strk = SE.circle
+    [ SA.cx (cxOf n), SA.cy (cyOf n), SA.r rData
+    , SA.fill paper, SA.fillOpacity 0.0, SA.stroke strk, SA.strokeWidth sw ]
+  dot n col = dot2 n col col
+
+  seg e col w = case posOf e.from, posOf e.to of
+    Just f, Just t ->
+      [ SE.line [ SA.x1 (cxOf f), SA.y1 (cyOf f), SA.x2 (cxOf t), SA.y2 (cyOf t), SA.stroke col, SA.strokeWidth w ] ]
+    _, _ -> []
+
+  routeSeg r = case posOf r.from, posOf r.to of
+    Just f, Just t ->
+      [ SE.line [ SA.x1 (cxOf f), SA.y1 (cyOf f), SA.x2 (cxOf t), SA.y2 (cyOf t), SA.stroke traffic, SA.strokeWidth ew, SA.strokeDashArray "8 5" ] ]
+    _, _ -> []
+
+  placeColor n = case Array.head n.place of
+    Just mc -> (hostStyle (fromMaybe 0 (Array.elemIndex mc machines))).ink
+    Nothing -> neutral
+
+  content = case _ of
+    ChSource -> map (\n -> dot n (if n.ghost then faint else srcColor n.source)) nodes
+    ChDepth -> map (\n -> if n.ghost then hollow n neutral else dot n (depthThumb n.depth)) nodes
+    ChExposure -> map (\n -> maybe (hollow n neutral) (\ad -> dot n (opennessColor ad.openness)) (mostExposedView n.reach)) nodes
+    ChPlacement -> map (\n -> dot n (placeColor n)) nodes
+    ChRequirement -> Array.concatMap (\e -> seg e edgeColor ew) edges <> map (\n -> dot n neutral) nodes
+    ChTraffic -> Array.concatMap routeSeg routes <> map (\n -> dot n neutral) nodes
+    ChSpof ->
+      Array.concatMap (\e -> if Set.member (normEdge e.from e.to) bridgeSetAll then seg e alarm bw else []) edges
+        <> map (\n -> dot n (if Set.member n.id cutVertsAll then alarm else neutral)) nodes
+    ChLive -> map
+      (\n -> case Map.lookup n.id live of
+          Just LiveUp -> dot n liveUpColor
+          Just LiveDown -> dot n alarm
+          Just LiveRedirect -> dot n liveRedirectColor
+          _ -> hollow n neutral)
+      nodes
+
+  thumb ch =
+    HH.button
+      [ cls (if Set.member ch channels then "sm-thumb on" else "sm-thumb")
+      , HE.onClick \_ -> toggleChan ch
+      ]
+      [ SE.svg
+          [ SA.viewBox 0.0 0.0 maxX maxY, SA.width 150.0, SA.height 96.0
+          , SA.class_ (H.ClassName "sm-svg")
+          ]
+          (content ch)
+      , HH.span [ cls "sm-cap" ] [ HH.text (channelLabel ch) ]
+      ]
 
 cls :: forall r i. String -> HP.IProp (class :: String | r) i
 cls c = HP.class_ (HH.ClassName c)

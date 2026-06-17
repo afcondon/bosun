@@ -18,7 +18,7 @@ import Affjax.RequestBody as RB
 import Affjax.ResponseFormat as RF
 import Affjax.Web as AX
 import Bosun.View (AliasEntry, AliasOverride(..), AnalyzeRequest, AnalyzeResult, ConflictView, DeployErrorView, DivergenceView, RouteBacking, ServiceInstanceView, SvcView, ValidationView(..), analyzeRequestCodec, analyzeResultCodec)
-import Chair.Graph (GroupMode(..), graphView, layoutPositions, modeLabel, nextMode)
+import Chair.Graph (Channel, GroupMode(..), NodeLive(..), allChannels, graphView, layoutPositions, modeLabel, nextMode)
 import Chair.State (RedirectInfo, RejectInfo, RouteStatus, StateView, decodeStateView)
 import Data.Argonaut.Decode.Error (printJsonDecodeError)
 import Data.Array as Array
@@ -28,6 +28,8 @@ import Data.Foldable (all)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
+import Data.Set (Set)
+import Data.Set as Set
 import Data.String as String
 import Data.Tuple.Nested (type (/\), (/\))
 import Effect (Effect)
@@ -90,7 +92,7 @@ type State =
   , livePos :: Map String Point
   , anim :: Maybe (Array AnimNode)
   , animGen :: Int
-  , showSpof :: Boolean      -- overlay structural single-points-of-failure (§8.7)
+  , channels :: Set Channel  -- which display channels are composited into the view
   }
 
 -- one node's position transition (interpolating a 2D Point through the engine)
@@ -117,7 +119,9 @@ data Action
   | HoverNode (Maybe String)
   | SelectNode (Maybe String)
   | ToggleGroupBy
-  | ToggleSpof
+  | ToggleChannel Channel
+  | ShowAllChannels
+  | HideAllChannels
 
 main :: Effect Unit
 main = HA.runHalogenAff do
@@ -133,7 +137,8 @@ component =
         , composePath: "", registryPath: "", analysis: Nothing, anaErr: Nothing, anaLoading: false
         , overrides: [], mergeName: "", mergeCanon: ""
         , graphFocus: Nothing, graphSelect: Nothing, groupMode: ByDeps
-        , livePos: Map.empty, anim: Nothing, animGen: 0, showSpof: false
+        , livePos: Map.empty, anim: Nothing, animGen: 0
+        , channels: Set.fromFoldable allChannels   -- default: full composite (clutter is a fine resting state)
         }
     , render
     , eval: H.mkEval H.defaultEval { handleAction = handleAction, initialize = Just Initialize }
@@ -191,7 +196,10 @@ handleAction = case _ of
           anims = map mk (Map.toUnfoldable toPos :: Array (String /\ Point))
         H.modify_ _ { groupMode = target, anim = Just anims, livePos = fromPos, animGen = gen }
         void (H.fork (animLoop gen))
-  ToggleSpof -> H.modify_ \s -> s { showSpof = not s.showSpof }
+  ToggleChannel ch -> H.modify_ \s ->
+    s { channels = if Set.member ch s.channels then Set.delete ch s.channels else Set.insert ch s.channels }
+  ShowAllChannels -> H.modify_ _ { channels = Set.fromFoldable allChannels }
+  HideAllChannels -> H.modify_ _ { channels = Set.empty }
   RemoveOverride i -> do
     H.modify_ \s -> s { overrides = fromMaybe s.overrides (Array.deleteAt i s.overrides) }
     runAnalyze
@@ -378,6 +386,28 @@ renderIngestion s =
       , HH.input [ cls "inp", HP.value val, HE.onValueInput act, HP.placeholder "/abs/path…" ]
       ]
 
+-- ── live overlay: correlate serve /state to graph nodes ──────────────────────
+
+-- | Map each graph node id (an instance's `localName`) to its runtime status.
+-- | The bridge: /state keys by canonical `projectSlug:role`; nodes key by
+-- | localName. `reconcile.aliases` (ingested name → canonical) carries the
+-- | cross-source merge (compose's `gallery-web` ↔ registry's `gallery:frontend`);
+-- | where there's no alias (single-source registry), the instance's own
+-- | `project:role` IS the canonical id. A node with no matching route/redirect is
+-- | `LiveUnknown` and draws nothing — so the overlay is silent on fixtures that
+-- | aren't serve-managed.
+liveMap :: StateView -> AnalyzeResult -> Map String NodeLive
+liveMap sv a =
+  Map.fromFoldable (map (\i -> i.localName /\ statusFor (canonOf i)) a.instances)
+  where
+  routeStatus = Map.fromFoldable (map (\r -> r.serviceId /\ (if r.up then LiveUp else LiveDown)) sv.routes)
+  redirectIds = Set.fromFoldable (map _.serviceId sv.redirects)
+  aliasM = Map.fromFoldable (map (\e -> e.from /\ e.to) a.reconcile.aliases)
+  canonOf i = fromMaybe (maybe i.localName (\p -> p <> ":" <> i.role) i.project) (Map.lookup i.localName aliasM)
+  statusFor canon = case Map.lookup canon routeStatus of
+    Just s -> s
+    Nothing -> if Set.member canon redirectIds then LiveRedirect else LiveUnknown
+
 -- ── graph view (pillar 3) — a new render of the same AnalyzeResult ───────────
 
 renderGraphView :: forall m. State -> H.ComponentHTML Action () m
@@ -391,17 +421,20 @@ renderGraphView s =
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/exposure/compose.yml") (fixturesDir <> "/topologies/exposure/registry.json") ] [ HH.text "exposure (ramp)" ]
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/multihost/compose.yml") (fixturesDir <> "/topologies/multihost/registry.json") ] [ HH.text "multi-host" ]
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/colocation/compose.yml") (fixturesDir <> "/topologies/colocation/registry.json") ] [ HH.text "co-location" ]
+        , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/live/compose.yml") (fixturesDir <> "/topologies/live/registry.json") ] [ HH.text "◉ live demo" ]
         , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (corpusDir <> "/docker-compose.yml") (corpusDir <> "/registry.json") ] [ HH.text "frozen corpus" ]
         , HH.button [ cls (if s.groupMode == ByDeps then "btn sm" else "btn sm active"), HE.onClick \_ -> ToggleGroupBy ]
             [ HH.text (modeLabel s.groupMode) ]
-        , HH.button [ cls (if s.showSpof then "btn sm active" else "btn sm"), HE.onClick \_ -> ToggleSpof ]
-            [ HH.text "⚠ SPOF" ]
+        , HH.span [ cls "muted" ] [ HH.text "marks:" ]
+        , HH.button [ cls "btn sm", HE.onClick \_ -> ShowAllChannels ] [ HH.text "all" ]
+        , HH.button [ cls "btn sm", HE.onClick \_ -> HideAllChannels ] [ HH.text "none" ]
         , if s.anaLoading then HH.span [ cls "muted" ] [ HH.text "analysing…" ] else HH.text ""
         ]
     , maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text e ]) s.anaErr
     , case s.analysis of
         Nothing -> HH.p [ cls "muted" ] [ HH.text "load a fixture above — the graph renders the same AnalyzeResult the Ingestion view uses." ]
-        Just a -> graphView HoverNode SelectNode s.groupMode s.showSpof s.livePos s.graphFocus s.graphSelect a
+        Just a -> graphView HoverNode SelectNode ToggleChannel s.groupMode s.channels s.livePos s.graphFocus s.graphSelect
+          (maybe Map.empty (\sv -> liveMap sv a) s.cockpit) a
     ]
 
 ladder :: forall m. State -> AnalyzeResult -> H.ComponentHTML Action () m
