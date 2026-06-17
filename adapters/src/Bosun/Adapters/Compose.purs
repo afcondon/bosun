@@ -17,7 +17,7 @@ module Bosun.Adapters.Compose (ingestCompose) where
 
 import Prelude
 
-import Bosun.Atoms (Port, mkAbsPath, mkDomain, mkHost, mkPort, mkRoutePath, mkServiceId)
+import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkDomain, mkHost, mkPort, mkRoutePath, mkServiceId)
 import Bosun.Edge (DepOrdering(..), Gate(..), Requirement(..))
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Reachability (Address(..), BindScope(..), Reachability(..), hostPort, noNetwork)
@@ -56,7 +56,7 @@ decodeService name sj = do
     , host: Just (mkHost (placeHost o))   -- finest placement level (x-bosun.place last, else x-bosun.host, else default)
     , executor: executorOf name o
     , reachability: fromMaybe (maybe noNetwork hostPort (publishPort o)) (xbosunExpose o)
-    , health: { liveness: probeOf o, readiness: probeOf o, startup: Nothing }
+    , health: let pr = effProbe o in { liveness: pr, readiness: pr, startup: Nothing }
     , restart: { base: UnlessStopped, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }
     , rawDeps: dependsOn o <> xbosunDeps o
     , rawRoutes: xbosunRoutes o
@@ -110,6 +110,24 @@ publishPort o = do
 -- a healthcheck present -> a (non-NoProbe) readiness signal
 probeOf :: Object Json -> Probe
 probeOf o = if isJust (FO.lookup "healthcheck" o) then ExecCmd (healthTest o) else NoProbe
+
+-- | The effective probe: an explicit `x-bosun.probe` overrides the healthcheck.
+-- | `process` ⇒ `ProcessAlive` (observe by process existence — the right signal
+-- | for a UDP/socket/no-network daemon a TCP probe would mis-read; the es9/link
+-- | OSC daemons and the fh2 socket daemon). `socket` ⇒ `SocketReady` if an
+-- | `x-bosun.expose [{socket}]` is present. Else fall back to the healthcheck.
+effProbe :: Object Json -> Probe
+effProbe o = case (FO.lookup "x-bosun" o >>= toObject) >>= \xb -> str xb "probe" of
+  Just "process" -> ProcessAlive
+  Just "socket" -> maybe (probeOf o) SocketReady (socketAddr o)
+  _ -> probeOf o
+
+-- the first unix-socket path in `x-bosun.expose`, if any
+socketAddr :: Object Json -> Maybe AbsPath
+socketAddr o = do
+  xb <- FO.lookup "x-bosun" o >>= toObject
+  arr <- FO.lookup "expose" xb >>= toArray
+  A.head (A.mapMaybe (\j -> toObject j >>= \ob -> str ob "socket" >>= mkAbsPath) arr)
 
 healthTest :: Object Json -> Array String
 healthTest o = fromMaybe [] do

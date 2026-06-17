@@ -135,6 +135,18 @@ spec = describe "Bosun.Adapters" do
           Nothing -> fail "bad not ingested"
           Just s -> mechanism s.executor `shouldEqual` MechUnmanaged
 
+    -- The honest probe for a UDP/no-network daemon: a TCP probe of its (UDP) port
+    -- would mis-read it, so `x-bosun.probe: process` selects process-existence.
+    it "x-bosun.probe: process => a ProcessAlive readiness probe (overrides the port)" do
+      let pf = """{"services":{"d":{"x-bosun":{"host":"mbp","probe":"process","process":{"cwd":"/abs/d","command":"./run"},"expose":[{"host":57120}]}}}}"""
+      case jsonParser pf of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> case find (\s -> s.localName == "d") (ingestCompose j) of
+          Nothing -> fail "d not ingested"
+          Just s -> do
+            (s.health.readiness == ProcessAlive) `shouldEqual` true
+            (s.health.liveness == ProcessAlive) `shouldEqual` true
+
   describe "ingestTargets" do
     let
       fixture =

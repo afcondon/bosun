@@ -17,7 +17,8 @@ module Bosun.CLI.Observe
 
 import Prelude
 
-import Bosun.Atoms (Host, ServiceId, unHost, unPort)
+import Bosun.Apply (pidPath)
+import Bosun.Atoms (Host, ServiceId, unAbsPath, unHost, unPort)
 import Bosun.Exposure (Exposure(..))
 import Bosun.Reachability (classify)
 import Bosun.Health (Probe(..))
@@ -28,12 +29,16 @@ import Data.Maybe (Maybe(..))
 import Data.Traversable (traverse)
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
-import Effect.Uncurried (EffectFn2, EffectFn3, runEffectFn2, runEffectFn3)
+import Effect.Uncurried (EffectFn1, EffectFn2, EffectFn3, runEffectFn1, runEffectFn2, runEffectFn3)
 
 -- host → port → path → HTTP status code as a string ("000" if unreachable)
 foreign import probeHttpImpl :: EffectFn3 String Int String String
 -- host → port → reachable?
 foreign import probeTcpImpl :: EffectFn2 String Int Boolean
+-- pid-file path → is any process in the recorded process GROUP alive?
+foreign import probePgidAliveImpl :: EffectFn1 String Boolean
+-- socket path → does the socket file exist?
+foreign import probeSocketImpl :: EffectFn1 String Boolean
 
 observe :: Maybe Host -> Probe -> Effect Status
 observe mh = case _ of
@@ -43,7 +48,13 @@ observe mh = case _ of
   TcpConnect p -> do
     ok <- runEffectFn2 probeTcpImpl (hostAddr mh) (unPort p)
     pure (if ok then Running else Down)
+  SocketReady path -> do
+    ok <- runEffectFn1 probeSocketImpl (unAbsPath path)
+    pure (if ok then Running else Down)
   NoProbe -> pure (Unknown (ProbeUnreachable "no readiness probe"))
+  -- ProcessAlive is keyed by the recorded pid-file, which only `observeService`
+  -- (with the ServiceId in scope) can locate.
+  ProcessAlive -> pure (Unknown (ProbeUnreachable "process probe needs the service context"))
   _ -> pure (Unknown (ProbeUnreachable "probe kind not observable yet"))
 
 observeSnapshot :: Deployment -> Effect Snapshot
@@ -52,7 +63,19 @@ observeSnapshot dep = do
   pure (Map.fromFoldable entries)
   where
   probeOne :: LooseService -> Effect (Tuple ServiceId Status)
-  probeOne s = Tuple s.id <$> observe s.host (effectiveProbe s)
+  probeOne s = Tuple s.id <$> observeService s
+
+-- Service-aware probe: `ProcessAlive` is checked against the process GROUP
+-- `apply` recorded for this service (`pidPath s.id`) — the honest liveness signal
+-- for a UDP/socket/no-network daemon (es9/link/fh2) a TCP probe would mis-read,
+-- and the supervisor's keep-alive signal for them. Everything else delegates to
+-- the host/network `observe`.
+observeService :: LooseService -> Effect Status
+observeService s = case effectiveProbe s of
+  ProcessAlive -> do
+    alive <- runEffectFn1 probePgidAliveImpl (pidPath s.id)
+    pure (if alive then Running else Down)
+  p -> observe s.host p
 
 -- A service with no declared readiness probe but a listening port is observable
 -- by the port itself: a successful TCP connect is the implicit liveness signal.

@@ -22,6 +22,7 @@ module Bosun.Apply
   , applyScript
   , downScript
   , commandFor
+  , pidPath
   ) where
 
 import Prelude

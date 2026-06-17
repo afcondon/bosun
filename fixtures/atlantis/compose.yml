@@ -22,6 +22,7 @@ services:
   es9-daemon:
     x-bosun:
       host: mbp
+      probe: process
       process:
         cwd: /Users/afc/work/afc-work/music/expert-sleepers/es9-daemon
         command: ./target/release/es9-daemon
@@ -31,6 +32,7 @@ services:
   link-spike:
     x-bosun:
       host: mbp
+      probe: process
       process:
         cwd: /Users/afc/work/afc-work/music/link-spike
         command: ./target/release/link-spike
@@ -74,6 +76,7 @@ services:
   fh2-daemon:
     x-bosun:
       host: mbp
+      probe: process
       process:
         cwd: /Users/afc/work/afc-work/music/expert-sleepers/fh2-config
         command: spago run -- --daemon

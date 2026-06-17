@@ -1,0 +1,10 @@
+# A no-network daemon (no port/socket) observed purely by process existence —
+# the #10 path that the Atlantis es9/link/fh2 daemons use.
+services:
+  sleeper:
+    x-bosun:
+      host: mbp
+      probe: process
+      process:
+        cwd: /tmp
+        command: sleep 3600
