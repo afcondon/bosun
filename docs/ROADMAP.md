@@ -80,12 +80,25 @@ The apply path *already ssh-wraps macmini commands.*
    PATH=/usr/local/bin:/opt/homebrew/bin:$PATH && docker compose up -d <svc>'`.
    **The Gnomon-Go `ApplyCliMain --dry-run` emits this BYTE-IDENTICAL to node on
    the core fixture** — so the binary that will do the live-fire is proven.
-   94 tests green; go-conformance still byte-identical (35 Go files). **What
-   remains is only the live ssh fire itself — to be done WITH Andrew present
-   (the one genuinely-new outward act).** Prerequisite: the `core` images must
-   already exist on the mini (`deploy-remote.sh andrew@andrews-mac-mini core
-   ~/psd3 --build-only`, framing (a)); Bosun models the compose-up step, not the
-   rsync+build prelude.
+   94 tests green; go-conformance still byte-identical (35 Go files).
+
+   ***LIVE-FIRE DONE — delta #2 COMPLETE (2026-06-17, with Andrew).*** A
+   red→green on the real mini, the apply performed by the **Gnomon-Go binary**:
+   the mini was found already running the full rig (26 containers, 4 days; `core`
+   images + `~/psd3/polyglot-deploy/docker-compose.yml` already present, so no
+   build needed). To get a true curl-testable red→green we stopped core by hand
+   (`ssh … docker compose stop website edge` → `:80` HTTP 000, RED confirmed),
+   then ran the native Go binary (`/tmp/bgo_apply_cli`, = `Bosun.Conformance.
+   ApplyCliMain` transpiled via backend-go) on the MBP — it read the real files,
+   planned, and **ssh'd to the mini to `docker compose up -d website` then
+   `edge`** (both ✓), flipping `:80` back to HTTP 200 (GREEN). So a
+   PureScript-compiled-to-Go binary performed a genuine *remote* deploy. The 24
+   other containers were untouched. (Teardown stayed by-hand — `bosun down` is
+   task #8, not built; the bring-up was Bosun.) **Stage-1 now needs only delta #3
+   (TailScale Funnel front) for the full "a stranger loads it" finish.** Side
+   note for later: nearly every container reports `unhealthy` (4 days) despite
+   serving 200 — misconfigured healthchecks (wget/curl absent in minimal images),
+   not dead services; a probe-fidelity item, cf Stage 2 delta #1.
 3. **TailScale Funnel front.** Model the public endpoint as a `Published Domain`
    in the `Address` type (the ADDRESS-TYPE work added exactly this), and run the
    `tailscale funnel`/`serve` enablement as a staged command of `apply`.
