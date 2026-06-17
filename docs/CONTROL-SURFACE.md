@@ -46,15 +46,25 @@ Work is split across two Claude sessions; they meet at the serve HTTP contract.
      pair is one node whose canonical id == the serve serviceId. Load it with the
      **◉ live demo** button in the Graph toolbar. Stop `ledger:api` (port 8194) in
      the Cockpit and watch almost the whole graph wash amber.
-3. **Armed control channel:** ✅ DONE (2026-06-17, `659c7eb`). The earlier
-   "modal + timeout" was superseded by the armed-control-channel decision (full
-   identity at the point of action). Toggling the `⚠ control` rack thumbnail arms
-   the main view: serve-managed route nodes become fill-buttons — stopped → green
-   **launch**, running → split red **stop** | blue **reboot** — wired to
-   `/control/spawn|stop` (reboot = stop+spawn). Safety: ChControl is excluded from
-   `allChannels` (neither the default nor the "all" button can arm it); while
-   armed a node's select-click is removed; the node keeps name/role/host on top; a
-   pulsing red frame + "⚠ ARMED" banner make the mode unmistakable.
+3. **Armed control + unified runtime overlay:** ✅ DONE (2026-06-17). The earlier
+   "modal + timeout" was superseded by the armed-control decision (full identity at
+   the point of action). When armed, serve-managed route nodes become fill-buttons
+   — stopped → green **launch**, running → split red **stop** | blue **reboot** —
+   wired to `/control/spawn|stop` (reboot = stop+spawn).
+   - First cut (`659c7eb`) made control a rack channel beside "live status"; the
+     two thumbnails read as near-duplicates (Andrew). **Reworked**: live status
+     and control are now ONE fixed **runtime overlay** in the top-right corner (a
+     status minimap — green up / red down / indigo redirect + an N/M-up count).
+     The overlay IS the arm toggle (no separate affordance): click → arm; the
+     overlay's dots GREY OUT (their job moves to the on-map buttons) and it wears a
+     pulsing red frame; click → disarm. Live status on the main map is now
+     always-on (modeless), suppressed only while armed.
+   - Safety preserved: arming is a deliberate, single, loud act; while armed a
+     node's select-click is removed (a click can only start/stop/reboot); the node
+     keeps name/role/host on top; pulsing red frame + "⚠ ARMED" banner on the map
+     AND the red corner overlay. The bottom dock keeps only the 7 structural
+     channels. The nav's old top-right status chip is hidden in Graph view (the
+     overlay owns the corner and the count).
 4. Graph becomes the primary live surface; the Cockpit table stays as a
    secondary view.
 

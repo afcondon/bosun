@@ -102,22 +102,16 @@ data Channel
   | ChRequirement  -- the dependency edges + midpoint requirement marks
   | ChTraffic      -- reverse-proxy route edges
   | ChSpof         -- structural cut-vertex halos + bridge edges
-  | ChLive         -- runtime status dots + blast-from-down
-  | ChControl      -- ARMED: nodes become start/stop/reboot fill-buttons (not in allChannels)
 
 derive instance Eq Channel
 derive instance Ord Channel
 
--- the channels that compose the read-only picture. ChControl is DELIBERATELY
--- absent: it's a destructive mode, so neither the default set nor the "all"
--- button may ever arm it — it only arms by an explicit click on its own
--- rack thumbnail. The rack still lists it (rackChannels), just never bulk-toggles.
+-- the STRUCTURAL display channels — the bottom rack. Runtime is NOT here: live
+-- status is always-on on the main map (modeless), and the fixed corner
+-- `runtimeOverlay` mirrors it AND doubles as the single arm-control toggle
+-- (clicking it arms the destructive control mode — no separate affordance).
 allChannels :: Array Channel
-allChannels = [ ChSource, ChDepth, ChExposure, ChPlacement, ChRequirement, ChTraffic, ChSpof, ChLive ]
-
--- the full rack: every display channel plus the armed control toggle at the end.
-rackChannels :: Array Channel
-rackChannels = allChannels <> [ ChControl ]
+allChannels = [ ChSource, ChDepth, ChExposure, ChPlacement, ChRequirement, ChTraffic, ChSpof ]
 
 channelLabel :: Channel -> String
 channelLabel = case _ of
@@ -128,8 +122,6 @@ channelLabel = case _ of
   ChRequirement -> "dependency"
   ChTraffic -> "traffic"
   ChSpof -> "SPOF"
-  ChLive -> "live status"
-  ChControl -> "⚠ control"
 
 -- ── layout constants ─────────────────────────────────────────────────────────
 
@@ -509,22 +501,23 @@ layoutPositions mode a =
 type Handlers act =
   { hover :: Maybe String -> act        -- node hover (Nothing on leave) → brush
   , select :: Maybe String -> act       -- node click → blast-radius selection
-  , toggleChan :: Channel -> act         -- rack thumbnail → toggle a channel
+  , toggleChan :: Channel -> act         -- rack thumbnail → toggle a structural channel
+  , arm :: act                           -- runtime overlay click → toggle armed control
   , spawn :: Int -> act                  -- armed: launch a stopped route (publicPort)
   , stop :: Int -> act                   -- armed: stop a running route
   , reboot :: Int -> act                 -- armed: stop-then-spawn a running route
   }
 
--- Returns the main pane and the channel rack SEPARATELY so the app shell can
--- dock the rack to an edge while the main view takes the rest of the canvas.
--- `ctrl` maps a node id → its serve public port (serve-managed routes only); when
--- the ChControl channel is on the view is ARMED and those nodes become
--- start/stop/reboot fill-buttons.
-graphView :: forall act m. Handlers act -> GroupMode -> Set Channel -> Map String Point -> Maybe String -> Maybe String -> Map String NodeLive -> Map String Int -> AnalyzeResult -> { main :: H.ComponentHTML act () m, rack :: H.ComponentHTML act () m }
-graphView h mode channels livePos focus select live ctrl a =
+-- Returns the main pane, the (structural) channel rack, and the fixed runtime
+-- overlay SEPARATELY so the app shell can dock the rack along the bottom, park
+-- the overlay in the top-right corner, and give the rest to the main view.
+-- `armed` is the control mode (the overlay toggles it); `ctrl` maps a node id →
+-- its serve public port (serve-managed routes only), so when armed those nodes
+-- become start/stop/reboot fill-buttons.
+graphView :: forall act m. Handlers act -> Boolean -> GroupMode -> Set Channel -> Map String Point -> Maybe String -> Maybe String -> Map String NodeLive -> Map String Int -> AnalyzeResult -> { main :: H.ComponentHTML act () m, rack :: H.ComponentHTML act () m, overlay :: H.ComponentHTML act () m }
+graphView h armed mode channels livePos focus select live ctrl a =
   let
     chOn ch = Set.member ch channels
-    armed = chOn ChControl
     insts = a.instances
     edges = edgesOf insts
     routes = trafficOf insts
@@ -582,22 +575,25 @@ graphView h mode channels livePos focus select live ctrl a =
     -- transitive dependents (§14.5 driven by reality, not a click). The MAIN view
     -- gates by ChLive (so liveOf reads Unknown when off); the rack uses the raw
     -- `live` map so its thumbnail always previews.
-    liveOf id = if chOn ChLive then fromMaybe LiveUnknown (Map.lookup id live) else LiveUnknown
-    downIds = Array.filter (\n -> liveOf n.id == LiveDown) nodes
+    -- runtime status from serve /state ALWAYS reflects reality (no channel gate).
+    -- The on-node DOT is suppressed when armed (the control button colour already
+    -- encodes up/down), but the blast-from-down and the meta counts stay live.
+    liveStatusOf id = fromMaybe LiveUnknown (Map.lookup id live)
+    dotLiveOf id = if armed then LiveUnknown else liveStatusOf id
+    downIds = Array.filter (\n -> liveStatusOf n.id == LiveDown) nodes
     liveBlast = foldl (\acc n -> Set.union acc (blastRadius edges n.id)) Set.empty downIds
-    hasLive = Array.any (\n -> liveOf n.id /= LiveUnknown) nodes
-    liveUpN = Array.length (Array.filter (\n -> liveOf n.id == LiveUp) nodes)
+    hasLive = Array.any (\n -> liveStatusOf n.id /= LiveUnknown) nodes
+    liveUpN = Array.length (Array.filter (\n -> liveStatusOf n.id == LiveUp) nodes)
     nodeFlags n =
       { dim: nodeDim n
       , cutVertex: Set.member n.id cutVerts
       , killed: select == Just n.id
       , willFall: select /= Just n.id && Set.member n.id blastSet
       , circleR: Map.lookup n.id packRes.radii   -- Just r in pack mode → render as a circle
-      , live: liveOf n.id
-      , liveWillFall: liveOf n.id /= LiveDown && Set.member n.id liveBlast
-      -- armed control: Just when ChControl is on AND serve manages this node (it
-      -- has a public port). `running` reads the RAW live map (not the ChLive-gated
-      -- liveOf) so the button is correct even with the status channel off.
+      , live: dotLiveOf n.id                       -- on-node status dot (hidden when armed)
+      , liveWillFall: liveStatusOf n.id /= LiveDown && Set.member n.id liveBlast
+      -- armed control: Just when armed AND serve manages this node (it has a public
+      -- port). `running` reads the raw live map so the button is always correct.
       , control:
           if armed
             then map (\port -> { port, running: Map.lookup n.id live == Just LiveUp }) (Map.lookup n.id ctrl)
@@ -651,7 +647,8 @@ graphView h mode channels livePos focus select live ctrl a =
                   ] )
               ]
           ]
-    , rack: channelRack h.toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeSetAll live ctrl
+    , rack: channelRack h.toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeSetAll
+    , overlay: runtimeOverlay h.arm armed maxX maxY nodes live
     }
 
 -- append the dim marker class when brushing has pushed this element to the back
@@ -1157,9 +1154,9 @@ channelRack
   :: forall act m
    . (Channel -> act) -> Set Channel -> Number -> Number
   -> Array Node -> Array Edge -> Array Route -> Set String -> Set (Tuple String String)
-  -> Map String NodeLive -> Map String Int -> H.ComponentHTML act () m
-channelRack toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeSetAll live ctrl =
-  HH.div [ cls "graph-rack" ] (map thumb rackChannels)
+  -> H.ComponentHTML act () m
+channelRack toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeSetAll =
+  HH.div [ cls "graph-rack" ] (map thumb allChannels)
   where
   sc = min (150.0 / max 1.0 maxX) (96.0 / max 1.0 maxY)
   rData = 5.0 / sc
@@ -1204,30 +1201,10 @@ channelRack toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeS
     ChSpof ->
       Array.concatMap (\e -> if Set.member (normEdge e.from e.to) bridgeSetAll then seg e alarm bw else []) edges
         <> map (\n -> dot n (if Set.member n.id cutVertsAll then alarm else neutral)) nodes
-    ChLive -> map
-      (\n -> case Map.lookup n.id live of
-          Just LiveUp -> dot n liveUpColor
-          Just LiveDown -> dot n alarm
-          Just LiveRedirect -> dot n liveRedirectColor
-          _ -> hollow n neutral)
-      nodes
-    -- which nodes the armed mode can act on (serve-managed routes): filled green
-    -- if up, alarm-red if stopped; everything else hollow (not controllable here).
-    ChControl -> map
-      (\n -> case Map.lookup n.id ctrl of
-          Just _ -> if Map.lookup n.id live == Just LiveUp then dot n launchColor else dot n alarm
-          Nothing -> hollow n neutral)
-      nodes
-
-  -- the control thumbnail wears a distinct red accent (`armed`) so the one
-  -- destructive toggle never looks like just another display channel.
-  thumbCls ch =
-    (if Set.member ch channels then "sm-thumb on" else "sm-thumb")
-      <> (if ch == ChControl then " armed" else "")
 
   thumb ch =
     HH.button
-      [ cls (thumbCls ch)
+      [ cls (if Set.member ch channels then "sm-thumb on" else "sm-thumb")
       , HE.onClick \_ -> toggleChan ch
       ]
       [ SE.svg
@@ -1237,6 +1214,54 @@ channelRack toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeS
           (content ch)
       , HH.span [ cls "sm-cap" ] [ HH.text (channelLabel ch) ]
       ]
+
+-- the fixed runtime overlay (top-right corner): ONE panel that unifies live
+-- status and control. Disarmed it shows the runtime minimap — a dot per
+-- serve-managed node, green up / red down / indigo redirect — and an at-a-glance
+-- N/M-up count. It IS the arm toggle (no separate affordance): clicking it arms
+-- the destructive control mode, at which point its dots GREY OUT (their job has
+-- moved to the on-map fill-buttons) and it wears the armed-red frame. Clicking
+-- again disarms. Spatially congruent with the main view (same viewBox), so the
+-- corner dot for a node sits where that node sits on the big map.
+runtimeOverlay
+  :: forall act m
+   . act -> Boolean -> Number -> Number -> Array Node -> Map String NodeLive
+  -> H.ComponentHTML act () m
+runtimeOverlay armAct armed maxX maxY nodes live =
+  HH.button
+    [ cls (if armed then "runtime-overlay armed" else "runtime-overlay")
+    , HE.onClick \_ -> armAct
+    ]
+    [ HH.div [ cls "ro-head" ]
+        [ HH.span [ cls "ro-title" ] [ HH.text (if armed then "⚠ ARMED · control" else "runtime") ]
+        , HH.span [ cls "ro-count" ] [ HH.text (show upN <> "/" <> show total <> " up") ]
+        ]
+    , SE.svg
+        [ SA.viewBox 0.0 0.0 maxX maxY, SA.width 168.0, SA.height 84.0
+        , SA.class_ (H.ClassName "ro-svg")
+        ]
+        (map dotFor nodes)
+    , HH.div [ cls "ro-hint" ] [ HH.text (if armed then "click to disarm" else "click to arm control") ]
+    ]
+  where
+  statusOf n = fromMaybe LiveUnknown (Map.lookup n.id live)
+  total = Array.length (Array.filter (\n -> statusOf n /= LiveUnknown) nodes)
+  upN = Array.length (Array.filter (\n -> statusOf n == LiveUp) nodes)
+  sc = min (168.0 / max 1.0 maxX) (84.0 / max 1.0 maxY)
+  rData = 5.5 / sc
+  dotFor n =
+    let
+      st = statusOf n
+      filled = st /= LiveUnknown
+      col = if armed then neutral else liveColor st
+    in
+      SE.circle
+        [ SA.cx (n.x + nodeW / 2.0), SA.cy (n.y + nodeH / 2.0), SA.r rData
+        , SA.fill (if filled then col else paper)
+        , SA.fillOpacity (if filled then 1.0 else 0.0)
+        , SA.stroke (if filled then col else neutralBorder)
+        , SA.strokeWidth (1.4 / sc)
+        ]
 
 cls :: forall r i. String -> HP.IProp (class :: String | r) i
 cls c = HP.class_ (HH.ClassName c)

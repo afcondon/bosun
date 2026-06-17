@@ -100,7 +100,8 @@ type State =
   , livePos :: Map String Point
   , anim :: Maybe (Array AnimNode)
   , animGen :: Int
-  , channels :: Set Channel  -- which display channels are composited into the view
+  , channels :: Set Channel  -- which structural channels are composited into the view
+  , armed :: Boolean         -- control mode: armed via the runtime overlay (destructive)
   , zoom :: Maybe ZoomHandle -- the pan/zoom handle for the main SVG (Hylograph.Interaction.Zoom)
   }
 
@@ -134,6 +135,7 @@ data Action
   | ToggleChannel Channel
   | ShowAllChannels
   | HideAllChannels
+  | ToggleArm
   | ResetZoom
 
 main :: Effect Unit
@@ -152,6 +154,7 @@ component =
         , graphFocus: Nothing, graphSelect: Nothing, groupMode: ByDeps
         , livePos: Map.empty, anim: Nothing, animGen: 0
         , channels: Set.fromFoldable allChannels   -- default: full composite (clutter is a fine resting state)
+        , armed: false
         , zoom: Nothing
         }
     , render
@@ -215,6 +218,7 @@ handleAction = case _ of
     s { channels = if Set.member ch s.channels then Set.delete ch s.channels else Set.insert ch s.channels }
   ShowAllChannels -> H.modify_ _ { channels = Set.fromFoldable allChannels }
   HideAllChannels -> H.modify_ _ { channels = Set.empty }
+  ToggleArm -> H.modify_ \s -> s { armed = not s.armed }
   RemoveOverride i -> do
     H.modify_ \s -> s { overrides = fromMaybe s.overrides (Array.deleteAt i s.overrides) }
     runAnalyze
@@ -402,17 +406,18 @@ appBody s = case s.view of
       ]
     Just a ->
       let
-        handlers = { hover: HoverNode, select: SelectNode, toggleChan: ToggleChannel, spawn: Spawn, stop: Stop, reboot: Reboot }
+        handlers = { hover: HoverNode, select: SelectNode, toggleChan: ToggleChannel, arm: ToggleArm, spawn: Spawn, stop: Stop, reboot: Reboot }
         live = maybe Map.empty (\sv -> liveMap sv a) s.cockpit
         ctrl = maybe Map.empty (\sv -> controlMap sv a) s.cockpit
-        g = graphView handlers s.groupMode s.channels s.livePos s.graphFocus s.graphSelect live ctrl a
+        g = graphView handlers s.armed s.groupMode s.channels s.livePos s.graphFocus s.graphSelect live ctrl a
       in
-        -- main on top, the rack as a horizontal strip docked along the bottom
-        -- (one row, scrolls sideways) so the rail never re-enters vertical
-        -- scrolling as the thumbnails get taller under a draggable main view.
+        -- main on top, the structural rack docked as a horizontal strip along the
+        -- bottom (one row, scrolls sideways); the runtime overlay floats fixed in
+        -- the top-right corner above everything (it carries status + arms control).
         [ HH.section [ cls "mainpane" ] [ g.main ]
         , HH.aside [ cls "dock" ]
             [ HH.div [ cls "dock-h" ] [ HH.text "channels" ], g.rack ]
+        , g.overlay
         ]
   Ingestion -> [ HH.section [ cls "mainpane pad" ] [ renderIngestion s ] ]
   Cockpit -> [ HH.section [ cls "mainpane pad" ] [ renderCockpit s ] ]
@@ -427,7 +432,11 @@ topNav s =
         Graph -> graphNav s
         _ -> HH.text ""
     , HH.span [ cls "nav-spacer" ] []
-    , HH.span [ cls "status" ] [ HH.text serveStatus ]
+    -- in Graph view the fixed runtime overlay owns the top-right corner and the
+    -- up/down count, so the nav chip would be redundant; show it elsewhere.
+    , case s.view of
+        Graph -> HH.text ""
+        _ -> HH.span [ cls "status" ] [ HH.text serveStatus ]
     ]
   where
   serveStatus = case s.cockErr of

@@ -200,12 +200,35 @@
     .graph-svg .ctrl-btn { cursor: pointer; transition: filter 120ms ease; }
     .graph-svg .ctrl-btn:hover { filter: brightness(1.13); }
     .graph-svg .ctrl-label { pointer-events: none; font-weight: 600; }
-    /* the control thumbnail in the rack carries a red accent, not the neutral one */
-    .sm-thumb.armed.on {
-      border-color: var(--reject);
-      box-shadow: 0 1px 0 var(--reject) inset, 0 0 0 2px #f7dad7;
+    /* the fixed runtime overlay (top-right corner): live status minimap that
+       doubles as the single arm-control toggle. Floats above everything. */
+    .runtime-overlay {
+      position: fixed; top: 58px; right: 16px; z-index: 60; width: 184px;
+      display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 9px 11px 7px;
+      appearance: none; background: var(--panel); border: 1px solid var(--line);
+      border-radius: 9px; box-shadow: 0 4px 16px rgba(0,0,0,0.10);
+      cursor: pointer; text-align: left; font: inherit;
+      transition: box-shadow 140ms ease, border-color 140ms ease;
     }
-    .sm-thumb.armed.on .sm-cap { color: var(--reject); }
+    .runtime-overlay:hover { border-color: #c9c9c9; box-shadow: 0 6px 20px rgba(0,0,0,0.14); }
+    .ro-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .ro-title {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.07em; color: var(--ink);
+    }
+    .ro-count { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .ro-svg { display: block; width: 100%; height: auto; background: #fcfcfd; border-radius: 5px; }
+    .ro-hint { font-size: 10px; color: var(--muted); text-align: center; letter-spacing: 0.03em; }
+    /* armed: a pulsing red frame in the corner (the dots are greyed in PS) — the
+       same loud signal as the main-map frame, parked where you armed it. */
+    @keyframes armedCorner {
+      0%,100% { box-shadow: 0 0 0 2px #f7dad7, 0 6px 20px rgba(179,38,30,0.22); }
+      50%     { box-shadow: 0 0 0 4px #f0b6b0, 0 6px 20px rgba(179,38,30,0.30); }
+    }
+    .runtime-overlay.armed {
+      border-color: var(--reject); animation: armedCorner 1.5s ease-in-out infinite;
+    }
+    .runtime-overlay.armed .ro-title, .runtime-overlay.armed .ro-hint { color: var(--reject); }
     .graph-legend { display: flex; gap: 40px; flex-wrap: wrap; margin-top: 18px; font-size: 12px; color: var(--muted); }
     .leg-grp { display: flex; flex-direction: column; gap: 5px; }
     .leg-h {
