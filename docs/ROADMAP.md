@@ -69,14 +69,41 @@ of `Process` services; `up`=`apply`, `down`=Plan-Stop (D-E5), `restart`=stop+
 spawn, `status`=`observe`, `logs`=serve's child-stdio redirect, `list`=the
 report layer.
 
+**The decision tier already exists.** `supervise` is the pure `plan` run on a
+loop, not new logic: `baseChange` already maps `Failed → Restart`, `InBackoff →
+NoOp` (backoff respected), `Down → Start`, and already propagates `Restart …
+(DependencyRestarted xid)` to dependents (coupled co-restart). The policy IR is
+`Service.restart :: RestartPolicy { base :: Never|OnFailure|Always|
+UnlessStopped, backoff {minSec, maxRetries} }`. So only the *watch-loop* and the
+*enactment edge* are new.
+
 **Two deltas (the only real gaps):**
 1. **A probe for the Rust daemons.** es9-daemon and link-spike speak
    **OSC/UDP**, but `effectiveProbe` is TCP-to-port. Add a UDP/OSC-ping and/or
    process-existence probe variant to the `Probe` model.
-2. **A resident `supervise` mode.** Keep-alive + restart-on-crash with backoff.
-   It is `serve` minus the proxy plus a liveness watchdog; the **restart-policy
-   + backoff is already in the IR**. The restart *decision* is a pure `Plan`;
-   only the watch-loop is a foreign edge.
+2. **A resident `supervise` mode** = observe → `plan` → enact, on a loop.
+   Keep-alive + restart-on-crash with the IR's backoff. It is `serve` minus the
+   proxy plus a liveness watchdog driven by the pure `Plan`.
+
+**Contract commitments to the Chair** (HANDOFF-CHAIR.md round 2 — these gate the
+live dashboard for Stage 2):
+- **`supervise` exposes the SAME `/state` + `/control/*` HTTP surface as `serve`**
+  (shared `controlRouter`/`stateBody`; differ only in lifecycle policy). The
+  Chair lights up against it with zero change — the single biggest integration
+  risk, closed by construction.
+- **Additive `/state` fields** (the Chair's poll is 1.5 s, so restarts must be
+  observable across poll misses): `supervised :: Boolean`, `restarts :: Int`,
+  `lastTransitionAt :: Number`, `desired :: "up"|"down"`. All optional.
+- **Manual STOP holds** (`desired=down` suspends auto-restart — "stop means
+  stop"); base policy still governs crash response when `desired=up`.
+- **Atomic `POST /control/restart?port=N`** on both `serve` and `supervise`, so
+  the supervisor can't race the Chair's reboot and a transient `down` won't trip
+  the co-restart group.
+- **Coupled co-restart is enacted HERE, in Stage 2** (Node/Go), via the planner's
+  existing `DependencyRestarted` propagation, as one staged batch so `/state`
+  flips the whole `part-of` group down→up within one poll window. Stage 3/BEAM
+  only makes the same semantics *native* OTP — the lockstep-reboot demo does
+  **not** wait for the BEAM.
 
 **Scope boundary.** Only DeepStar's *supervisor* role folds into Bosun.
 DeepStar's calibration runner, pre-flight checks, and empirical pitch table are
