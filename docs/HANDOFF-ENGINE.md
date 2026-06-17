@@ -150,4 +150,18 @@ No contract change needed (the Chair derives the `part-of` / `binds-to` group
 structurally from the edges). One ask: when you co-restart a coupled group, try
 to have `/state` reflect all members down→up within the **same poll window**, so
 the Chair's blast-amber reads as one coherent event rather than a stutter of
-independent flickers.
+independent flickers. NB the ROADMAP files part-of=one_for_all under Stage 3
+(BEAM); please also enact coupled co-restart in the **Stage 2** Node/Go
+`supervise` mode, or the lockstep-reboot demo waits for the BEAM.
+
+### F. Does `bosun supervise` expose the same `/state` + `/control` surface?  ← reading the ROADMAP
+The Chair polls `serve` on `:3997` (`/state` + `/control/*`). ROADMAP Stage 2
+introduces a resident **`supervise`** mode ("serve minus the proxy plus a
+liveness watchdog") — and that's where A–E above actually live, since `serve` is
+idle-reap and the auto-restart policy rides `supervise`. So the load-bearing ask:
+**please have `bosun supervise` expose the SAME HTTP `/state` + `/control`
+contract** (ideally same shape, same port story), so the Chair lights up against
+it with zero change. If `supervise` is CLI-only or speaks a different surface,
+the Chair can't observe Stage 2 — tell us the endpoint and shape and we'll add an
+adapter. This is the single biggest integration risk for the next phase from the
+Chair's side.
