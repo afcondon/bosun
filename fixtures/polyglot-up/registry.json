@@ -1,5 +1,5 @@
 {
-  "_comment": "The CURRENT polyglot exhibits (not the stale purepy hypo-punter rows). Python = purescript-python-new examples on 8081/8082 (ports chosen to dodge SDI); julia = Jurist stability-atlas; site = polyglot website.",
+  "_comment": "The CURRENT polyglot exhibits (not the stale purepy hypo-punter rows). Python = purescript-python examples on 8081/8082 (ports chosen to dodge SDI; dir was renamed from purescript-python-new); julia = Jurist stability-atlas; site = polyglot website.",
   "servers": [
     { "role": "website", "port": 3040, "host": "mbp",
       "projectSlug": "polyglot", "projectName": "polyglot-website",
@@ -7,11 +7,11 @@
 
     { "role": "embedding-explorer", "port": 8081, "host": "mbp",
       "projectSlug": "python-new", "projectName": "embedding-explorer",
-      "startCommand": "cd /Users/afc/work/afc-work/purescript-backends/purescript-python-new/examples/embedding-explorer && python3 output-py" },
+      "startCommand": "cd /Users/afc/work/afc-work/purescript-backends/purescript-python/examples/embedding-explorer && python3 output-py" },
 
     { "role": "grid-explorer", "port": 8082, "host": "mbp",
       "projectSlug": "python-new", "projectName": "grid-explorer",
-      "startCommand": "cd /Users/afc/work/afc-work/purescript-backends/purescript-python-new/examples/grid-explorer && python3 output-py" },
+      "startCommand": "cd /Users/afc/work/afc-work/purescript-backends/purescript-python/examples/grid-explorer && python3 output-py" },
 
     { "role": "atlas-service", "port": 3210, "host": "mbp",
       "projectSlug": "jurist", "projectName": "jurist-atlas",

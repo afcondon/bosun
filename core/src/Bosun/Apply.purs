@@ -110,13 +110,19 @@ manual = case _ of
   Unmanaged s -> Manual ("unmanaged: " <> s)
   _ -> Manual "no launch command for this executor yet"
 
--- Detach a long-running Process launch: `nohup <cmd> >/tmp/bosun-apply-<id>.log
+-- Detach a long-running Process launch: `nohup env <cmd> >/tmp/bosun-apply-<id>.log
 -- 2>&1 &`, so the exec edge fires it and returns. A command that already
 -- backgrounds itself (ends in `&`) is left as-is — the exec edge will detach it.
+--
+-- The `env` is load-bearing: a `startCommand` may carry a leading env-var
+-- assignment (e.g. `ATLAS_PORT=3210 julia …`), which is shell syntax `nohup`
+-- does NOT honour — bare `nohup VAR=val prog` makes `nohup` try to exec the
+-- string `VAR=val` as a program. `env` parses the leading `VAR=val` assignments
+-- and execs the real program; with no prefix it is a transparent passthrough.
 daemonize :: ServiceId -> String -> String
 daemonize sid cmd
   | isJust (String.stripSuffix (Pattern "&") (String.trim cmd)) = cmd
-  | otherwise = "nohup " <> cmd <> " >" <> logPath sid <> " 2>&1 &"
+  | otherwise = "nohup env " <> cmd <> " >" <> logPath sid <> " 2>&1 &"
 
 logPath :: ServiceId -> String
 logPath sid = "/tmp/bosun-apply-" <> sanitize (unServiceId sid) <> ".log"

@@ -58,7 +58,14 @@ spec = describe "Bosun.Apply" do
 
   it "Process Start -> local, daemonized (long-running service, not ssh-wrapped)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && nohup run-a >/tmp/bosun-apply-a.log 2>&1 &" ]
+      lines `shouldEqual` [ "cd /srv/a && nohup env run-a >/tmp/bosun-apply-a.log 2>&1 &" ]
+
+  -- A startCommand may carry a leading env-var assignment (e.g. the julia atlas:
+  -- `ATLAS_PORT=3210 julia …`). Bare `nohup VAR=val prog` makes nohup exec the
+  -- string `VAR=val` — the `env` prefix lets the shell-style assignment through.
+  it "Process Start with an env-var prefix is launched via `env` (not eaten by nohup)" $
+    withScript (mkDeployment [ procLeaf "a" "/srv/a" "ATLAS_PORT=3210 run-a" ]) (snap []) \lines ->
+      lines `shouldEqual` [ "cd /srv/a && nohup env ATLAS_PORT=3210 run-a >/tmp/bosun-apply-a.log 2>&1 &" ]
 
   it "a Process command that already backgrounds itself is left as-is" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a &" ]) (snap []) \lines ->
