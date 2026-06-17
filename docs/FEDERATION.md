@@ -193,10 +193,11 @@ class Monad m <= MonadDeploy m where
   enact  :: StagedCommand -> m Result
   probe  :: Probe         -> m Status
 -- interpreters:
---   DryRun   — pure; plan preview + the conformance columns
---   LocalExec— os-exec / docker / launchctl on this host  (the agent)
---   SshRemote— ssh-wrap to a host                          (the bootstrap, today)
---   BeamNative — OTP supervisor / process introspection    (Stage 3)
+--   DryRun     — pure; plan preview + the conformance columns
+--   LocalExec  — os-exec / docker / launchctl on this host  (the agent)
+--   SshRemote  — ssh-wrap to a host                          (the bootstrap, today)
+--   BeamNative — OTP supervisor / process introspection      (Stage 3, §6)
+--   ProviderApi— reconcile a managed target via its API      (CDN/DNS/…, §7a — the Terraform leg)
 ```
 
 This is the **no-Aff seam generalised**: one pure program, interpreted into ssh
@@ -280,6 +281,7 @@ model, so none becomes a bolted-on subsystem later."
 | Secrets | presence-tracked refs, value never read | **modelled** (D-E8) |
 | Partition tolerance | agent keeps reconciling its last-known *signed* desired state; fail-safe, no split-brain writes (git is the only writer) | design |
 | Multi-tenancy / others' machines | trust boundary = which signing keys an agent honours | open |
+| Managed targets (CDN / DNS / object store) | `StaticCDN` executor + `Published Domain` + `CompletedOk`; agentless, reconciled via a `ProviderApi` interpreter (§7a) | **types present**, enactment stubbed |
 | Agent upgrade / the bootstrap problem | ssh `apply` re-deploys the agent; agent self-update is a deployment like any other | §7 |
 | The latency tail itself | §3.3 combinators on both `apply` and `observe` | design |
 
@@ -347,6 +349,56 @@ Because enactment lives behind the no-Aff seam (§3.4) and the core is
 host-agnostic, **you start agentless and add agents with no re-architecture** —
 the same pure core, a swapped interpreter. That is the "don't pay for scale you
 don't have, don't foreclose it" guarantee, made structural.
+
+### 7a. Managed targets — the executor class that *can't* be federated (and the Terraform leg)
+
+Not every deployable thing is a process on a host you own. A **static site on
+Cloudflare Pages or GitHub Pages** is the sharp example, and it belongs squarely
+in Bosun's remit — which is itself the strongest confirmation of the "generic
+substrate, not FP-k8s" framing (§0): a Pages site has *no process, no port, no
+host you can shell into*, yet it is the **same shape** — publish = `apply`, the
+live URL = its address, an HTTP/content-hash check = its health, the build
+artifact = its dependency. k8s would never include a GitHub Pages site; a generic
+substrate for distributed process management naturally does. And it is *live infra*
+already (`cloudflare-sites` pushes hylograph.net / blog / polyglot to Pages).
+
+**The model already anticipates it** — only the enactment is stubbed:
+
+- `Executor` already has `StaticCDN { provider :: CDNProvider, domain :: Domain }`
+  (so Cloudflare-Pages vs GitHub-Pages is already a modelled distinction); today
+  `apply` renders it `Manual "static-CDN publish (not automated)"`.
+- `Reachability` already has `Published Domain` (`publicDomain`, openness
+  `InternetWide`).
+- `Status` already has `CompletedOk` — "a one-shot succeeded, not down."
+
+So wiring it is *enactment, not architecture*: `wrangler pages deploy` /
+a `gh-pages` push, behind the `StaticCDN` executor.
+
+What makes it a **distinct class**, worth naming, is two honest differences:
+
+1. **It's a managed target with no agent foothold.** You cannot run `bosun
+   supervise` on Cloudflare's edge, so a `StaticCDN` service is *inherently*
+   agentless/push (§1, §7): reconciled **via the provider's API**, from an agent
+   *elsewhere* that holds the publish credential. This is the clean case that some
+   executors *can't* be federated — and that's fine; they are reconciled through
+   an API, not run on a host you own. (Contrast the ssh bootstrap, which is
+   agentless-but-temporary; managed targets are agentless-*permanently*.)
+2. **It's not a daemon.** "Up?" is `CompletedOk` **plus content-matches-desired**
+   (hash the artifact against the live deploy — CDNs expose the deployed
+   commit/hash via API, so it's genuinely observable), not "is a pid alive."
+   Teardown isn't "stop a process" — it's *unpublish*, or better, **roll back to a
+   previous deployment** (Pages keeps deployment history; rollback is a first-class
+   CDN verb that maps cleanly onto `plan`).
+
+**The horizon this opens — the Terraform leg.** Once you admit "reconcile a
+resource via a provider's API," you've admitted Terraform's entire domain. A
+`ProviderApi` interpreter (just one more `MonadDeploy` interpreter, §3.4, alongside
+LocalExec / Ssh / BeamNative) gets you Pages — and then **DNS records, R2 buckets,
+KV namespaces are the *same pattern*** (declare desired, observe actual via the
+API, plan the diff, apply). So static sites are the gateway by which the *one
+typed model* spans the **docker *and* terraform** legs of the
+"k8s/docker/terraform/BEAM" framing — without a second tool, because it's the same
+`reconcile → plan → apply` over a different executor and a different interpreter.
 
 ## 8. Frontier (where Andrew suspects this ends up)
 
