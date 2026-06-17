@@ -10,14 +10,46 @@
       --up: #1a7f37; --down: #9a9a9a; --redirect: #b06a00; --reject: #b3261e; --accent: #1a1a1a;
     }
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       margin: 0; background: var(--bg); color: var(--ink);
       font: 15px/1.5 "Helvetica Neue", Inter, system-ui, -apple-system, sans-serif;
       -webkit-font-smoothing: antialiased;
     }
-    .chair { max-width: 880px; margin: 0 auto; padding: 56px 32px 80px; }
-    .head h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
-    .head .sub { color: var(--muted); margin: 4px 0 0; font-size: 14px; }
+
+    /* ── full-screen app shell ── */
+    .app { display: flex; flex-direction: column; height: 100vh; }
+    .appnav {
+      flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
+      height: 46px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+    }
+    .brand { font-weight: 700; letter-spacing: -0.01em; font-size: 15px; margin-right: 4px; }
+    .nav-grp { display: flex; align-items: center; gap: 8px; }
+    .nav-spacer { flex: 1 1 auto; }
+    .status { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .sel {
+      font: inherit; font-size: 12px; padding: 4px 8px; background: var(--panel);
+      border: 1px solid var(--line); color: var(--ink); cursor: pointer; border-radius: 4px;
+    }
+    .btn.xs { padding: 2px 9px; font-size: 12px; border-color: var(--line); color: var(--muted); }
+    .btn.xs:hover { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+    .appbody { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+    .mainpane { flex: 1 1 auto; overflow: auto; min-width: 0; min-height: 0; position: relative; }
+    .mainpane.pad { padding: 28px 32px 64px; }
+    .mainpane.pad > * { max-width: 880px; }
+    .mainpane .graph { padding: 14px 18px; }
+    /* the channel rack docked as a horizontal strip along the bottom */
+    .dock {
+      flex: 0 0 auto; display: flex; align-items: stretch; gap: 14px;
+      padding: 10px 16px; overflow-x: auto; overflow-y: hidden;
+      border-top: 1px solid var(--line); background: #fbfbfc;
+    }
+    .dock-h {
+      flex: 0 0 auto; align-self: center; writing-mode: vertical-rl; transform: rotate(180deg);
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+      color: var(--muted); font-weight: 600;
+    }
     .error {
       margin: 24px 0 0; padding: 12px 16px; background: #fdeceb;
       border-left: 3px solid var(--reject); color: var(--reject); font-size: 14px;
@@ -161,6 +193,9 @@
       display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px;
       padding-top: 16px; border-top: 1px solid var(--rule, #e6e6e6);
     }
+    /* docked along the bottom: one non-wrapping row, scrolls sideways */
+    .dock .graph-rack { flex-direction: row; flex-wrap: nowrap; gap: 12px; margin: 0; padding: 0; border-top: none; }
+    .dock .sm-thumb { flex: 0 0 auto; }
     .sm-thumb {
       display: flex; flex-direction: column; align-items: stretch; gap: 4px;
       padding: 6px 6px 4px; background: #fff; cursor: pointer;

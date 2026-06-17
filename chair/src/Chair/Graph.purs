@@ -483,7 +483,9 @@ layoutPositions mode a =
   in
     Map.fromFoldable (map (\n -> n.id /\ { x: n.x, y: n.y }) nodes)
 
-graphView :: forall act m. (Maybe String -> act) -> (Maybe String -> act) -> (Channel -> act) -> GroupMode -> Set Channel -> Map String Point -> Maybe String -> Maybe String -> Map String NodeLive -> AnalyzeResult -> H.ComponentHTML act () m
+-- Returns the main pane and the channel rack SEPARATELY so the app shell can
+-- dock the rack to an edge while the main view takes the rest of the canvas.
+graphView :: forall act m. (Maybe String -> act) -> (Maybe String -> act) -> (Channel -> act) -> GroupMode -> Set Channel -> Map String Point -> Maybe String -> Maybe String -> Map String NodeLive -> AnalyzeResult -> { main :: H.ComponentHTML act () m, rack :: H.ComponentHTML act () m }
 graphView hoverAct selectAct toggleChan mode channels livePos focus select live a =
   let
     chOn ch = Set.member ch channels
@@ -577,29 +579,31 @@ graphView hoverAct selectAct toggleChan mode channels livePos focus select live 
                  (Array.mapMaybe (\e -> edgeLine (edgeDim e.from e.to) (isBridge e.from e.to) (chOn ChPlacement) posOf e) edges) ]
         else []
   in
-    HH.div [ cls "graph" ]
-      [ HH.div [ cls "graph-meta" ]
-          [ HH.span [ cls "muted" ]
-              [ HH.text (show (Array.length nodes) <> " nodes · "
-                  <> show (Array.length edges) <> " deps · "
-                  <> show (Array.length routes) <> " routes · "
-                  <> (case mode of
-                        ByDeps -> "loose view (left → right = boot order)"
-                        ByHost -> "grouped by host"
-                        ByPack -> "packed by placement")
-                  <> (if showSpof then " · ⚠ " <> show (Set.size cutVerts) <> " cut-vertices · " <> show (Set.size bridgeSet) <> " bridges" else "")
-                  <> (if hasLive then " · ◉ live: " <> show liveUpN <> " up · " <> show (Array.length downIds) <> " down" else "")) ]
+    { main:
+        HH.div [ cls "graph" ]
+          [ HH.div [ cls "graph-meta" ]
+              [ HH.span [ cls "muted" ]
+                  [ HH.text (show (Array.length nodes) <> " nodes · "
+                      <> show (Array.length edges) <> " deps · "
+                      <> show (Array.length routes) <> " routes · "
+                      <> (case mode of
+                            ByDeps -> "loose view (left → right = boot order)"
+                            ByHost -> "grouped by host"
+                            ByPack -> "packed by placement")
+                      <> (if showSpof then " · ⚠ " <> show (Set.size cutVerts) <> " cut-vertices · " <> show (Set.size bridgeSet) <> " bridges" else "")
+                      <> (if hasLive then " · ◉ live: " <> show liveUpN <> " up · " <> show (Array.length downIds) <> " down" else "")) ]
+              ]
+          , SE.svg
+              [ SA.viewBox 0.0 0.0 maxX maxY, SA.width maxX, SA.height maxY
+              , SA.class_ (H.ClassName "graph-svg")
+              ]
+              ( bgLayer <> trafficLayer <> edgeLayer <>
+              [ SE.g [ SA.class_ (H.ClassName "nodes") ]
+                  (map (\n -> nodeMark hoverAct selectAct channels (nodeFlags n) n) renderNodes)
+              ] )
           ]
-      , SE.svg
-          [ SA.viewBox 0.0 0.0 maxX maxY, SA.width maxX, SA.height maxY
-          , SA.class_ (H.ClassName "graph-svg")
-          ]
-          ( bgLayer <> trafficLayer <> edgeLayer <>
-          [ SE.g [ SA.class_ (H.ClassName "nodes") ]
-              (map (\n -> nodeMark hoverAct selectAct channels (nodeFlags n) n) renderNodes)
-          ] )
-      , channelRack toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeSetAll live
-      ]
+    , rack: channelRack toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeSetAll live
+    }
 
 -- append the dim marker class when brushing has pushed this element to the back
 dimClass :: String -> Boolean -> String

@@ -18,7 +18,7 @@ import Affjax.RequestBody as RB
 import Affjax.ResponseFormat as RF
 import Affjax.Web as AX
 import Bosun.View (AliasEntry, AliasOverride(..), AnalyzeRequest, AnalyzeResult, ConflictView, DeployErrorView, DivergenceView, RouteBacking, ServiceInstanceView, SvcView, ValidationView(..), analyzeRequestCodec, analyzeResultCodec)
-import Chair.Graph (Channel, GroupMode(..), NodeLive(..), allChannels, graphView, layoutPositions, modeLabel, nextMode)
+import Chair.Graph (Channel, GroupMode(..), NodeLive(..), allChannels, graphView, layoutPositions, nextMode)
 import Chair.State (RedirectInfo, RejectInfo, RouteStatus, StateView, decodeStateView)
 import Data.Argonaut.Decode.Error (printJsonDecodeError)
 import Data.Array as Array
@@ -74,6 +74,7 @@ type State =
   -- ingestion (pillar 1)
   , composePath :: String
   , registryPath :: String
+  , fixtureKey :: String      -- which named fixture the graph dropdown has loaded
   , analysis :: Maybe AnalyzeResult
   , anaErr :: Maybe String
   , anaLoading :: Boolean
@@ -109,6 +110,7 @@ data Action
   | SetRegistry String
   | LoadCorpus
   | LoadPaths String String   -- set compose+registry paths, then analyze
+  | LoadFixture String        -- pick a named fixture from the top-nav dropdown
   | RunAnalyze
   -- editable aliases (C2)
   | SetMergeName String
@@ -119,6 +121,7 @@ data Action
   | HoverNode (Maybe String)
   | SelectNode (Maybe String)
   | ToggleGroupBy
+  | SetGroupMode GroupMode
   | ToggleChannel Channel
   | ShowAllChannels
   | HideAllChannels
@@ -134,7 +137,7 @@ component =
     { initialState: \_ ->
         { view: Ingestion
         , cockpit: Nothing, cockErr: Nothing, ticks: 0, busy: false
-        , composePath: "", registryPath: "", analysis: Nothing, anaErr: Nothing, anaLoading: false
+        , composePath: "", registryPath: "", fixtureKey: "", analysis: Nothing, anaErr: Nothing, anaLoading: false
         , overrides: [], mergeName: "", mergeCanon: ""
         , graphFocus: Nothing, graphSelect: Nothing, groupMode: ByDeps
         , livePos: Map.empty, anim: Nothing, animGen: 0
@@ -161,6 +164,11 @@ handleAction = case _ of
   LoadPaths c r -> do
     H.modify_ _ { composePath = c, registryPath = r }
     runAnalyze
+  LoadFixture key -> case Array.find (\f -> f.key == key) fixtures of
+    Nothing -> pure unit
+    Just f -> do
+      H.modify_ _ { composePath = f.compose, registryPath = f.registry, fixtureKey = key }
+      runAnalyze
   RunAnalyze -> runAnalyze
   SetMergeName x -> H.modify_ _ { mergeName = x }
   SetMergeCanon x -> H.modify_ _ { mergeCanon = x }
@@ -180,22 +188,8 @@ handleAction = case _ of
   SelectNode mid -> H.modify_ \s -> s { graphSelect = if s.graphSelect == mid then Nothing else mid }
   ToggleGroupBy -> do
     s <- H.get
-    case s.analysis of
-      Nothing -> H.modify_ _ { groupMode = nextMode s.groupMode }
-      Just a -> do
-        let
-          target = nextMode s.groupMode
-          toPos = layoutPositions target a
-          -- start from where the nodes are NOW (live if mid-flight, else the
-          -- current layout) so a re-toggle picks up from the in-flight positions
-          fromPos = if Map.isEmpty s.livePos then layoutPositions s.groupMode a else s.livePos
-          gen = s.animGen + 1
-          mk (id /\ to) =
-            let from = fromMaybe to (Map.lookup id fromPos)
-            in { id, st: start (transitionWith lerpPoint { from, to } { duration: pivotMs, easing: CubicInOut, delay: 0.0 }) }
-          anims = map mk (Map.toUnfoldable toPos :: Array (String /\ Point))
-        H.modify_ _ { groupMode = target, anim = Just anims, livePos = fromPos, animGen = gen }
-        void (H.fork (animLoop gen))
+    pivotTo (nextMode s.groupMode)
+  SetGroupMode m -> pivotTo m
   ToggleChannel ch -> H.modify_ \s ->
     s { channels = if Set.member ch s.channels then Set.delete ch s.channels else Set.insert ch s.channels }
   ShowAllChannels -> H.modify_ _ { channels = Set.fromFoldable allChannels }
@@ -219,7 +213,49 @@ pollLoop = do
   refresh
   pollLoop
 
+-- ── named fixtures (the top-nav dropdown) ────────────────────────────────────
+
+type FixtureDef = { key :: String, label :: String, compose :: String, registry :: String }
+
+fixtures :: Array FixtureDef
+fixtures =
+  [ topo "valid"     "topology ✓ (valid)"
+  , topo "faults"    "topology ✗ (faults)"
+  , topo "gradient"  "gradient (all 5 marks)"
+  , topo "exposure"  "exposure (ramp)"
+  , topo "multihost" "multi-host"
+  , topo "colocation" "co-location"
+  , topo "live"      "◉ live demo"
+  , { key: "corpus", label: "frozen corpus", compose: corpusDir <> "/docker-compose.yml", registry: corpusDir <> "/registry.json" }
+  ]
+  where
+  topo dir label =
+    { key: dir, label
+    , compose: fixturesDir <> "/topologies/" <> dir <> "/compose.yml"
+    , registry: fixturesDir <> "/topologies/" <> dir <> "/registry.json"
+    }
+
 -- ── pivot animation (Hylograph interpolation engine) ─────────────────────────
+
+-- animate the layout from where the nodes are NOW to a target group mode. Shared
+-- by the cycle button and the top-nav dropdown; a no-op-looking re-select of the
+-- current mode just tweens in place. No analysis ⇒ set the mode without animating.
+pivotTo :: forall o. GroupMode -> H.HalogenM State Action () o Aff Unit
+pivotTo target = do
+  s <- H.get
+  case s.analysis of
+    Nothing -> H.modify_ _ { groupMode = target }
+    Just a -> do
+      let
+        toPos = layoutPositions target a
+        fromPos = if Map.isEmpty s.livePos then layoutPositions s.groupMode a else s.livePos
+        gen = s.animGen + 1
+        mk (id /\ to) =
+          let from = fromMaybe to (Map.lookup id fromPos)
+          in { id, st: start (transitionWith lerpPoint { from, to } { duration: pivotMs, easing: CubicInOut, delay: 0.0 }) }
+        anims = map mk (Map.toUnfoldable toPos :: Array (String /\ Point))
+      H.modify_ _ { groupMode = target, anim = Just anims, livePos = fromPos, animGen = gen }
+      void (H.fork (animLoop gen))
 
 pivotMs :: Number
 pivotMs = 520.0
@@ -287,33 +323,99 @@ runAnalyze = do
 
 -- ── render ───────────────────────────────────────────────────────────────────
 
+-- the full-screen app shell: a shallow top nav over a body that fills the
+-- viewport. The Graph view docks the small-multiples rack to the left and gives
+-- the rest to the main (scrollable; pan/zoom is the next step) surface; the other
+-- views just fill the main pane.
 render :: forall m. State -> H.ComponentHTML Action () m
 render s =
-  HH.div [ cls "chair" ]
-    [ HH.header [ cls "head" ]
-        [ HH.h1_ [ HH.text "Bosun’s Chair" ]
-        , HH.p [ cls "sub" ] [ HH.text subtitle ]
-        , HH.div [ cls "nav" ]
-            [ navBtn Ingestion "Ingestion"
-            , navBtn Graph "Graph"
-            , navBtn Cockpit "Cockpit"
-            ]
+  HH.div [ cls "app" ]
+    [ topNav s
+    , HH.div [ cls "appbody" ] (appBody s)
+    ]
+
+appBody :: forall m. State -> Array (H.ComponentHTML Action () m)
+appBody s = case s.view of
+  Graph -> case s.analysis of
+    Nothing ->
+      [ HH.section [ cls "mainpane pad" ]
+          [ maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text e ]) s.anaErr
+          , HH.p [ cls "muted" ] [ HH.text "choose a topology in the top bar — the graph renders the same AnalyzeResult the Ingestion view uses." ]
+          ]
+      ]
+    Just a ->
+      let
+        g = graphView HoverNode SelectNode ToggleChannel s.groupMode s.channels s.livePos s.graphFocus s.graphSelect
+          (maybe Map.empty (\sv -> liveMap sv a) s.cockpit) a
+      in
+        -- main on top, the rack as a horizontal strip docked along the bottom
+        -- (one row, scrolls sideways) so the rail never re-enters vertical
+        -- scrolling as the thumbnails get taller under a draggable main view.
+        [ HH.section [ cls "mainpane" ] [ g.main ]
+        , HH.aside [ cls "dock" ]
+            [ HH.div [ cls "dock-h" ] [ HH.text "channels" ], g.rack ]
         ]
+  Ingestion -> [ HH.section [ cls "mainpane pad" ] [ renderIngestion s ] ]
+  Cockpit -> [ HH.section [ cls "mainpane pad" ] [ renderCockpit s ] ]
+
+-- the shallow top nav: brand · view switcher · view-specific controls · status.
+topNav :: forall m. State -> H.ComponentHTML Action () m
+topNav s =
+  HH.header [ cls "appnav" ]
+    [ HH.span [ cls "brand" ] [ HH.text "Bosun’s Chair" ]
+    , viewSelect s
     , case s.view of
-        Cockpit -> renderCockpit s
-        Ingestion -> renderIngestion s
-        Graph -> renderGraphView s
-    , HH.footer [ cls "foot" ] [ HH.text ("refresh #" <> show s.ticks) ]
+        Graph -> graphNav s
+        _ -> HH.text ""
+    , HH.span [ cls "nav-spacer" ] []
+    , HH.span [ cls "status" ] [ HH.text serveStatus ]
     ]
   where
-  subtitle = case s.view of
-    Cockpit -> "cockpit for bosun serve · polling localhost:3997/state"
-    Ingestion -> "ingestion ladder · POST localhost:3022/analyze"
-    Graph -> "deployment graph · loose dependency view (Pillar 3, increment 1)"
-  navBtn v label =
-    HH.button
-      [ cls (if s.view == v then "btn active" else "btn"), HE.onClick \_ -> Goto v ]
-      [ HH.text label ]
+  serveStatus = case s.cockErr of
+    Just _ -> "serve ✕"
+    Nothing -> case s.cockpit of
+      Nothing -> "serve …"
+      Just v -> "serve ◉ " <> show (Array.length (Array.filter _.up v.routes)) <> "/" <> show (Array.length v.routes) <> " up"
+
+viewSelect :: forall m. State -> H.ComponentHTML Action () m
+viewSelect s =
+  HH.select [ cls "sel", HE.onValueChange gotoOf ]
+    [ vopt "ingestion" "Ingestion" (s.view == Ingestion)
+    , vopt "graph" "Graph" (s.view == Graph)
+    , vopt "cockpit" "Cockpit" (s.view == Cockpit)
+    ]
+  where
+  vopt val label sel = HH.option [ HP.value val, HP.selected sel ] [ HH.text label ]
+  gotoOf = case _ of
+    "graph" -> Goto Graph
+    "cockpit" -> Goto Cockpit
+    _ -> Goto Ingestion
+
+-- graph-specific nav cluster: fixture chooser, grouping, mark all/none.
+graphNav :: forall m. State -> H.ComponentHTML Action () m
+graphNav s =
+  HH.span [ cls "nav-grp" ]
+    [ HH.select [ cls "sel", HE.onValueChange LoadFixture ]
+        ( [ HH.option [ HP.value "", HP.selected (s.fixtureKey == "") ] [ HH.text "load fixture…" ] ]
+            <> map (\f -> HH.option [ HP.value f.key, HP.selected (s.fixtureKey == f.key) ] [ HH.text f.label ]) fixtures
+        )
+    , HH.select [ cls "sel", HE.onValueChange setGroupOf ]
+        [ gopt ByDeps "deps", gopt ByHost "host", gopt ByPack "pack" ]
+    , HH.span [ cls "muted" ] [ HH.text "marks" ]
+    , HH.button [ cls "btn xs", HE.onClick \_ -> ShowAllChannels ] [ HH.text "all" ]
+    , HH.button [ cls "btn xs", HE.onClick \_ -> HideAllChannels ] [ HH.text "none" ]
+    , if s.anaLoading then HH.span [ cls "muted" ] [ HH.text "…" ] else HH.text ""
+    ]
+  where
+  gopt m label = HH.option [ HP.value (gkey m), HP.selected (s.groupMode == m) ] [ HH.text ("group: " <> label) ]
+  gkey = case _ of
+    ByDeps -> "deps"
+    ByHost -> "host"
+    ByPack -> "pack"
+  setGroupOf = case _ of
+    "host" -> SetGroupMode ByHost
+    "pack" -> SetGroupMode ByPack
+    _ -> SetGroupMode ByDeps
 
 -- ── cockpit view ─────────────────────────────────────────────────────────────
 
@@ -407,35 +509,6 @@ liveMap sv a =
   statusFor canon = case Map.lookup canon routeStatus of
     Just s -> s
     Nothing -> if Set.member canon redirectIds then LiveRedirect else LiveUnknown
-
--- ── graph view (pillar 3) — a new render of the same AnalyzeResult ───────────
-
-renderGraphView :: forall m. State -> H.ComponentHTML Action () m
-renderGraphView s =
-  HH.div_
-    [ HH.div [ cls "toolbar" ]
-        [ HH.span [ cls "muted" ] [ HH.text "load:" ]
-        , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/valid/compose.yml") (fixturesDir <> "/topologies/valid/registry.json") ] [ HH.text "topology ✓ (valid)" ]
-        , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/faults/compose.yml") (fixturesDir <> "/topologies/faults/registry.json") ] [ HH.text "topology ✗ (faults)" ]
-        , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/gradient/compose.yml") (fixturesDir <> "/topologies/gradient/registry.json") ] [ HH.text "gradient (all 5 marks)" ]
-        , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/exposure/compose.yml") (fixturesDir <> "/topologies/exposure/registry.json") ] [ HH.text "exposure (ramp)" ]
-        , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/multihost/compose.yml") (fixturesDir <> "/topologies/multihost/registry.json") ] [ HH.text "multi-host" ]
-        , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/colocation/compose.yml") (fixturesDir <> "/topologies/colocation/registry.json") ] [ HH.text "co-location" ]
-        , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (fixturesDir <> "/topologies/live/compose.yml") (fixturesDir <> "/topologies/live/registry.json") ] [ HH.text "◉ live demo" ]
-        , HH.button [ cls "btn sm", HE.onClick \_ -> LoadPaths (corpusDir <> "/docker-compose.yml") (corpusDir <> "/registry.json") ] [ HH.text "frozen corpus" ]
-        , HH.button [ cls (if s.groupMode == ByDeps then "btn sm" else "btn sm active"), HE.onClick \_ -> ToggleGroupBy ]
-            [ HH.text (modeLabel s.groupMode) ]
-        , HH.span [ cls "muted" ] [ HH.text "marks:" ]
-        , HH.button [ cls "btn sm", HE.onClick \_ -> ShowAllChannels ] [ HH.text "all" ]
-        , HH.button [ cls "btn sm", HE.onClick \_ -> HideAllChannels ] [ HH.text "none" ]
-        , if s.anaLoading then HH.span [ cls "muted" ] [ HH.text "analysing…" ] else HH.text ""
-        ]
-    , maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text e ]) s.anaErr
-    , case s.analysis of
-        Nothing -> HH.p [ cls "muted" ] [ HH.text "load a fixture above — the graph renders the same AnalyzeResult the Ingestion view uses." ]
-        Just a -> graphView HoverNode SelectNode ToggleChannel s.groupMode s.channels s.livePos s.graphFocus s.graphSelect
-          (maybe Map.empty (\sv -> liveMap sv a) s.cockpit) a
-    ]
 
 ladder :: forall m. State -> AnalyzeResult -> H.ComponentHTML Action () m
 ladder s a =
