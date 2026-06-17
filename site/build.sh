@@ -11,17 +11,24 @@ TMP="$(mktemp -d)"
 COMBINED="$TMP/combined.md"
 DATE="$(date +%Y-%m-%d)"
 
-# Reading order: colleague-facing intro first, then the design narrative,
-# then the receipts, then the spike as an appendix.
-DOCS=(FOR-DEVOPS PRINCIPLES DESIGN SCENARIOS DECISIONS PRIOR-ART GRAPH-GRAMMAR)
+# Reading order — a coherent arc:
+#   why (FOR-DEVOPS) → discipline (PRINCIPLES) → the model (DESIGN + the two
+#   type refinements ADDRESS-TYPE, PLACEMENT-TYPE) → does it handle reality?
+#   (SCENARIOS) → the hard calls (DECISIONS) → it runs, resident (BOSUN-SERVE,
+#   CONTROL-SURFACE) → seeing into the BEAM (BEAM-OBSERVER) → where it's going
+#   (ROADMAP) → how it scales (FEDERATION) → the intellectual lineage (PRIOR-ART)
+#   → how you see it (GRAPH-GRAMMAR) → the spike as an appendix.
+# Working docs deliberately excluded (handoffs, phase logs, stress-test plan):
+#   internal, not dossier chapters; build history lives in docs/BUILD-PLAN.md.
+DOCS=(FOR-DEVOPS PRINCIPLES DESIGN ADDRESS-TYPE PLACEMENT-TYPE SCENARIOS DECISIONS BOSUN-SERVE CONTROL-SURFACE BEAM-OBSERVER ROADMAP FEDERATION PRIOR-ART GRAPH-GRAMMAR)
 
 {
   # ── Cover ──────────────────────────────────────────────────────────
   echo "# Bosun — Design Dossier"
   echo
-  echo "<p class=\"cover-tag\">A typed deployment-configuration reconciler. It reads the deployment config you already have, across every tool it's smeared across, checks it, and tells you where it's wrong before anything runs.</p>"
+  echo "<p class=\"cover-tag\">A typed substrate for distributed process management. It reads the deployment config you already have, across every tool it's smeared across, checks it and tells you where it's wrong before anything runs &mdash; then plans, applies, and supervises it.</p>"
   echo
-  echo "<p class=\"cover-meta\">Status: design stage (no shipping product yet). Generated $DATE from the repo docs. Reading order below; the first chapter (<em>For people who run things</em>) needs no functional-programming background and is the right starting point for a devops reader.</p>"
+  echo "<p class=\"cover-meta\">Status: active development, past first proof. The <strong>Detect &rarr; Plan &rarr; Apply</strong> pipeline is built and proven on two runtimes &mdash; the Node reference and, compiled via the Gnomon PureScript&rarr;Go backend, a native binary that performs real file-driven deploys <em>byte-identical</em> to Node. A resident lazy-spawn router (<code>serve</code>) and a live operational + control surface (the Chair) run today. Where it's going is the <em>Roadmap</em> chapter (Stages 1&ndash;3); how it scales without becoming baroque is <em>Federation</em>. Generated $DATE from the repo docs. The first chapter (<em>For people who run things</em>) needs no functional-programming background and is the right starting point for a devops reader.</p>"
   echo
   echo '---'
   echo
