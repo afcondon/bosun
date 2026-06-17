@@ -113,6 +113,7 @@ data Action
   | Reload
   | Spawn Int
   | Stop Int
+  | Reboot Int
   | Goto View
   | SetCompose String
   | SetRegistry String
@@ -166,6 +167,11 @@ handleAction = case _ of
   Reload -> control "/control/reload"
   Spawn port -> control ("/control/spawn?port=" <> show port)
   Stop port -> control ("/control/stop?port=" <> show port)
+  -- reboot = stop then spawn (serve has no atomic restart); the 1.5s /state poll
+  -- shows the node flip red→green on its own.
+  Reboot port -> do
+    control ("/control/stop?port=" <> show port)
+    control ("/control/spawn?port=" <> show port)
   Goto v -> do
     H.modify_ _ { view = v }
     when (v == Graph) (void (H.fork attachZoom))   -- (re)attach once the svg mounts
@@ -396,8 +402,10 @@ appBody s = case s.view of
       ]
     Just a ->
       let
-        g = graphView HoverNode SelectNode ToggleChannel s.groupMode s.channels s.livePos s.graphFocus s.graphSelect
-          (maybe Map.empty (\sv -> liveMap sv a) s.cockpit) a
+        handlers = { hover: HoverNode, select: SelectNode, toggleChan: ToggleChannel, spawn: Spawn, stop: Stop, reboot: Reboot }
+        live = maybe Map.empty (\sv -> liveMap sv a) s.cockpit
+        ctrl = maybe Map.empty (\sv -> controlMap sv a) s.cockpit
+        g = graphView handlers s.groupMode s.channels s.livePos s.graphFocus s.graphSelect live ctrl a
       in
         -- main on top, the rack as a horizontal strip docked along the bottom
         -- (one row, scrolls sideways) so the rail never re-enters vertical
@@ -561,6 +569,19 @@ liveMap sv a =
   statusFor canon = case Map.lookup canon routeStatus of
     Just s -> s
     Nothing -> if Set.member canon redirectIds then LiveRedirect else LiveUnknown
+
+-- | Map each graph node id → its serve public port, for the armed control mode.
+-- | Only serve ROUTES are controllable (redirects live on another host; rejects
+-- | and non-serve nodes have no port), so a node absent from this map gets no
+-- | control button even when armed. Same canonicalisation bridge as `liveMap`.
+controlMap :: StateView -> AnalyzeResult -> Map String Int
+controlMap sv a =
+  Map.fromFoldable (Array.mapMaybe entry a.instances)
+  where
+  portByCanon = Map.fromFoldable (map (\r -> r.serviceId /\ r.publicPort) sv.routes)
+  aliasM = Map.fromFoldable (map (\e -> e.from /\ e.to) a.reconcile.aliases)
+  canonOf i = fromMaybe (maybe i.localName (\p -> p <> ":" <> i.role) i.project) (Map.lookup i.localName aliasM)
+  entry i = map (\p -> i.localName /\ p) (Map.lookup (canonOf i) portByCanon)
 
 ladder :: forall m. State -> AnalyzeResult -> H.ComponentHTML Action () m
 ladder s a =

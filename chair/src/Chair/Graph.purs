@@ -16,7 +16,7 @@
 -- |
 -- | Force layout, the boot-order tight DAG, host hulls and the deck-of-cards
 -- | are later increments (docs/GRAPH-GRAMMAR.md §12).
-module Chair.Graph (graphView, layoutPositions, GroupMode(..), NodeLive(..), Channel(..), allChannels, nextMode, modeLabel) where
+module Chair.Graph (graphView, layoutPositions, GroupMode(..), NodeLive(..), Channel(..), Handlers, allChannels, nextMode, modeLabel) where
 
 import Prelude
 
@@ -103,12 +103,21 @@ data Channel
   | ChTraffic      -- reverse-proxy route edges
   | ChSpof         -- structural cut-vertex halos + bridge edges
   | ChLive         -- runtime status dots + blast-from-down
+  | ChControl      -- ARMED: nodes become start/stop/reboot fill-buttons (not in allChannels)
 
 derive instance Eq Channel
 derive instance Ord Channel
 
+-- the channels that compose the read-only picture. ChControl is DELIBERATELY
+-- absent: it's a destructive mode, so neither the default set nor the "all"
+-- button may ever arm it — it only arms by an explicit click on its own
+-- rack thumbnail. The rack still lists it (rackChannels), just never bulk-toggles.
 allChannels :: Array Channel
 allChannels = [ ChSource, ChDepth, ChExposure, ChPlacement, ChRequirement, ChTraffic, ChSpof, ChLive ]
+
+-- the full rack: every display channel plus the armed control toggle at the end.
+rackChannels :: Array Channel
+rackChannels = allChannels <> [ ChControl ]
 
 channelLabel :: Channel -> String
 channelLabel = case _ of
@@ -120,6 +129,7 @@ channelLabel = case _ of
   ChTraffic -> "traffic"
   ChSpof -> "SPOF"
   ChLive -> "live status"
+  ChControl -> "⚠ control"
 
 -- ── layout constants ─────────────────────────────────────────────────────────
 
@@ -306,6 +316,15 @@ liveUpColor = SA.RGB 56 158 86
 liveRedirectColor :: SA.Color
 liveRedirectColor = SA.RGB 92 116 196
 
+-- armed-control fills (ChControl). Saturated, high-contrast against white text:
+-- launch a stopped node = confirmatory green; stop = the alarm red (the same
+-- emergency hue everywhere); reboot = a deliberate blue (stop-then-spawn).
+launchColor :: SA.Color
+launchColor = SA.RGB 38 150 78
+
+rebootColor :: SA.Color
+rebootColor = SA.RGB 52 104 196
+
 -- a PUNCHIER version of the depth ramp, for the dot-only small multiple: the
 -- main-card ramp (layerRamp) is deliberately pale and vanishes shrunk to a dot
 -- on near-white, reading as "empty" and colliding with the genuinely-hollow
@@ -483,12 +502,29 @@ layoutPositions mode a =
   in
     Map.fromFoldable (map (\n -> n.id /\ { x: n.x, y: n.y }) nodes)
 
+-- the callbacks the view raises back to Main. The read-only interactions
+-- (hover/select/toggleChan) plus the three armed-control commands, each keyed by
+-- the node's serve public port. Bundled into one record so the (already wide)
+-- graphView signature stays legible as control grows.
+type Handlers act =
+  { hover :: Maybe String -> act        -- node hover (Nothing on leave) → brush
+  , select :: Maybe String -> act       -- node click → blast-radius selection
+  , toggleChan :: Channel -> act         -- rack thumbnail → toggle a channel
+  , spawn :: Int -> act                  -- armed: launch a stopped route (publicPort)
+  , stop :: Int -> act                   -- armed: stop a running route
+  , reboot :: Int -> act                 -- armed: stop-then-spawn a running route
+  }
+
 -- Returns the main pane and the channel rack SEPARATELY so the app shell can
 -- dock the rack to an edge while the main view takes the rest of the canvas.
-graphView :: forall act m. (Maybe String -> act) -> (Maybe String -> act) -> (Channel -> act) -> GroupMode -> Set Channel -> Map String Point -> Maybe String -> Maybe String -> Map String NodeLive -> AnalyzeResult -> { main :: H.ComponentHTML act () m, rack :: H.ComponentHTML act () m }
-graphView hoverAct selectAct toggleChan mode channels livePos focus select live a =
+-- `ctrl` maps a node id → its serve public port (serve-managed routes only); when
+-- the ChControl channel is on the view is ARMED and those nodes become
+-- start/stop/reboot fill-buttons.
+graphView :: forall act m. Handlers act -> GroupMode -> Set Channel -> Map String Point -> Maybe String -> Maybe String -> Map String NodeLive -> Map String Int -> AnalyzeResult -> { main :: H.ComponentHTML act () m, rack :: H.ComponentHTML act () m }
+graphView h mode channels livePos focus select live ctrl a =
   let
     chOn ch = Set.member ch channels
+    armed = chOn ChControl
     insts = a.instances
     edges = edgesOf insts
     routes = trafficOf insts
@@ -559,6 +595,13 @@ graphView hoverAct selectAct toggleChan mode channels livePos focus select live 
       , circleR: Map.lookup n.id packRes.radii   -- Just r in pack mode → render as a circle
       , live: liveOf n.id
       , liveWillFall: liveOf n.id /= LiveDown && Set.member n.id liveBlast
+      -- armed control: Just when ChControl is on AND serve manages this node (it
+      -- has a public port). `running` reads the RAW live map (not the ChLive-gated
+      -- liveOf) so the button is correct even with the status channel off.
+      , control:
+          if armed
+            then map (\port -> { port, running: Map.lookup n.id live == Just LiveUp }) (Map.lookup n.id ctrl)
+            else Nothing
       }
     -- the SVG layers, each gated by its channel. The ByDeps axis is BASE (it
     -- names the boot-order direction, not placement). Placement bands, traffic
@@ -580,9 +623,9 @@ graphView hoverAct selectAct toggleChan mode channels livePos focus select live 
         else []
   in
     { main:
-        HH.div [ cls "graph" ]
+        HH.div [ cls (if armed then "graph armed" else "graph") ]
           [ HH.div [ cls "graph-meta" ]
-              [ HH.span [ cls "muted" ]
+              ( [ HH.span [ cls "muted" ]
                   [ HH.text (show (Array.length nodes) <> " nodes · "
                       <> show (Array.length edges) <> " deps · "
                       <> show (Array.length routes) <> " routes · "
@@ -592,7 +635,9 @@ graphView hoverAct selectAct toggleChan mode channels livePos focus select live 
                             ByPack -> "packed by placement")
                       <> (if showSpof then " · ⚠ " <> show (Set.size cutVerts) <> " cut-vertices · " <> show (Set.size bridgeSet) <> " bridges" else "")
                       <> (if hasLive then " · ◉ live: " <> show liveUpN <> " up · " <> show (Array.length downIds) <> " down" else "")) ]
-              ]
+                ]
+                <> (if armed then [ HH.span [ cls "armed-banner" ] [ HH.text "⚠ ARMED — a click starts / stops / reboots a real service" ] ] else [])
+              )
           , SE.svg
               [ SA.viewBox 0.0 0.0 maxX maxY
               , SA.class_ (H.ClassName "graph-svg")
@@ -602,11 +647,11 @@ graphView hoverAct selectAct toggleChan mode channels livePos focus select live 
               [ SE.g [ SA.class_ (H.ClassName "zoom-group") ]
                   ( bgLayer <> trafficLayer <> edgeLayer <>
                   [ SE.g [ SA.class_ (H.ClassName "nodes") ]
-                      (map (\n -> nodeMark hoverAct selectAct channels (nodeFlags n) n) renderNodes)
+                      (map (\n -> nodeMark h channels (nodeFlags n) n) renderNodes)
                   ] )
               ]
           ]
-    , rack: channelRack toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeSetAll live
+    , rack: channelRack h.toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeSetAll live ctrl
     }
 
 -- append the dim marker class when brushing has pushed this element to the back
@@ -842,33 +887,88 @@ type NodeFlags =
   , circleR :: Maybe Number -- Just r ⇒ pack mode: render the node AS a circle of radius r
   , live :: NodeLive        -- runtime status from serve /state (the overlay dot)
   , liveWillFall :: Boolean -- transitively depends on a node serve reports DOWN
+  , control :: Maybe { port :: Int, running :: Boolean }  -- Just ⇒ armed + serve-managed
   }
 
-nodeMark :: forall act m. (Maybe String -> act) -> (Maybe String -> act) -> Set Channel -> NodeFlags -> Node -> H.ComponentHTML act () m
-nodeMark hoverAct selectAct channels flags n =
+nodeMark :: forall act m. Handlers act -> Set Channel -> NodeFlags -> Node -> H.ComponentHTML act () m
+nodeMark h channels flags n =
   -- positioned by a `translate` on the group, children at LOCAL 0,0 — so a layout
   -- pivot changes only this transform and the browser CSS-tweens the move
   -- (§6.1 object constancy). The reordering in graphView keeps Halogen reusing
   -- this <g> across pivots, which is what lets the transition fire.
   SE.g
-    [ SA.class_ (H.ClassName (dimClass (if n.ghost then "node ghost" else "node") flags.dim))
-    , SA.transform [ SA.Translate n.x n.y ]
-    , HE.onMouseEnter \_ -> hoverAct (Just n.id)
-    , HE.onMouseLeave \_ -> hoverAct Nothing
-    , HE.onClick \_ -> selectAct (Just n.id)
-    ]
+    ( [ SA.class_ (H.ClassName (dimClass (if n.ghost then "node ghost" else "node") flags.dim))
+      , SA.transform [ SA.Translate n.x n.y ]
+      , HE.onMouseEnter \_ -> h.hover (Just n.id)
+      , HE.onMouseLeave \_ -> h.hover Nothing
+      ] <> selectAttr
+    )
     ( halos <> body <> liveDot )
   where
   chOn ch = Set.member ch channels
+  -- when a control button owns this node's clicks, the node-level select is
+  -- REMOVED, so a click here can only start/stop/reboot — never silently re-brush.
+  selectAttr = case flags.control of
+    Just _ -> []
+    Nothing -> [ HE.onClick \_ -> h.select (Just n.id) ]
   -- the card's fill is the depth ramp (ChDepth) and its border is the source hue
   -- (ChSource); each falls back to a neutral when its channel is off.
   cardFill = if n.ghost then paper else if chOn ChDepth then layerRamp n.depth else paper
   cardStroke = if n.ghost then faint else if chOn ChSource then srcColor n.source else neutralBorder
-  -- in pack mode the node IS its pack circle (centred on the card-box centre);
-  -- elsewhere it's the 150×42 card. Same source/depth/exposure channels apply.
-  body = case flags.circleR of
-    Just r -> circleBody r
-    Nothing -> cardBody
+  -- armed control REPLACES the body with fill-buttons (in every layout — a single
+  -- legible card, since a split packed circle would be too small to hit safely);
+  -- otherwise the node IS its pack circle (pack mode) or the 150×42 card.
+  body = case flags.control of
+    Just ct -> controlBody ct
+    Nothing -> case flags.circleR of
+      Just r -> circleBody r
+      Nothing -> cardBody
+
+  -- the armed control surface: a stopped route is a single green LAUNCH button;
+  -- a running route splits into red STOP (left) | blue REBOOT (right). The node
+  -- name + role/host stay drawn on top (white) so you always have full identity
+  -- at the point of action. Labels are pointer-events:none (CSS) so clicks fall
+  -- through to the button rect beneath.
+  controlBody ct =
+    let
+      sub = clip 22 (n.mech <> maybe "" (\hst -> " · " <> hst) n.host)
+      nameLine = SE.text
+        [ SA.x (nodeW / 2.0), SA.y 17.0, SA.textAnchor SA.AnchorMiddle
+        , SA.fontSize (SA.FontSizeLength (SA.Px 12.5)), SA.fill paper
+        , SA.class_ (H.ClassName "ctrl-label") ]
+        [ HH.text (clip 20 n.id) ]
+      subLine = SE.text
+        [ SA.x (nodeW / 2.0), SA.y 29.0, SA.textAnchor SA.AnchorMiddle
+        , SA.fontSize (SA.FontSizeLength (SA.Px 8.5)), SA.fill paper, SA.fillOpacity 0.8
+        , SA.class_ (H.ClassName "ctrl-label") ]
+        [ HH.text sub ]
+      verb x t = SE.text
+        [ SA.x x, SA.y 39.5, SA.textAnchor SA.AnchorMiddle
+        , SA.fontSize (SA.FontSizeLength (SA.Px 9.0)), SA.fill paper
+        , SA.class_ (H.ClassName "ctrl-label") ]
+        [ HH.text t ]
+    in
+      if ct.running then
+        [ SE.rect
+            [ SA.x 0.0, SA.y 0.0, SA.width nodeW, SA.height nodeH, SA.rx 5.0
+            , SA.fill rebootColor, SA.class_ (H.ClassName "ctrl-btn")
+            , HE.onClick \_ -> h.reboot ct.port ]
+        , SE.rect
+            [ SA.x 0.0, SA.y 0.0, SA.width (nodeW / 2.0), SA.height nodeH, SA.rx 5.0
+            , SA.fill alarm, SA.class_ (H.ClassName "ctrl-btn")
+            , HE.onClick \_ -> h.stop ct.port ]
+        , nameLine, subLine
+        , verb (nodeW * 0.25) "■ stop"
+        , verb (nodeW * 0.75) "⟳ reboot"
+        ]
+      else
+        [ SE.rect
+            [ SA.x 0.0, SA.y 0.0, SA.width nodeW, SA.height nodeH, SA.rx 5.0
+            , SA.fill launchColor, SA.class_ (H.ClassName "ctrl-btn")
+            , HE.onClick \_ -> h.spawn ct.port ]
+        , nameLine, subLine
+        , verb (nodeW / 2.0) "▶ launch"
+        ]
 
   -- the runtime status dot (serve /state), top-left so it never collides with the
   -- right-edge exposure badge. Unknown draws nothing → the overlay is invisible on
@@ -905,7 +1005,7 @@ nodeMark hoverAct selectAct channels flags n =
         [ SA.x 10.0, SA.y 33.0
         , SA.fontSize (SA.FontSizeLength (SA.Px 9.5)), SA.fill faint
         ]
-        [ HH.text (if n.ghost then "undefined — no source" else (n.mech <> maybe "" (\h -> " · " <> h) n.host)) ]
+        [ HH.text (if n.ghost then "undefined — no source" else (n.mech <> maybe "" (\hst -> " · " <> hst) n.host)) ]
     ] <> (if chOn ChExposure then exposureBadge n else [])
 
   -- a leaf circle filling its pack slot (drawn a touch inside r for a gap),
@@ -1057,9 +1157,9 @@ channelRack
   :: forall act m
    . (Channel -> act) -> Set Channel -> Number -> Number
   -> Array Node -> Array Edge -> Array Route -> Set String -> Set (Tuple String String)
-  -> Map String NodeLive -> H.ComponentHTML act () m
-channelRack toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeSetAll live =
-  HH.div [ cls "graph-rack" ] (map thumb allChannels)
+  -> Map String NodeLive -> Map String Int -> H.ComponentHTML act () m
+channelRack toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeSetAll live ctrl =
+  HH.div [ cls "graph-rack" ] (map thumb rackChannels)
   where
   sc = min (150.0 / max 1.0 maxX) (96.0 / max 1.0 maxY)
   rData = 5.0 / sc
@@ -1111,10 +1211,23 @@ channelRack toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeS
           Just LiveRedirect -> dot n liveRedirectColor
           _ -> hollow n neutral)
       nodes
+    -- which nodes the armed mode can act on (serve-managed routes): filled green
+    -- if up, alarm-red if stopped; everything else hollow (not controllable here).
+    ChControl -> map
+      (\n -> case Map.lookup n.id ctrl of
+          Just _ -> if Map.lookup n.id live == Just LiveUp then dot n launchColor else dot n alarm
+          Nothing -> hollow n neutral)
+      nodes
+
+  -- the control thumbnail wears a distinct red accent (`armed`) so the one
+  -- destructive toggle never looks like just another display channel.
+  thumbCls ch =
+    (if Set.member ch channels then "sm-thumb on" else "sm-thumb")
+      <> (if ch == ChControl then " armed" else "")
 
   thumb ch =
     HH.button
-      [ cls (if Set.member ch channels then "sm-thumb on" else "sm-thumb")
+      [ cls (thumbCls ch)
       , HE.onClick \_ -> toggleChan ch
       ]
       [ SE.svg
