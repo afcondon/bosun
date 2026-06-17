@@ -103,6 +103,31 @@ The apply path *already ssh-wraps macmini commands.*
    in the `Address` type (the ADDRESS-TYPE work added exactly this), and run the
    `tailscale funnel`/`serve` enablement as a staged command of `apply`.
 
+   ***DONE — delta #3 COMPLETE → STAGE 1 COMPLETE (2026-06-17, with Andrew).***
+   Funnel enabled on the mini (`tailscale funnel --bg 80` → public `:443`→local
+   `:80`), and **a stranger on cellular (Andrew's phone, off-wifi/off-Tailscale,
+   3G) loaded `https://andrews-mac-mini.vaquita-paradise.ts.net/`** — the "a
+   stranger loads it" bar, met. (First public hit failed: TailScale Funnel
+   provisions a Let's-Encrypt cert on first access — slow over 3G — then caches
+   it; the retry loaded. NB MagicDNS resolves the `*.ts.net` name to the tailnet
+   IP, so on-tailnet machines hit the edge *directly*, bypassing Funnel — the
+   off-tailnet phone was the only true public test.) **Then MODELLED principledly
+   so `apply` owns it:** a service with a `Published` address emits a second,
+   post-launch staged command `tailscale funnel --bg <listening-port>` on its
+   host (`Bosun.Apply.publishCommands`; `applyScript` `concatMap`s launch ++
+   publish). macmini `Target` PATH gained the Tailscale.app CLI dir;
+   `fixtures/polyglot-core` edge declares `x-bosun.expose [{host:80},{domain:
+   …ts.net}]`. 95 tests; go-conformance byte-identical (35 Go files); the
+   **Gnomon-Go `--dry-run` emits the funnel-bearing script byte-identical to
+   node** — and the emitted line is exactly the hand-run that brought the
+   endpoint up, so proven-correct by construction.
+
+   **Known follow-up (separate task — Marginalia #134 co-design):** the deployed
+   stack is the *old* full-rig compose (`~/psd3/polyglot-deploy/docker-compose.
+   yml`, dated Feb 12), so the public page is the **old** polyglot front page.
+   Getting the **new website + the Julia example + the current backends** into
+   the config is the #134 co-design, expected and tracked separately.
+
 **Progress — local apply proven (2026-06-17).** Delta #1 is done as a *local*
 deploy: `bosun apply fixtures/polyglot-up` brings up the whole showcase on the
 MBP on its canonical ports — website (:3040 → HTTP 200), the two python
@@ -159,6 +184,14 @@ lean. Idle-reap (`bosun serve`) is the wrong posture for an always-on public URL
 **Done when:** Andrew shares a Funnel URL and a stranger loads the showcase; the
 deploy was performed by the Gnomon-compiled Go binary; `bosun observe` reports
 the stack healthy on the mini.
+
+**✅ MET (2026-06-17).** A stranger (Andrew's phone, off-Tailscale, cellular)
+loaded `https://andrews-mac-mini.vaquita-paradise.ts.net/`; core was brought up
+by the Gnomon-Go binary over ssh; the edge serves HTTP 200. **STAGE 1 COMPLETE.**
+Caveat for #134: the page is the *old* polyglot front (stale deployed compose) —
+refreshing the content is the separate co-design task. Next up: Stage 2
+(`supervise` + Rust monitoring) and/or the #134 content refresh; the purerl
+conformance column floats alongside.
 
 ## Stage 2 — Rust monitoring, then retire DeepStar
 
