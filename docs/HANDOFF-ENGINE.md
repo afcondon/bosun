@@ -442,3 +442,54 @@ the rebuilt binary + updated `fixtures/atlantis` to pick up both fixes:
   readiness; use pgid-liveness only to split `Starting` from `Down`). Left as the
   no-rush follow-up you flagged — fh2's prebuilt fast bind keeps the early-green
   window small in the meantime.
+
+---
+
+## Chair → Engine (2026-06-18): the Docker-on-Node executor — first mode-2 substrate
+
+Context: MBP polyglot group now runs under `supervise` on :3996 (4/4 — Go
+static-httpd + 2 PS→Python + 1 PS→Julia; the Chair drives it). Then surveyed the
+**MacMini** group, and it's a *different shape*: `bosun apply`/`down` dry-run
+correctly (ssh `docker compose up -d / stop` in boot/reverse order; polyglot-core
+even emits the `tailscale funnel --bg 80` publish step) — but it's **one-shot CLI
+with no resident `/state`+`/control`, so the Chair can't see or drive it.**
+
+This crystallised a broader frame, written up in **`docs/EXECUTORS.md`**: Docker,
+the BEAM/OTP, `launchd`, `systemd` are all **peer supervision substrates** — a
+foreign supervisor owns keep-alive, Bosun **observes + relays control**. The
+process executor (Bosun-owns-keep-alive) is the one special case; everything else
+is "Bosun over a supervisor." Please read `EXECUTORS.md` — it's the shape this ask
+should be built into, not a Docker one-off.
+
+### The ask — a Docker-on-Node executor behind the existing contract
+A resident mode (sibling to `supervise`) for a container deployment that:
+- **observe** = ssh `docker compose ps` + container **health** → the SAME `/state`
+  shape (services map + the additive `supervision`/health fields). Docker's
+  healthcheck *is* the readiness signal — containers get honest readiness free,
+  the thing `bosun-agent` is adding for processes.
+- **control** `up`/`down`/`restart` = ssh `docker compose up -d / stop / restart`
+  (+ the funnel step on `up`). Same `/state` + `/control` HTTP surface, same port
+  story → **the Chair lights up the MacMini group with zero Chair change** (ask-F
+  invariant again).
+- Note the semantic shift: here `up`/`down` are *deploy/teardown*; Docker does the
+  per-container keep-alive between them (so the `↻` "will self-heal" badge should
+  read the container `restart:` policy, not a Bosun loop). `EXECUTORS.md` has the
+  full table + the `↻`-generalisation.
+
+### Build it as the seam, not a special case
+Two real adapters (process, docker) is enough to extract the `Executor` interface
+(`observe` + `control` + a readiness capability). Then `launchd` (Marginalia's
+API/whisper already run as LaunchAgents — immediate real value), `beam`
+(`BEAM-OBSERVER.md`), and `systemd` slot in behind the same contract. A single
+deployment should eventually be **heterogeneous** (docker on macmini + process on
+mbp + launchd on macmini), the resident mode routing observe/control per-service
+to the right adapter.
+
+### Also (drift, low priority)
+`fixtures/polyglot-core/compose.yml` is "lifted verbatim" from
+`polyglot-deploy/docker-compose.yml` — a copy, same drift class as the `:3040`
+`-root` we just fixed. Eventually point Bosun at the real compose, don't keep a
+fixture copy. (Single-source-of-truth — same theme as `MARGINALIA-SEAM.md`.)
+
+Live deploy of polyglot-core to the mini (real `apply`, public Funnel) is held for
+Andrew's explicit go — this ask is the observe/control adapter, not the deploy.
