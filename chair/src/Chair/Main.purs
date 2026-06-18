@@ -521,8 +521,9 @@ appBody s = case s.route of
           Just sv -> superviseLive sv a
           Nothing -> maybe Map.empty (\c -> liveMap c a) s.cockpit
         ctrl = maybe Map.empty (\sv -> superviseCtrl sv a) s.superv
+        superv = maybe Map.empty (\sv -> superviseBadge sv a) s.superv
         desired = map (\sv -> sv.desired == "up") s.superv
-        g = graphView handlers s.armed s.groupMode s.channels s.livePos s.graphFocus s.graphSelect live ctrl desired a
+        g = graphView handlers s.armed s.groupMode s.channels s.livePos s.graphFocus s.graphSelect live ctrl superv desired a
       in
         -- main on top, the structural rack docked as a horizontal strip along the
         -- bottom (one row, scrolls sideways); the runtime overlay floats fixed in
@@ -753,6 +754,21 @@ superviseCtrl sv a =
   Map.fromFoldable (Array.mapMaybe entry a.instances)
   where
   entry i = let c = canonOf a i in if FO.member c sv.services then Just (i.localName /\ c) else Nothing
+
+-- | supervise /state → node id ↦ restart count, for the `↻` auto-restart badge.
+-- | PRESENCE in this map means "this process will self-heal" (it's under an
+-- | active supervisor). Sourced from the D-S1 `supervision` map when present
+-- | (carrying real counts); else, for a `supervised: true` daemon that predates
+-- | D-S1, every managed service still self-heals — fall back to count 0.
+superviseBadge :: SuperviseState -> AnalyzeResult -> Map String Int
+superviseBadge sv a = case sv.supervision of
+  Just m -> Map.fromFoldable (Array.mapMaybe (rowEntry m) a.instances)
+  Nothing
+    | sv.supervised == Just true -> Map.fromFoldable (Array.mapMaybe svcEntry a.instances)
+    | otherwise -> Map.empty
+  where
+  rowEntry m i = map (\row -> i.localName /\ row.restarts) (FO.lookup (canonOf a i) m)
+  svcEntry i = if FO.member (canonOf a i) sv.services then Just (i.localName /\ 0) else Nothing
 
 ladder :: forall m. State -> AnalyzeResult -> H.ComponentHTML Action () m
 ladder s a =

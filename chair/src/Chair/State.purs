@@ -10,6 +10,7 @@ module Chair.State
   , StateView
   , decodeStateView
   , SuperviseState
+  , SupervisionRow
   , decodeSuperviseState
   ) where
 
@@ -54,9 +55,20 @@ decodeStateView = decodeJson
 -- | Keyed by canonical serviceId, which is exactly the Chair's correlation key —
 -- | the `services` object maps node↔status through the same `canonOf` bridge as
 -- | serve. `desired` is the manual-hold indicator (down ⇒ auto-restart suspended).
+-- | One service's supervision badge data (ADR D-S1). Decoded MINIMALLY on
+-- | purpose — argonaut's record decoder ignores the other keys the daemon emits
+-- | (`fails`, `lastTransitionAt`, `suspendedUntil`), so a shape hiccup in those
+-- | can never break the core status decode. `restarts` is what the `↻ N` badge
+-- | needs; widen this row when the sparkline/“Xs ago” work lands.
+type SupervisionRow = { restarts :: Int }
+
 type SuperviseState =
   { desired :: String
   , services :: Object String
+  -- additive D-S1 fields; `Maybe` so plain serve / a pre-D-S1 supervise binary
+  -- (which omit them) still decode.
+  , supervised :: Maybe Boolean
+  , supervision :: Maybe (Object SupervisionRow)
   }
 
 decodeSuperviseState :: Json -> Either JsonDecodeError SuperviseState

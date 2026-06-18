@@ -514,8 +514,12 @@ type Handlers act =
 -- become ⟳ restart fill-buttons; `desired` is the group's supervise desired-state
 -- (`Just true` = up, `Just false` = held down, `Nothing` = not a supervise group,
 -- so group control is unavailable).
-graphView :: forall act m. Handlers act -> Boolean -> GroupMode -> Set Channel -> Map String Point -> Maybe String -> Maybe String -> Map String NodeLive -> Map String String -> Maybe Boolean -> AnalyzeResult -> { main :: H.ComponentHTML act () m, rack :: H.ComponentHTML act () m, overlay :: H.ComponentHTML act () m }
-graphView h armed mode channels livePos focus select live ctrl desired a =
+-- `superv` maps a node id → its restart count when the process is under an
+-- active supervisor (presence ⇒ "will self-heal" → draw the ↻ glyph); `desired`
+-- is the group's supervise desired-state (`Just false` = held down → auto-restart
+-- suspended, so the ↻ is dimmed).
+graphView :: forall act m. Handlers act -> Boolean -> GroupMode -> Set Channel -> Map String Point -> Maybe String -> Maybe String -> Map String NodeLive -> Map String String -> Map String Int -> Maybe Boolean -> AnalyzeResult -> { main :: H.ComponentHTML act () m, rack :: H.ComponentHTML act () m, overlay :: H.ComponentHTML act () m }
+graphView h armed mode channels livePos focus select live ctrl superv desired a =
   let
     chOn ch = Set.member ch channels
     insts = a.instances
@@ -596,6 +600,10 @@ graphView h armed mode channels livePos focus select live ctrl desired a =
       -- (its serviceId is in the daemon's /state). The node becomes a ⟳ restart
       -- button; group up/down lives on the runtime overlay.
       , control: if armed then Map.lookup n.id ctrl else Nothing
+      -- auto-restart badge: Just when this process is under an active supervisor
+      -- (it will self-heal). `count` = restarts so far; `held` dims it when the
+      -- group is stopped (desired=down ⇒ auto-restart suspended).
+      , autoRestart: map (\c -> { count: c, held: desired == Just false }) (Map.lookup n.id superv)
       }
     -- the SVG layers, each gated by its channel. The ByDeps axis is BASE (it
     -- names the boot-order direction, not placement). Placement bands, traffic
@@ -883,6 +891,7 @@ type NodeFlags =
   , live :: NodeLive        -- runtime status from serve /state (the overlay dot)
   , liveWillFall :: Boolean -- transitively depends on a node serve reports DOWN
   , control :: Maybe String -- Just serviceId ⇒ armed + supervised → a ⟳ restart button
+  , autoRestart :: Maybe { count :: Int, held :: Boolean } -- Just ⇒ supervised, draw ↻
   }
 
 nodeMark :: forall act m. Handlers act -> Set Channel -> NodeFlags -> Node -> H.ComponentHTML act () m
@@ -898,7 +907,7 @@ nodeMark h channels flags n =
       , HE.onMouseLeave \_ -> h.hover Nothing
       ] <> selectAttr
     )
-    ( halos <> body <> liveDot )
+    ( halos <> body <> liveDot <> autoRestartGlyph )
   where
   chOn ch = Set.member ch channels
   -- when a control button owns this node's clicks, the node-level select is
@@ -969,6 +978,33 @@ nodeMark h channels flags n =
             , SA.class_ (H.ClassName (if st == LiveDown then "live-dot down" else "live-dot"))
             ]
         ]
+
+  -- the ↻ auto-restart badge: present on every process under an active
+  -- supervisor (it WILL self-heal). Blue (the restart hue, matching the manual
+  -- ⟳ button), with the restart count when > 0 (so a flap is visible even if the
+  -- poll missed the red — the poll-miss answer made visible). Dimmed when the
+  -- group is held down (auto-restart suspended). Suppressed on a control button
+  -- (armed) to keep the button clean.
+  autoRestartGlyph = case flags.control of
+    Just _ -> []
+    Nothing -> case flags.autoRestart of
+      Nothing -> []
+      Just ar ->
+        let
+          label = if ar.count > 0 then "↻" <> show ar.count else "↻"
+          place = case flags.circleR of
+            Just r -> let cr = max 6.0 (r - 4.0) in { x: nodeW / 2.0 + 0.66 * cr, y: nodeH / 2.0 - 0.66 * cr + 4.0, anchor: SA.AnchorMiddle }
+            Nothing -> { x: nodeW - 7.0, y: 14.0, anchor: SA.AnchorEnd }
+        in
+          [ SE.text
+              [ SA.x place.x, SA.y place.y, SA.textAnchor place.anchor
+              , SA.fontSize (SA.FontSizeLength (SA.Px 11.0))
+              , SA.fill rebootColor
+              , SA.fillOpacity (if ar.held then 0.3 else 0.95)
+              , SA.class_ (H.ClassName "auto-restart")
+              ]
+              [ HH.text label ]
+          ]
 
   cardBody =
     [ SE.rect
