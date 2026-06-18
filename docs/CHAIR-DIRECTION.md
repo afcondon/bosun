@@ -62,6 +62,22 @@ once pan/zoom lands.
 - **Then navigation minis (3) + modifier-click deprecation (4)** — once the
   pattern of "affordance = a small visible surface" is established by (1)–(2).
 
+## Parking lot (2026-06-18, surfaced while testing the live Atlantis rig)
+
+- **The picker page as an all-projects dashboard.** Put the small runtime
+  minimap (the one in the top-right overlay) on each card in the project selector,
+  so the landing page becomes a live status board for *every* monitored project at
+  once — and let you **attach** to several supervisors simultaneously (watch all,
+  drill into one for the detailed graph). This is the deferred multi-supervisor
+  "top-level Minard altitude" view, now with a concrete home: the picker.
+- **A stats page with sparklines that persist through restart events.** The
+  supervise restart counters reset on a deliberate group down/up (clean slate),
+  so `↻N` is per-up-session, not lifetime. A separate stats surface that records
+  transitions durably (sparkline the *counter*, not the sampled status — a same-
+  tick relaunch is invisible to status sampling but shows as a counter blip) would
+  give real flap history. Hylograph already has the machinery. Not for today.
+
 Related: `CONTROL-SURFACE.md` (the two-session split + control modal),
 `BEAM-OBSERVER.md` (same Chair over an OTP observer — these affordances apply
-verbatim to restarting a purerl-tidal voice).
+verbatim to restarting a purerl-tidal voice), `AGENT-CONTRACT.md` +
+`.claude/skills/bosun-daemon` (writing daemons that plug into all this cleanly).
