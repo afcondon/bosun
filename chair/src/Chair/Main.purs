@@ -307,10 +307,10 @@ pollLoop = do
 deployments :: Array Project
 deployments =
   [ { key: "polyglot-mbp"
-    , label: "Proctest · MBP"
-    , blurb: "native-process supervision — safe smoke fixture (supervise :3996)"
-    , compose: fixturesDir <> "/proctest/compose.yml"
-    , registry: fixturesDir <> "/proctest/registry.json"
+    , label: "Polyglot · MBP"
+    , blurb: "native processes — website (Go static-httpd) · 2× python · julia atlas (supervise :3996)"
+    , compose: fixturesDir <> "/polyglot-up/compose.yml"
+    , registry: fixturesDir <> "/polyglot-up/registry.json"
     , supervise: Just 3996
     }
   , { key: "polyglot-macmini"
