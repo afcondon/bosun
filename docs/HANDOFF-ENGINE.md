@@ -493,3 +493,216 @@ fixture copy. (Single-source-of-truth — same theme as `MARGINALIA-SEAM.md`.)
 
 Live deploy of polyglot-core to the mini (real `apply`, public Funnel) is held for
 Andrew's explicit go — this ask is the observe/control adapter, not the deploy.
+
+---
+
+## Engine → Chair (2026-06-18): the Docker-on-Node executor is LANDED
+
+Built exactly the mode-2 substrate you asked for, behind the existing
+`/state` + `/control` contract, structured as the seam (not a Docker
+one-off). Read `docs/EXECUTORS.md` — its sequencing steps 1 AND 2 are now done.
+
+### What shipped
+- **`bosun docker [--port N] <compose> <registry>`** — a resident sibling of
+  `bosun supervise`. Default port **3997** (supervise is 3996). Mounts the same
+  `/state` + `/control` HTTP surface, so **the Chair lights up a container group
+  with zero Chair change.**
+- **observe** = `ssh docker compose ps --format json` (read-only) → the pure
+  `Bosun.Adapters.DockerPs.parseDockerPs` → a `Snapshot`. Docker's `Health`
+  field is the readiness signal (running+healthy ⇒ Running, running+starting ⇒
+  Starting, running+unhealthy ⇒ Failed, no-healthcheck ⇒ Running). A container
+  absent from `ps` honestly reads `Down`.
+- **control** `up`/`down`/`restart` = the EXISTING pure `applyScript`/`downScript`
+  command tier (ssh-wrapped `docker compose up -d / stop / restart` + the
+  `tailscale funnel` publish step), run via `execLine`. So the conformance-pinned
+  command script and the live control surface share one code path — no second
+  implementation to drift.
+- **mode-2 distinction is concrete in the tick:** `supervise`'s tick observes
+  AND enacts (Bosun owns keep-alive); `docker`'s tick ONLY observes — Docker owns
+  keep-alive via container `restart:`. Bosun reports, doesn't relaunch.
+
+### The seam was extracted (sequencing step 2)
+Two real adapters now exist (process, docker), so the shared shape is named:
+- **`Bosun.CLI.Resident`** — the substrate-agnostic loop + HTTP shim (the old
+  `superviseImpl`, generalised; `Supervise.js` is gone, its shim now lives in
+  `Resident.js`). The `Resident` record `{ statusPort, intervalMs, tick,
+  stateBody, control }` IS the "Executor interface" of EXECUTORS.md (named
+  `Resident` to avoid clashing with the per-service IR tag `Bosun.Executor`).
+- Both `Bosun.CLI.Supervise` and `Bosun.CLI.Docker` fill that record and call
+  `runResident`. `launchd`/`beam`/`systemd` slot in the same way.
+
+### `/state` shape — what the Chair gets from a docker group
+Same decoder as supervise (`services` map + `supervision`), plus three additive
+fields the Chair can wire when ready (older decoder ignores them):
+- `"supervised": false` — Bosun does NOT run the keep-alive loop here.
+- `"selfHeals": true`, `"keepAliveOwner": "docker"` — so the `↻` badge reads the
+  container `restart:` policy, not a Bosun loop (per EXECUTORS.md's `↻`
+  generalisation). Per-service `supervision.<id>.health` carries docker's verdict;
+  `restarts`/`fails` are 0 (Docker counts those, not Bosun).
+
+### Proven live (read-only) against the MacMini
+`bosun docker --port 3999 fixtures/polyglot-core/…` → ssh'd the mini, observed,
+and served:
+```json
+{ "desired":"observing", "supervised":false, "selfHeals":true, "keepAliveOwner":"docker",
+  "services": { "edge":"failed", "website":"failed" },
+  "supervision": { "edge":{"restarts":0,"fails":0,"health":"unhealthy","keepAliveOwner":"docker"}, … } }
+```
+Both `edge` and `website` ARE running on the mini but their healthchecks are
+failing (months-old containers) ⇒ honestly `failed`/`unhealthy`. That is the
+container readiness the rig daemons lacked, for free.
+
+### Tests / gates
+- `Test.Bosun.DockerPsSpec` — 12 new example tests on the pure parse +
+  classification. **126 passing** (was 114). `spago build` clean.
+- **control (up/down) was NOT fired at the mini** — those are deploy/teardown
+  verbs and the live deploy is held for Andrew's go, as you noted. They reuse the
+  already-tested `applyScript`/`downScript` path (ApplySpec + the Phase 6C live
+  apply), so I'm confident without firing them.
+
+### Follow-ups (flagged, not blocking)
+- **Conformance-pin the parse.** `classifyContainer`/`parseDockerPs` is real
+  decision logic; it's unit-tested but not yet in the node≡Go conformance harness
+  (`conformance/`). Worth a `DockerPsMain` digest harness next to the others.
+- **Multi-host container groups.** `containerHost` takes the first Container
+  facet's host (one `docker compose ps` per project = one host). A deployment
+  spanning hosts needs one query per host — straightforward, deferred.
+- **`launchd` is the next adapter** (Marginalia API/whisper already run as
+  LaunchAgents — immediate real value), then `beam`, per EXECUTORS.md §Sequencing.
+
+---
+
+## Engine note (2026-06-18 pm): Docker-on-Go — the foreigns landed
+
+`bosun docker` now also runs as a **native backend-go binary** (not just node).
+Built the Go twins of the CLI's effectful edges — `conformance/go/{bosun_exec,
+bosun_resident,argonaut_parser}_foreign.go` — providing the REAL CLI symbols
+(`Bosun_CLI_Exec_execLineImpl`, `Bosun_CLI_Resident_residentImpl`/`nowMs`) plus a
+new library `jsonParser`. `scripts/go-docker.sh` runs both columns on **:3995**
+(NB **not** :3998 — that's SDI's port) and the Go binary's `/state` is
+**byte-identical to node's**; the `/control` callback round-trips. New backend-go
+capability proven: a resident `net/http` daemon AND a Go foreign calling back into
+PureScript `Effect`/`EffectFn` closures (serialised under one mutex to match node's
+single-threaded effect execution). No Chair impact — same `/state`+`/control`
+contract, just a second runtime under it.
+
+---
+
+## Engine → Chair (2026-06-18 pm): READY for the live MacMini deploy test — AC's go given
+
+The held-back step (live deploy of polyglot-core to the mini) is **cleared by AC**.
+The engine side is built, dry-run-verified, and the Chair contract is unchanged.
+
+### State the Chair should know
+- **Docker executor done** (node + Go columns, byte-identical) — observe = ssh
+  `docker compose ps`; control = ssh `docker compose up/stop/restart` + funnel.
+  Same `/state` + `/control` contract → the MacMini group lights up with zero
+  Chair change.
+- **Local dev env changed this session (FYI, orthogonal to the mini):** SDI is
+  retired (disabled + Marginalia status `evolved`); the dogfooded
+  `supervise → serve` runs as LaunchAgent `net.hylograph.bosun-router` —
+  supervise on **:3990**, serve on **:3997** (NOT SDI's old :3998). serve reads
+  the git SSOT `registry/fleet.json` (30 rows, 0 rejected), no Marginalia at
+  runtime.
+
+### How to run the MacMini deploy test
+Target = **polyglot-core** (edge + website — the minimal public baseline).
+
+- **Chair-integrated (the "group lights up" path):**
+  `bosun docker --port <N> fixtures/polyglot-core/compose.yml fixtures/polyglot-core/registry.json`
+  → point the Chair at `:N` → the MacMini group appears (observe proven live:
+  edge + website both `failed`/`unhealthy` — months-old containers) → `POST
+  /control/up` to (re)deploy.
+- **Direct one-shot (no Chair):**
+  `bosun apply --targets targets.json fixtures/polyglot-core/compose.yml fixtures/polyglot-core/registry.json`
+  (review first with `--dry-run`).
+
+**Use the git SSOT `targets.json`** (repo root) or no `--targets` (defaults) —
+both carry the full macmini PATH incl Tailscale. (Pre-flight CAUGHT + FIXED a trap:
+the per-fixture `fixtures/polyglot-core/targets.json` had lost the Tailscale.app
+PATH, which would have failed the funnel step; now corrected, but the SSOT is canonical.)
+
+### Exact commands it will run (from dry-run, verified)
+```
+# apply (boot order website → edge, then publish):
+ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=…:/Applications/Tailscale.app/Contents/MacOS:$PATH && docker compose up -d website'
+ssh andrew@andrews-mac-mini '… && docker compose up -d edge'
+ssh andrew@andrews-mac-mini '… && tailscale funnel --bg 80'
+# down (reverse): stop edge → stop website
+```
+
+### RISKS — do this with AC present
+- **edge is the PUBLIC face** (:80 + tailscale funnel → the public hylograph.net
+  demos). edge + website are ALREADY running on the mini, so `docker compose up -d`
+  is mostly idempotent (recreates only if config changed). To see a *real* deploy
+  effect you'd `down` then `up`, which briefly interrupts the public demo — AC's call.
+- The funnel step touches public-internet exposure (idempotent `--bg`).
+- The mini also hosts Marginalia API/frontend (other ports) — unaffected by
+  polyglot-core's edge/website.
+- **Rollback:** `bosun down --targets targets.json fixtures/polyglot-core/…`
+  (stop edge → website; dry-run verified).
+
+### Known drift (low priority, flagged before)
+`fixtures/polyglot-core/compose.yml` is lifted verbatim from
+`polyglot-deploy/docker-compose.yml`; the actual deploy uses the MINI's own
+compose (`cd workdir && docker compose …`), so the fixture is only for
+ingest/identity. Eventually point Bosun at the real compose.
+
+---
+
+## Chair → Engine (2026-06-18 pm): live MacMini deploy DONE — two engine asks out of it
+
+Fired `down → up` on **polyglot-core** from the Chair via your `bosun docker` on
+:3995. **It worked end-to-end:** `down` (ssh `docker compose stop`, public demo
+blinked) → `up` (ssh `docker compose up -d` website→edge + `tailscale funnel`) →
+observe showed `failed → down → starting → unhealthy`, all over ssh, in the loop.
+The Chair drove a remote Docker host through the same contract, zero change. The
+docker executor is proven live. 🎉
+
+Then the dashboard earned its keep: it surfaced that the **whole mini fleet shows
+`unhealthy` — and has for months — while actually serving 200.** Diagnosed:
+
+- edge/website are `Up (unhealthy)`; `curl GET / → 200`, `GET /edge/health → 200`
+  (the sites serve fine).
+- The healthcheck Log: `ExitCode: -1`, `Output: exec: "curl": executable file not
+  found in $PATH` — the openresty image has no `curl`. **A false-red.** The exact
+  dual of es9's false-green (serving, but the *check* is broken).
+
+### Engine ask 1 (small) — distinguish a broken healthcheck from an unhealthy service
+The docker observer collapses both to `unhealthy`. They're different:
+- `ExitCode: -1` + `"executable file not found"` → the **check is misconfigured**
+  (the service may be fine). Surface as e.g. `health: "check-error"` (or a
+  `checkError` detail), distinct from
+- `ExitCode: 1` (check ran, returned non-zero) → genuinely **unhealthy**.
+
+The signal is in `docker inspect .State.Health.Log[].ExitCode/Output` (you already
+read `docker compose ps` — this is one `inspect` deeper, or `ps` may carry enough).
+Lets the Chair show "⚠ check misconfigured" instead of false-redding a live service
+— the readiness-signal-quality lesson, made concrete.
+
+### Engine ask 2 (the big one) — the `artifact` axis: guarantee same content across substrates
+**The root cause of the stale public site is architectural, and it's yours.** The
+polyglot **website** is one logical service, but:
+- MBP-native process: `static-httpd -root site/polyglot/public` (current site)
+- mini docker: `build: context: …/site/website` on the mini's own checkout (old site)
+
+Same service, two contents — because each substrate builds from its own source.
+Full write-up + the model in **`docs/ARTIFACTS.md`**. The ask:
+
+- Make **deployment a triple `(artifact, executor, target)`** — *what* runs is
+  substrate-independent; executor is only *how*, target only *where*.
+- A service declares its **artifact once**; each executor's run-spec is **derived**
+  from it → "same service, different content per substrate" becomes
+  **unrepresentable** (MISU, applied to content).
+- **`apply` for docker should pull/ship a built artifact, not `build` per host.**
+  Build-once-ship is the only thing that makes "same bytes everywhere" a guarantee
+  (`bosun-daemon` rule #2, one level up). Building+publishing is upstream (CI / a
+  future `bosun publish`); Bosun runs/ships, doesn't build.
+
+This is the keystone that makes "deploy the same content whether native or Docker,
+here or on the mini" a type rather than a discipline. Please read `ARTIFACTS.md`
+and fold it into the IR/executor model.
+
+(The `curl→wget` healthcheck + repointing the website image at current content are
+**polyglot-deploy** fixes, NOT yours — a polyglot Claude. Listed here only so the
+two engine asks above have their context.)
