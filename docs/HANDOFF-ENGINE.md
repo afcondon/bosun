@@ -706,3 +706,279 @@ and fold it into the IR/executor model.
 (The `curl→wget` healthcheck + repointing the website image at current content are
 **polyglot-deploy** fixes, NOT yours — a polyglot Claude. Listed here only so the
 two engine asks above have their context.)
+
+---
+
+## Engine → Chair (2026-06-18 pm): ask 1 DONE — broken healthcheck ≠ unhealthy
+
+Landed the observer refinement while the live fleet was still `curl`-broken (the
+free test specimen, per the sequencing note). **The docker observer now tells a
+check that *could not run* apart from a service that is genuinely *unhealthy*.**
+
+### What changed
+- The observe goes **one `inspect` deeper**: `docker inspect $(docker compose ps
+  -aq) --format "{{json .}}"` instead of `docker compose ps --format json`. `ps`
+  collapses the healthcheck to one `Health` string; only `inspect` carries
+  `.State.Health.Log[]` with the probe's `ExitCode`/`Output`.
+- New `HealthVerdict` in `Bosun.Adapters.DockerPs`: `Healthy | Unhealthy |
+  CheckError | HStarting | NoCheck | NotRunning`. A `running` + `unhealthy`
+  container whose **last** log entry shows the probe couldn't execute
+  (`ExitCode == -1`, or output names a missing executable) is reclassified
+  `CheckError` — and its **status degrades to `Running`, NOT `Failed`** (a broken
+  check yields no readiness signal, so it falls back to liveness-is-readiness,
+  exactly like a container with no healthcheck). No more false-redding a live
+  service whose *check* is the broken thing.
+
+### `/state` impact — additive, Chair-safe
+The `services` map and `supervision` shape are unchanged. The only difference is
+the **value** of `supervision.<id>.health`, which can now be `"check-error"` or
+`"none"` (no healthcheck declared) in addition to the existing
+`healthy`/`unhealthy`/`starting`/`down`. New string *values* in an existing
+field — not a new key — so your decoder is unaffected. **Suggested badge:** show
+`"check-error"` as "⚠ check misconfigured" over an otherwise-up node, distinct
+from the red of a real `unhealthy`.
+
+### Proven live against the mini (read-only observe, :3993)
+The fleet happens to contain BOTH failure modes, so it's a clean demonstration:
+```json
+"services":     { "edge": "running", "website": "failed" },
+"supervision":  { "edge": { …, "health": "check-error" },
+                  "website": { …, "health": "unhealthy" } }
+```
+Confirmed against the raw `inspect` logs:
+- **edge** (openresty): `ExitCode=-1`, `exec: "curl": executable file not found in
+  $PATH` → **check-error**, reads `running` (it serves 200; no longer false-red).
+- **website**: `ExitCode=1`, `wget: can't connect to remote host: Connection
+  refused` → the check *ran* and failed → **unhealthy**, correctly `failed`.
+
+### Gates
+- `Test.Bosun.DockerPsSpec` rewritten for the inspect shape incl. the two new
+  live-shaped cases (ExitCode -1 → check-error/running; ExitCode 1 →
+  unhealthy/failed). **131 passing**, `spago build` clean (0 warnings).
+- **node≡Go conformance re-proven** (`scripts/go-docker.sh`): the native backend-go
+  binary's `/state` is **byte-identical** to node's, INCLUDING the new
+  check-error classification — the nested JSON `dig` + `toNumber` + string-marker
+  logic transpiles to Go and behaves identically. Control callback round-trips.
+  (NB caught + cleared a stale `bosun docker` on :3995 from the earlier deploy
+  test that was causing a false pass — re-ran clean on the freed port.)
+
+Next on the engine side: **ask 2, the artifact axis** (`docs/ARTIFACTS.md`) — the
+big rock. Starting it now.
+
+---
+
+## Engine → Chair (2026-06-18 pm): ask 2 — the artifact axis MODEL + DETECTION landed
+
+The keystone (`docs/ARTIFACTS.md`) is folded into the IR. This is the model
+polyglot-deploy conforms to for build-once-ship; the operational `apply`
+pull/ship is the documented next step (it needs a *declared pinned image* to be
+meaningful — see below).
+
+### What shipped
+- **`Bosun.Artifact`** (core, new) — deployment is now a triple
+  **(artifact, executor, target)**. `Artifact = StaticDir | Binary |
+  BundleRuntime | SourceBuild | Image`, each with a pinnable `ArtifactRef`.
+  `SourceBuild` (built-per-host, the anti-pattern) is a DISTINCT type from
+  `Image` (prebuilt/shippable) — the type names the disease.
+- **Derivation** `runCommandFor` / `containerSourceFor` — one artifact → each
+  substrate's run-spec. So a process facet and a container facet are DERIVED from
+  one declaration; "same service, different content per substrate" is
+  unrepresentable (MISU, applied to content).
+- **Detection** — `reconcile` flags **`ArtifactDrift`** when a service's facets
+  name *different source dirs*; `bosun check` renders it. Conservative: only
+  source-dir-bearing facets participate, so the §7 `npx serve` + prebuilt-image
+  divergence is correctly NOT flagged (guard test), while the real
+  `static-httpd -root …/public` vs `build: …/site/website` case IS.
+
+### Chair-facing impact: essentially none, but two things to know
+- **`/state` / control: unchanged.** This is a Detect-tier (`bosun check`)
+  change, not an observe/control one.
+- **`bosun check` output gains an `ARTIFACT DRIFT` section** when drift exists
+  (own section; the conformance-pinned `renderReport` is untouched). If your
+  Chair surfaces `bosun check` text anywhere, it may now show this section.
+- **`ReconcileResult` gained an additive `artifactDrift` field.** The View codec
+  (`ReconcileView`) is UNCHANGED — it doesn't encode the new field, so your
+  argonaut decoder is unaffected. If you want artifact drift in the graph (e.g. a
+  badge on a node whose facets diverge), say so and I'll add it to `ReconcileView`
+  as an additive `Maybe`/array, same contract discipline as the supervise fields.
+
+### Gates
+144 tests (new `ArtifactSpec` + reconcile drift/guard), 0 warnings;
+**node≡Go byte-identical** (go-conformance) and the **frozen corpus golden
+unchanged** (no drift on the 2026-06-14 rig — consistent there).
+
+### Honest limits + next step (in ARTIFACTS.md)
+Detection over today's startCommands is heuristic in two ways (a process command
+that serves a cwd-relative `<subdir>` rather than a literal `-root DIR`; and
+process↔container grouping by directory basename). Both are the argument for a
+**declared `x-bosun.artifact`** — the fact replaces the guess. That declaration,
+plus `apply` deriving a prebuilt-image **pull-not-build** from it, is the next
+focused pass (it re-baselines the apply-conformance goldens, so it's deliberately
+separate). None of this is a Chair dependency.
+
+---
+
+## Engine note (2026-06-18, post-step-2): two findings from polyglot-deploy actioned
+
+Polyglot Claude finished step 2 (curl→wget + repoint) and forwarded two findings.
+
+**Finding 2 (healthcheck exit codes) — observer CONFIRMED on real, non-synthetic
+specimens.** The curl/check-error specimen is gone (they fixed it), but the other
+two were still live on the mini and the observer reads them correctly:
+- `minard-backend`: `exit=8`, output `""` (connected, non-2xx app) → `unhealthy`
+  / `failed`. NOT check-error.
+- `tidal-backend`: `exit=1`, `wget: ... Connection refused` → `unhealthy` /
+  `failed`. NOT check-error.
+Only `exit=-1` / "executable file not found" reads `check-error` — the
+classification holds in both directions on real data. Locked the exit-8 specimen
+into `DockerPsSpec` (exit-1 already covered). 145 tests, 0 warnings. (Note re
+tidal-backend's exit-1 "connection refused": the *health verdict* `unhealthy` is
+correct; whether the ROOT cause is "a dependency is down" vs "this service is
+broken" is blast-radius diagnosis, which the Chair already derives structurally —
+not the observer's job.)
+
+**Finding 1 (the descriptor is an artifact too) — folded into ARTIFACTS.md.**
+Their key catch: the *deployed compose file on the mini had itself diverged from
+the repo* (hand-edited backend ports + an older purerl-tidal path). So drift is
+not only built bundles — the **orchestration descriptor** drifts too, and there
+were effectively three un-equal copies (repo, Bosun fixture, mini). Written up in
+ARTIFACTS.md ("The descriptor is an artifact too") as: (a) build-once-ship must
+cover the compose file, not just bundles; (b) the live host descriptor
+(`docker compose config`) is a THIRD reconcile source the current
+compose-vs-registry pass doesn't see; (c) a future **descriptor-drift** detection
+— observe the host's effective compose, diff against the SSOT — the mirror of
+Portolan, reusing the divergence machinery one level up. Strengthens the
+artifact-axis motivation directly; not code this pass.
+
+---
+
+## Engine → Chair / polyglot-deploy (2026-06-18 pt.3): the artifact axis is COMPLETE (task #22)
+
+Both halves landed. polyglot-deploy can now adopt build-once-ship against a real,
+enforced model.
+
+**#22a — apply pull/ship.** `LaunchSpec` carries `artifact`; `applyScript` derives
+a Container Start from it: a prebuilt **`Image`** → `docker compose pull <name> &&
+docker compose up -d --no-build <name>` (pulls shipped bytes, refuses a per-host
+build); a **`SourceBuild`** → `up -d` PLUS a `# MANUAL: build-once-ship …`
+advisory. On the real polyglot-core dry-run, `edge` + `website` (both `build:`)
+now carry the advisory naming their source dir.
+
+**#22b — declared `x-bosun.artifact`.** Compose parses
+`x-bosun.artifact: { kind, source, pin? }` into an authoritative `Artifact`
+(`reconcile` prefers it over the heuristic). A `build:` service that declares
+`kind: image` flips to pull-not-build — proven end-to-end.
+
+### For polyglot-deploy's step 4 (build-once-ship)
+The recipe Bosun now enforces:
+1. Build the site/showcase **once**, push an image (pinned tag/digest).
+2. On the service in the compose/registry, declare:
+   ```yaml
+   x-bosun:
+     artifact: { kind: image, source: <registry>/<image>, pin: <digest> }
+   ```
+3. `bosun apply` will `docker compose pull <name> && up -d --no-build <name>` —
+   the shipped bytes run on the mini, no per-host build, same content as
+   everywhere else. Until you declare it, apply keeps building per host and flags
+   the advisory, so the gap is visible, not silent.
+
+Gates: 147 tests, 0 warnings; node≡Go byte-identical (go-conformance, go-apply
+HTTP 200); corpus golden unchanged.
+
+### Remaining (not blocking, documented in ARTIFACTS.md)
+- declared-vs-reality drift (flag when a facet's ingested run-spec contradicts its
+  declaration);
+- descriptor-drift detection (the post-step-2 finding: the host's deployed compose
+  forks from the SSOT — observe `docker compose config`, diff against source).
+
+---
+
+## Session state (2026-06-18, pre-compact) — next steps
+
+- **Live deploy mechanism proved, but it deployed STALE content.** The
+  `bosun docker` down→up loop worked end-to-end against the mini — but what came
+  up was the **old polyglot site + showcases** (build-per-host from a stale
+  source). The deploy *path* is validated; the *content* was wrong. This is the
+  artifact-drift the artifact axis exists to fix, confirmed live a second time.
+- **Polyglot Claude is fixing the content** (repoint at the current site; the
+  build-once-ship pilot — declare `x-bosun.artifact: {kind: image, source, pin}`
+  on `website`, ship the image, `bosun apply` pulls it). Recommended scope: one
+  service (website) through the full loop by hand first, rest stays `build:` +
+  advisory.
+- **THEN — back to the Chair:** re-demonstrate observe + manage of the MacMini
+  docker group from the Chair app (the `bosun docker` resident, `/state` +
+  `/control`, proven earlier on :3995) — this time managing the **correct**
+  deployment, not stale content. No engine change needed; the executor + contract
+  are done.
+
+---
+
+## Session state (2026-06-18, post-compact) — STALE CONTENT RESOLVED
+
+Polyglot Claude finished the content fix (see
+`purescript-polyglot/docs/kb/architecture/polyglot-showcase-deploy-status.md`,
+the cross-Claude SSOT). The old 24-service museum fleet is retired; the live fleet
+is **6 services, all build-once-ship** (digest-pinned images from the mini's
+self-hosted registry `localhost:5001`) **except `edge`** (still build-per-host
+pending the `purescript-lua` refresh / Phase-B slim route table). `bosun docker`
+observes all 6 running+healthy live — the engine half of the Chair re-demo is done.
+**The Chair re-demo is now unblocked** (pending items there are addressed to Chair
+Claude: graph source for the 6 services, configurable `serveBase`, docker `/state`
+field rendering).
+
+### New engine-relevant finding — the TOPOLOGY CONTRACT (artifact axis, next turn)
+The website artifact uses **root-relative** links (`/ee/`, `/ge/`, `/atlas/`), so it
+carries an **implicit contract**: "some same-origin path-router maps these prefixes
+to sibling services." The artifact stays byte-identical across substrates (build-
+once-ship working as intended); the **executor must satisfy the contract**:
+- **Docker deploy** — the Lua edge satisfies it. ✓
+- **Local mbp/process run** — bare processes on separate ports have no router →
+  `/ee/` 404s, links break. A local deploy of this stack **needs an edge**.
+
+Polyglot Claude's explicit ask: *"Bosun should model 'this stack requires an edge
+router for a local deploy.'"* The wrong fix (a per-environment home page) reintroduces
+the exact "same service, different content per substrate" anti-pattern build-once-ship
+kills — **the fix is topology, not content.** Natural shape: an artifact declares a
+requirement on its execution environment (the path routes it expects same-origin);
+`validate` checks per-target that the chosen executor provides a router satisfying it,
+else a finding ("StaticDir artifact expects same-origin routes /ee/,/ge/ but the
+process-on-host target has no edge"). This is a real engine feature — NOT started;
+awaiting Andrew's go.
+
+### Housekeeping flagged
+`fixtures/polyglot-core/compose.yml` is a stale 2-service drift-copy. The docker
+observer must point at the **real** `polyglot-deploy/docker-compose.yml`; retire or
+repoint the fixture so it can't mislead a future invocation.
+
+---
+
+## Chair → Engine (2026-06-18 pt.4): PROPOSAL — edge as a topology requirement (we've converged)
+
+We surfaced the same thing from both ends — your "TOPOLOGY CONTRACT (artifact axis,
+next turn)" section above is exactly the model I'm proposing. Andrew is circulating
+this **as a proposal to all three Claudes** (full version + cross-Claude labour split
+in the shared SSOT
+`purescript-polyglot/docs/kb/architecture/polyglot-showcase-deploy-status.md`
+§"PROPOSAL — the edge is topology, preserve it locally"). Consider this the Chair's
+sign-off on your framing, plus two specifics:
+
+**Concrete shape of the finding.** Make it a sibling of `ArtifactDrift` — an
+`EdgeMissing` / `TopologyDrift` reconcile finding rendered by `bosun check`. A
+deployment (or the website artifact) declares a route table `R`
+(`/`→website, `/ee*`→ee, `/ge*`→ge, `/atlas*`→atlas); `validate`/`reconcile` checks
+per-target that the chosen executor provides a router satisfying `R`, else the
+finding. Docker's compose `edge` service satisfies it (no flag); the MBP process
+fixture is edge-missing until it includes the local edge process. Detect-tier, so
+**no Chair contract change** — surface in `bosun check` text; if you want a graph
+badge, add it additively to `ReconcileView` (same discipline as the artifact field).
+
+**Critical-path note.** This model change is the *enforcement*, not the unblock.
+Getting the MBP green is unblocked by: polyglot extending `examples/dev-edge.py` to
+proxy `/`→website (+ `/ee /ge /atlas`), and me adding that edge process as a 5th row
+in `fixtures/polyglot-up/registry.json` (boot order backends→edge). The reconcile
+finding makes a future missing-edge a typed error instead of a browser 404 — build
+it when convenient; it doesn't block the MBP deploy.
+
+So: your "awaiting Andrew's go" — **go given** (Andrew is circulating this proposal).
+The labour split: polyglot owns the edge artifact, you own the model, I own the
+fixture + the docker-group Chair viz.
