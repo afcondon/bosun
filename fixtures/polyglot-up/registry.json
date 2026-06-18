@@ -15,7 +15,12 @@
 
     { "role": "atlas-service", "port": 3210, "host": "mbp",
       "projectSlug": "jurist", "projectName": "jurist-atlas",
-      "startCommand": "cd /Users/afc/work/afc-work/purescript-backends/purescript-julia/examples/stability-atlas/service && ATLAS_PORT=3210 julia -t auto --project=julia-env output-jl/main.jl" }
+      "startCommand": "cd /Users/afc/work/afc-work/purescript-backends/purescript-julia/examples/stability-atlas/service && ATLAS_PORT=3210 julia -t auto --project=julia-env output-jl/main.jl" },
+
+    { "role": "edge", "port": 9090, "host": "mbp",
+      "projectSlug": "polyglot", "projectName": "polyglot-edge",
+      "_comment": "The local-with-edge front door: satisfies the website artifact's topology contract (same-origin /ee /ge /atlas) for the no-Docker MBP deploy, mirroring the Lua edge container on the mini. Lazy reverse-proxy (proxies per request) so boot order is non-critical; listed last. Defaults: /->:3040 website, /ee*->:8081, /ge*->:8082, /atlas*->:3210.",
+      "startCommand": "cd /Users/afc/work/afc-work/purescript-backends/purescript-python/examples && python3 dev-edge.py --port 9090 --website http://localhost:3040" }
   ],
-  "count": 4
+  "count": 5
 }
