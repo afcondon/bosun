@@ -315,9 +315,9 @@ deployments =
     }
   , { key: "polyglot-macmini"
     , label: "Polyglot · MacMini"
-    , blurb: "container stack — docker compose over ssh (supervise :3995)"
-    , compose: fixturesDir <> "/macmini/compose.yml"
-    , registry: fixturesDir <> "/macmini/registry.json"
+    , blurb: "containers — edge + website over ssh docker, Funnel-published (bosun docker :3995)"
+    , compose: fixturesDir <> "/polyglot-core/compose.yml"
+    , registry: fixturesDir <> "/polyglot-core/registry.json"
     , supervise: Just 3995
     }
   , { key: "atlantis"
