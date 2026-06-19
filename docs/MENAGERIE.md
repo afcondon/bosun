@@ -130,6 +130,34 @@ behind one `/state`+`/control` contract the Chair never has to know about.
 3. **The container variant + `ContainerRuntime` abstraction** — release gate; starts
    docker-only, designed for the multi-runtime grid.
 
+## Tier 3 (planned) — the runtime-launch matrix / host pre-flight
+
+A SEPARATE concern from the cast above. The Menagerie tests supervise *axes* with one
+CI-portable runtime; this tests the *workload runtimes* we actually launch into, with
+one trivial axis ("it launched and is observable"). The full axes×runtimes
+cross-product is infinite; we run two thin lines through it, not the grid.
+
+**Not CI — deploy-time / host pre-flight.** CI runners don't have Julia, GHC, Erlang,
+the right Python, or codesigned Rust binaries. So this is a **host-capability check**:
+"can THIS target launch each runtime this deployment declares?" — run at/before
+deploy. It's the concrete form of the bare-metal-robustness guard (catches Julia
+uninstalled / wrong Python on PATH / `ERL_LIBS` missing / Rust binary not
+TCC-codesigned *before* a real deploy fails).
+
+**Scope (what matters to us):** Node, Go, Python, Julia, Erlang/BEAM, Rust (+ Haskell
+if/when a Haskell binary enters the rig). The polyglot backends collapse into this set
+— PureScript→{JS,Go,Python,Julia} is Node/Go/Python/Julia launch, so this covers
+Jurist/Pythia/Gnomon outputs too. Each test: a trivial-but-real workload per runtime
+(bind a port / print / exit 0) launched through the REAL process executor, asserting
+start + observability, and surfacing the known quirks: Julia ~35 s cold-start (the
+boot-grace must tolerate it), Erlang `ERL_LIBS`/`cowboy.app`, Rust TCC/codesign,
+Python interpreter/venv.
+
+**Home:** a `bosun preflight` verb (rig-doctor-adjacent; the natural job for the
+per-host `bosun-agent` in `EXECUTORS.md`) — given a deployment, verify each target can
+launch each declared service's runtime. Makes "can I deploy this here?" a typed
+pre-flight answer, the deploy-time analog of the Menagerie's CI-time conformance.
+
 ## Related
 
 - `EXECUTORS.md` — the substrate taxonomy the container family extends.
