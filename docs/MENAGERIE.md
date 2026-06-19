@@ -165,6 +165,109 @@ per-host `bosun-agent` in `EXECUTORS.md`) — given a deployment, verify each ta
 launch each declared service's runtime. Makes "can I deploy this here?" a typed
 pre-flight answer, the deploy-time analog of the Menagerie's CI-time conformance.
 
+## Engine — review notes (2026-06-19, before implementing)
+
+Strong yes on the rig and the dual-runtime dogfood. Read against the current code,
+here's what's already load-bearing (don't rebuild it), the four gaps the cast
+actually surfaces, the dual-runtime mechanics, and a sequencing tweak.
+
+### Already supported — the cast is mostly expressible today
+- **All the states exist.** `Bosun.Plan.Status` already has `Starting`, `InBackoff`,
+  `CompletedOk`, `Failed`, `Down`, `Running`, `Unknown` — and `Bosun.Supervisor.refine`
+  is the **pure** tick-transition that produces them (boot-grace → `Starting` then
+  `Failed`; crash → backoff `suspendedUntil` → `InBackoff`; `restarts`/`since` for the
+  `↻ N` badge). Time is a parameter, so it rides go-conformance like `plan`. **slowboot,
+  wedged, flapper need no new supervisor code** — they're fixtures that exercise paths
+  that already exist (and were under-tested: the whole point).
+- **All restart policies exist.** `BaseRestart = Never | OnFailure | Always |
+  UnlessStopped`. Cast covers Never/OnFailure/Always; consider one `UnlessStopped` too.
+- **Probe kinds for lazyready and socketd already observe.** `observe` implements
+  `HttpGet {expectStatus}` (so **lazyready**'s 503→200 is a real assertion, not new
+  work) and `SocketReady AbsPath` (so **socketd** is observable today). `TcpConnect`
+  too. No probe work needed for those.
+- **PartOf co-restart is modelled.** `Edge.BindsTo`/`PartOf`, `Plan` ("PartOf dependents
+  Restart" on crash-coupling), the Compose adapter parses `part-of`. **leader+followers**
+  should work end-to-end — but this path has never been exercised live, so treat the
+  triad as the *first real test* of coupling, and budget a fix if the blast-radius
+  propagation has a bug (it's exactly the class of thing this rig exists to find).
+- **edge/topology** just landed (`TopologyDrift`); the EDGE MISSING assertion is ready.
+
+### The four gaps the cast surfaces (in priority order)
+1. **`oneshot` → `CompletedOk` needs an exit-status channel — and we don't capture one.**
+   `refine` keeps `CompletedOk` once seen, but nothing ever *enters* it: the observe edge
+   returns `Down` for any not-listening process, and a TCP/HTTP probe cannot tell "exited
+   0" from "exited 1" — both look `Down`, and `Down → Start`, so a oneshot under `Never`
+   would be **relaunched forever** (a real bug this specimen would catch). Fix is small and
+   principled: have `Substrate.daemonize` capture `$?` to a sibling exit-file
+   (`…<id>.exit`) when the command is foreground-completing, and have `observeService`
+   read it — present&0 → `CompletedOk`, present&≠0 → `Failed`, absent&group-alive →
+   `Starting`/`Running`, absent&group-dead → `Down`. Pure string + one observe read; rides
+   go-conformance. **This is a prerequisite for oneshot and should land first.**
+2. **`selfbg` exposes a genuine design fork — the sharpest spec/impl tension.** Today a
+   command ending in `&` is left **untracked**: `daemonize` records no pgid, so `down`
+   *cannot* reap it. The spec wants "Bosun must NOT re-daemonize **but must still reap the
+   right group**" — which the current opt-out design does not satisfy. This is really a
+   second **identity-tracking strategy** for the process substrate (alongside
+   "Bosun-backgrounds-and-records-pgid"): the *forking/`PIDFile=`* pattern — the daemon
+   writes its own pidfile, Bosun reads THAT (systemd `Type=forking`, the classic
+   double-fork daemon). Principled and a real deployment shape, so it belongs in
+   `Bosun.Substrate` as a typed launch mode, not a hack. **Decision needed (AC/Chair):**
+   does selfbg test (a) the new forking-pidfile tracking mode [my recommendation — it's a
+   real capability and keeps the spec's assertion honest], or (b) the honest current
+   contract "Bosun detects self-backgrounding and opts out; `down` leaves it"? The fixture
+   differs by which we commit to.
+3. **`flapper` timing must be deterministic for cross-runtime `/state` equality.** A random
+   1–3 s crash makes a node-vs-Gnomon `/state` snapshot diff flaky. Seed it
+   (`MENAGERIE_SEED` / fixed interval per specimen) so checkpoints reproduce. More
+   generally: assert flapper *behaviourally* (restart counter monotonic, `suspendedUntil`
+   armed, ≤1 process) and **exclude its volatile fields from the cross-runtime snapshot
+   diff**, rather than trying to snapshot it mid-flap.
+4. **`/state` cross-runtime equality needs a volatile-field canonicalizer.** The pure
+   transition is already proven node≡Gnomon (`go-supervise-conf.sh`); the resident adds
+   real pids/timestamps. Reuse the View-equality discipline but add a normalizer that
+   strips/zeroes `pid`, absolute `since`/`suspendedUntil` (bucket to armed/not), and
+   listen-ports, then assert structural equality at **quiescent** checkpoints (all-green;
+   oneshot completed; wedged failed). Don't diff during transients.
+
+### Dual-runtime mechanics — the path is already real
+The "boot under GNOMON_BIN" claim is **feasible and partly proven**: `go-docker.sh`
+already runs a **native Gnomon binary serving `/state` + `/control`** via the
+`Bosun.CLI.Resident` Go foreign (`residentImpl` + `nowMs`), with byte-identical `/state`
+and a control round-trip. `Bosun.CLI.Supervise` fills the *same* `Resident` record, so
+`menagerie-conf.sh` drives the **supervise** resident through that **same** foreign — no
+new Gnomon server work, just point the existing harness at the supervise mode. The pure
+supervisor logic is already in the Go column (`go-supervise-conf.sh`). So the genuinely
+new Go-side surface is small (the supervise resident's tick = observe+enact, where enact
+is the os-exec foreign we already ship).
+
+### CI hygiene (learned from the down-bug repro)
+- **Dedicated, documented port block** clear of SDI/Marginalia/dev (propose **8790–8809**),
+  collision-checked by `validate` B3 before boot.
+- **Hard trap-cleanup by pgid on EXIT/ERR** in `menagerie-conf.sh` — dogfood `bosun down`
+  for it. A behavioural-conformance rig that leaks orphans poisons its own next run (we
+  just lived this); cleanup is a first-class requirement, not an afterthought.
+- **Separate heavy CI target**, NOT `spago test`: slowboot 8 s + lazyready 5 s + flap
+  window + up/down/restart × 2 runtimes ≈ 60–120 s. It's a conformance job, not a unit test.
+- **Specimens in Python stdlib** (matches `fixtures/hello`, present on every box we run —
+  no build step, no runtime dep), each a tiny script with behaviour knobs via env
+  (`MENAGERIE_SEED`, interval, grace). The PureScript→{JS,Go} dogfood is cute but
+  over-engineered for v1 — defer.
+
+### Sequencing tweak — capability-first, MVP triad, then enrich
+Don't write 15 fixtures then debug. Order:
+0. **Land gap #1 (exit-status channel)** + resolve gap #2 (selfbg decision) — the only
+   model/substrate changes; re-prove go-conformance after each.
+1. **MVP triad: ticker + slowboot + forker** under `menagerie-conf.sh`, node≡Gnomon.
+   This is the core loop + boot-grace + **the pgid-reap regression guard** (forker is the
+   direct guard for the 06-19 bug) — the highest-value 20%.
+2. Enrich: flapper, wedged, lazyready, socketd, needsenv, oneshot, leader/followers,
+   aggregator, edge, frontend — each with its assertion, each re-proving dual-runtime.
+3. Chair picker fixture (free), then the container variant + `ContainerRuntime` capability.
+
+Net: the spec is well-supported; ~80% is fixtures over existing machinery. The real
+engineering is gap #1 (small), gap #2 (a principled new tracking mode, pending your call),
+and the `/state` canonicalizer. No objection to the boundary with Quartermaster.
+
 ## Related
 
 - `EXECUTORS.md` — the substrate taxonomy the container family extends.
