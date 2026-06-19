@@ -130,7 +130,14 @@ behind one `/state`+`/control` contract the Chair never has to know about.
 3. **The container variant + `ContainerRuntime` abstraction** — release gate; starts
    docker-only, designed for the multi-runtime grid.
 
-## Tier 3 (planned) — the runtime-launch matrix / host pre-flight
+## Tier 3 (planned) — the runtime-launch matrix / host pre-flight  →  belongs to QUARTERMASTER, not Bosun
+
+**Ownership corrected (2026-06-19, AC):** this is the **provisioning test**, not a
+Bosun test. "Can this host launch a Julia/Erlang/Rust workload?" verifies the host
+was *provisioned* correctly — Quartermaster's acceptance test. Bosun only *consumes*
+the resulting per-host/runtime "ready?" signal and gates on it; what I earlier called
+`bosun preflight` is really `quartermaster verify`. Kept here only for the seam — see
+`PROVISIONING-SEAM.md`. The rest of this section is the spec, to move with it.
 
 A SEPARATE concern from the cast above. The Menagerie tests supervise *axes* with one
 CI-portable runtime; this tests the *workload runtimes* we actually launch into, with
