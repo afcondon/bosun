@@ -99,16 +99,20 @@ withDownScript d f = case toEither (validate d) of
 spec :: Spec Unit
 spec = describe "Bosun.Apply" do
 
-  it "Process Start -> local, daemonized, recording its process group (not ssh-wrapped)" $
+  -- A Process Start REAPS any prior recorded generation before launching fresh
+  -- (Bosun.Substrate.daemonize) — the `down`-orphan fix. So a Start renders the
+  -- same reap-then-launch as a Restart; on a clean first Start the reap finds no
+  -- pidfile and `|| true` no-ops.
+  it "Process Start -> local, reap-then-daemonize, recording its process group (not ssh-wrapped)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && ( nohup env run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; sleep 0.3; ( nohup env run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
 
   -- A startCommand may carry a leading env-var assignment (e.g. the julia atlas:
   -- `ATLAS_PORT=3210 julia …`). Bare `nohup VAR=val prog` makes nohup exec the
   -- string `VAR=val` — the `env` prefix lets the shell-style assignment through.
   it "Process Start with an env-var prefix is launched via `env` (not eaten by nohup)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "ATLAS_PORT=3210 run-a" ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && ( nohup env ATLAS_PORT=3210 run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; sleep 0.3; ( nohup env ATLAS_PORT=3210 run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
 
   -- The typed `x-bosun.process.env` (e.g. purerl-tidal's rebar3
   -- `ERL_LIBS=_build/default/lib`) renders as a leading `KEY=VAL ` assignment
@@ -116,7 +120,7 @@ spec = describe "Bosun.Apply" do
   -- inline-prefix path above, but inspectable instead of buried in the command.
   it "Process Start with a typed env renders leading KEY=VAL assignments" $
     withScript (mkDeployment [ procLeafEnv "a" "/srv/a" "erl -pa ebin" [ Tuple (mkEnvVar "ERL_LIBS") "_build/default/lib" ] ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && ( nohup env ERL_LIBS=_build/default/lib erl -pa ebin >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; sleep 0.3; ( nohup env ERL_LIBS=_build/default/lib erl -pa ebin >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
 
   it "a Process command that already backgrounds itself is left as-is (no group captured)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a &" ]) (snap []) \lines ->

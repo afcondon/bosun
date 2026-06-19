@@ -32,6 +32,7 @@ module Bosun.Target
 import Prelude
 
 import Bosun.Atoms (AbsPath, Host, mkAbsPath, mkHost, unHost)
+import Bosun.Substrate (Platform, defaultPlatform)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
@@ -69,11 +70,17 @@ derive instance Eq ExecLoc
 -- | * `envPrefix` — environment assignments a non-interactive remote shell
 -- |                 needs (e.g. macOS Docker Desktop wants `/usr/local/bin` on
 -- |                 `PATH`; a fresh ssh shell does not source the login profile).
+-- | * `platform`  — the host's supervision substrate (`Bosun.Substrate`): which
+-- |                 OS's native-process semantics, and which container engine,
+-- |                 its commands are dialected for. A host runs ONE OS and
+-- |                 provides ONE container engine, so it lives here, resolved
+-- |                 once per host alongside the ssh/address/workdir facts.
 type Target =
   { exec :: ExecLoc
   , address :: String
   , workdir :: Maybe AbsPath
   , envPrefix :: Array (Tuple String String)
+  , platform :: Platform
   }
 
 type TargetMap = Map Host Target
@@ -90,7 +97,9 @@ resolveTarget tmap = case _ of
 -- | or env prefix.
 localTarget :: Target
 localTarget =
-  { exec: LocalExec, address: "localhost", workdir: Nothing, envPrefix: [] }
+  { exec: LocalExec, address: "localhost", workdir: Nothing, envPrefix: []
+  , platform: defaultPlatform
+  }
 
 -- | True iff commands for this target are ssh-wrapped.
 isRemote :: Target -> Boolean
@@ -114,6 +123,9 @@ defaultTargets = Map.fromFoldable
       -- PATH covers both `docker` (Docker Desktop) and `tailscale` (the .app's
       -- CLI is not symlinked onto a standard bin dir on this mini).
       , envPrefix: [ Tuple "PATH" "/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH" ]
+      -- the mini is macOS + Docker Desktop today (defaultPlatform); a Linux
+      -- box would override `os` (and possibly `engine`) via targets.json.
+      , platform: defaultPlatform
       }
   ]
 

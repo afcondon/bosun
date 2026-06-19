@@ -50,7 +50,6 @@ import Data.Generic.Rep (class Generic)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..))
-import Data.Set (Set)
 import Data.Set as Set
 import Data.Show.Generic (genericShow)
 import Data.String (Pattern(..), Replacement(..))

@@ -11,10 +11,16 @@
 -- |                  "address": "andrews-mac-mini",
 -- |                  "workdir": "/Users/andrew/psd3/polyglot-deploy",
 -- |                  "env": { "PATH": "/usr/local/bin:/opt/homebrew/bin:$PATH" } },
--- |     "build-box": { "ssh": "ci@build-box", "workdir": "/srv/deploy" } }
+-- |     "build-box": { "ssh": "ci@build-box", "workdir": "/srv/deploy",
+-- |                    "os": "linux", "engine": "podman" } }
 -- |
 -- | A host with no `ssh` key is `LocalExec`; `address` defaults to the host key;
--- | `workdir`/`env` are optional. Pure (the file read is at the CLI edge), using
+-- | `workdir`/`env` are optional. The supervision substrate (`Bosun.Substrate`)
+-- | is declared by the optional `os` (`macos` | `linux`) and `engine` (`docker`
+-- | | `podman` | `nerdctl`) keys; either missing falls back to that field of
+-- | `defaultPlatform` (macOS + Docker), so an unannotated host keeps today's
+-- | behaviour and a Linux box opts in by naming its OS. Pure (the file read is
+-- | at the CLI edge), using
 -- | only the argonaut combinators the Go column already shims — so a
 -- | targets-driven deploy stays conformance-clean across the node and Go
 -- | columns, exactly like the compose and registry adapters.
@@ -23,11 +29,12 @@ module Bosun.Adapters.Targets (ingestTargets) where
 import Prelude
 
 import Bosun.Atoms (Host, mkAbsPath, mkHost)
+import Bosun.Substrate (ContainerEngine(..), OS(..), Platform, defaultPlatform)
 import Bosun.Target (ExecLoc(..), Target, TargetMap, mkSshDest)
 import Data.Argonaut.Core (Json, toObject, toString)
 import Data.Array as A
 import Data.Map as Map
-import Data.Maybe (Maybe, fromMaybe, maybe)
+import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Tuple (Tuple(..))
 import Foreign.Object (Object)
 import Foreign.Object as FO
@@ -48,7 +55,29 @@ decodeTarget name o =
   , address: fromMaybe name (str o "address")
   , workdir: str o "workdir" >>= mkAbsPath
   , envPrefix: envOf o
+  , platform: platformOf o
   }
+
+-- The substrate dimensions, each defaulting to `defaultPlatform`'s field when
+-- the key is absent or unrecognised — an unannotated host stays macOS + Docker.
+platformOf :: Object Json -> Platform
+platformOf o =
+  { os: maybe defaultPlatform.os identity (str o "os" >>= parseOS)
+  , containerEngine: maybe defaultPlatform.containerEngine identity (str o "engine" >>= parseEngine)
+  }
+
+parseOS :: String -> Maybe OS
+parseOS = case _ of
+  "macos" -> Just MacOS
+  "linux" -> Just Linux
+  _ -> Nothing
+
+parseEngine :: String -> Maybe ContainerEngine
+parseEngine = case _ of
+  "docker" -> Just Docker
+  "podman" -> Just Podman
+  "nerdctl" -> Just Nerdctl
+  _ -> Nothing
 
 -- the `env` object → ordered (K, V) pairs; non-string values are dropped
 envOf :: Object Json -> Array (Tuple String String)

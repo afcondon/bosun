@@ -18,8 +18,8 @@ module Bosun.CLI.Observe
 
 import Prelude
 
-import Bosun.Apply (pidPath)
 import Bosun.Atoms (Host, ServiceId, unAbsPath, unHost, unPort)
+import Bosun.Substrate (pidPath)
 import Bosun.Exposure (Exposure(..))
 import Bosun.Reachability (classify)
 import Bosun.Health (Probe(..))

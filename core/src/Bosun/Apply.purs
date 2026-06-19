@@ -22,7 +22,6 @@ module Bosun.Apply
   , applyScript
   , downScript
   , commandFor
-  , pidPath
   ) where
 
 import Prelude
@@ -33,14 +32,13 @@ import Bosun.Executor (Executor(..))
 import Bosun.Plan (Change(..), Plan, changeRef, planSteps)
 import Bosun.Reachability (Address(..), addresses)
 import Bosun.Service (Service, ValidatedDeployment, unBootOrder, unServiceRef, unValidatedDeployment)
+import Bosun.Substrate (composeCmd, daemonize, pidKill)
 import Bosun.Target (ExecLoc(..), Target, TargetMap, resolveTarget, unSshDest)
 import Data.Array as A
 import Data.Array.NonEmpty as NEA
 import Data.Foldable (foldMap)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), isJust)
-import Data.String (Pattern(..), Replacement(..))
-import Data.String as String
+import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..))
 
 -- | A launch action. `Shell` is a local command (optionally in a cwd); `Ssh`
@@ -108,6 +106,11 @@ commandFor tmap change svc = map (wrap target) (raw change)
   name = svc.launch.localName
   target = resolveTarget tmap svc.host
 
+  -- The container substrate's compose CLI for THIS host's platform
+  -- (`docker compose` / `podman compose` / …) — selected by the resolved
+  -- `Target.platform`, not baked in (Bosun.Substrate.composeCmd).
+  compose = composeCmd target.platform
+
   -- A named service is started/stopped explicitly, so no `--profile` flags are
   -- needed (docker compose acts on a service named on the command line even when
   -- its profile is inactive). Bosun has no profile-*selection* concept yet — it
@@ -116,7 +119,7 @@ commandFor tmap change svc = map (wrap target) (raw change)
   docker :: String -> Command
   docker verb = Shell
     { cwd: map unAbsPath target.workdir
-    , line: envExports target.envPrefix <> "docker compose " <> verb <> " " <> name
+    , line: envExports target.envPrefix <> compose <> " " <> verb <> " " <> name
     }
 
   -- Build-once-ship (docs/ARTIFACTS.md): a service whose artifact is a PREBUILT
@@ -126,8 +129,8 @@ commandFor tmap change svc = map (wrap target) (raw change)
   dockerPullUp = Shell
     { cwd: map unAbsPath target.workdir
     , line: envExports target.envPrefix
-        <> "docker compose pull " <> name
-        <> " && docker compose up -d --no-build " <> name
+        <> compose <> " pull " <> name
+        <> " && " <> compose <> " up -d --no-build " <> name
     }
 
   -- A Container Start derives its launch from the artifact: a prebuilt Image is
@@ -141,21 +144,23 @@ commandFor tmap change svc = map (wrap target) (raw change)
 
   -- A Process is a long-running service, so a launch must be DETACHED — else
   -- `apply` blocks forever on the first foreground server (flask, julia, a dev
-  -- server). `daemonize` backgrounds + log-redirects the command unless it
-  -- already backgrounds itself (so a fixture that bakes in `… &` is untouched).
-  processLaunch pr = Shell { cwd: Just (unAbsPath pr.cwd), line: daemonize svc.id (envAssign pr.env <> pr.command) }
+  -- server). `daemonize` (Bosun.Substrate, dialected by the host OS) reaps any
+  -- prior recorded generation, then backgrounds + log-redirects + records the
+  -- fresh launch — unless the command already backgrounds itself (a fixture
+  -- baking in `… &` is left untouched and untracked). Because that reap is
+  -- built in, a Process Start and a Process Restart are the SAME command:
+  -- "ensure the old generation is dead, then launch" — there is no cheaper
+  -- restart for a native process, and the reap is the `down`-orphan fix.
+  processLaunch pr = Shell
+    { cwd: Just (unAbsPath pr.cwd)
+    , line: daemonize target.platform.os svc.id (envAssign pr.env <> pr.command)
+    }
 
-  -- Stop a Process by killing the PID `daemonize` recorded for it — Bosun's own
-  -- record of what it launched, NOT "whatever holds the port". A missing PID
-  -- file (never launched by Bosun, or an already-`&` command) ⇒ a harmless
+  -- Stop a Process by killing the group `daemonize` recorded for it — Bosun's
+  -- own record of what it launched, NOT "whatever holds the port". A missing
+  -- PID file (never launched by Bosun, or an already-`&` command) ⇒ a harmless
   -- no-op (`|| true`), never an error that aborts the teardown.
   processStop = Shell { cwd: Nothing, line: pidKill svc.id }
-
-  -- Restart = stop the recorded PID, then relaunch (recording the new PID).
-  processRestart pr = Shell
-    { cwd: Just (unAbsPath pr.cwd)
-    , line: pidKill svc.id <> "; sleep 0.3; " <> daemonize svc.id (envAssign pr.env <> pr.command)
-    }
 
   raw :: Change -> Maybe Command
   raw = case _ of
@@ -165,7 +170,7 @@ commandFor tmap change svc = map (wrap target) (raw change)
       Container _ -> containerStart
       ex -> manual ex
     Restart _ _ -> Just case svc.launch.executor of
-      Process pr -> processRestart pr
+      Process pr -> processLaunch pr
       Container _ -> docker "restart"
       ex -> manual ex
     Stop _ -> Just case svc.launch.executor of
@@ -240,69 +245,15 @@ manual = case _ of
   Unmanaged s -> Manual ("unmanaged: " <> s)
   _ -> Manual "no launch command for this executor yet"
 
--- Detach a long-running Process launch: `nohup env <cmd> >/tmp/bosun-apply-<id>.log
--- 2>&1 & echo $! > <pidpath>`, so the exec edge fires it and returns AND records
--- the launched PID — Bosun's own record of what it started, the on-disk form of
--- `WorldState.recorded`, which `Stop`/`Restart` read to kill the right process
--- (NOT a port-kill heuristic). A command that already backgrounds itself (ends
--- in `&`) is left as-is (no PID captured — a `Stop` then no-ops harmlessly).
---
--- The `env` is load-bearing: a `startCommand` may carry a leading env-var
--- assignment (e.g. `ATLAS_PORT=3210 julia …`), which is shell syntax `nohup`
--- does NOT honour — bare `nohup VAR=val prog` makes `nohup` try to exec the
--- string `VAR=val` as a program. `env` parses the leading `VAR=val` assignments
--- and execs the real program; with no prefix it is a transparent passthrough.
-daemonize :: ServiceId -> String -> String
-daemonize sid cmd
-  | isJust (String.stripSuffix (Pattern "&") (String.trim cmd)) = cmd
-  | otherwise =
-      -- Wrap in `( … ) &` so the whole launch+record ENDS in `&`: the exec edge
-      -- detects a backgrounded launch and spawns it DETACHED (a new session/group
-      -- via setsid), which isolates the launched group from the caller's. That
-      -- makes the recorded PGID the server's own group, so a later group-kill is
-      -- precise and can NEVER hit the shell/Chair that invoked Bosun. (Without
-      -- the wrap the line ends in the pidfile redirect, runs synchronously in the
-      -- caller's group, and the group-kill would reap the caller — the footgun.)
-      "( nohup env " <> cmd <> " >" <> logPath sid <> " 2>&1 & " <> recordPgid sid <> " ) &"
-
 -- A Process's typed launch `env` rendered as leading `KEY=VAL ` assignments,
--- which `daemonize`'s `nohup env <cmd>` then applies (same shell mechanism the
--- `ATLAS_PORT=3210 julia …` startCommand already relies on). Empty ⇒ "" (a
--- transparent passthrough). Values are unquoted, matching that precedent — these
--- are paths/ports/identifiers; a value with spaces would need quoting (and would
--- also trip the known ssh single-quote papercut for remote Process commands).
+-- which `daemonize`'s `nohup env <cmd>` (Bosun.Substrate) then applies (same
+-- shell mechanism the `ATLAS_PORT=3210 julia …` startCommand already relies
+-- on). Empty ⇒ "" (a transparent passthrough). Values are unquoted, matching
+-- that precedent — these are paths/ports/identifiers; a value with spaces would
+-- need quoting (and would also trip the known ssh single-quote papercut for
+-- remote Process commands).
 envAssign :: Array (Tuple EnvVar String) -> String
 envAssign = foldMap \(Tuple k v) -> unEnvVar k <> "=" <> v <> " "
-
-logPath :: ServiceId -> String
-logPath sid = "/tmp/bosun-apply-" <> sanitizeId sid <> ".log"
-
--- Where `daemonize` records a launched Process's process-GROUP id; `Stop`/
--- `Restart` read it. We record the PGID, not the bare PID, because `nohup`/`env`
--- fork on macOS — `$!` is the wrapper, and the real server is a child in the
--- same process group. Killing the group reaps the whole tree (the DeepStar A6
--- wrapper-hides-the-daemon problem).
-pidPath :: ServiceId -> String
-pidPath sid = "/tmp/bosun-apply-" <> sanitizeId sid <> ".pid"
-
--- Record the backgrounded job's process-group id (the whole launch tree).
-recordPgid :: ServiceId -> String
-recordPgid sid = "ps -o pgid= -p $! | tr -d ' ' > " <> pidPath sid
-
--- Kill the recorded process GROUP for a service (`-<pgid>`), reaping the whole
--- tree. Tolerant of a missing file (never launched by Bosun, or an already-`&`
--- command) so a teardown stage never aborts on a service that wasn't ours to
--- stop. NB best-effort: a recorded PGID can be stale (macOS id reuse) — the
--- resident `supervise` daemon, holding the live handle, is the reuse-safe
--- authority (ROADMAP Stage 2).
-pidKill :: ServiceId -> String
-pidKill sid = "kill -- -\"$(cat " <> pidPath sid <> " 2>/dev/null)\" 2>/dev/null || true"
-
-sanitizeId :: ServiceId -> String
-sanitizeId sid =
-  ( String.replaceAll (Pattern ":") (Replacement "-")
-      >>> String.replaceAll (Pattern "/") (Replacement "-")
-  ) (unServiceId sid)
 
 -- Render a target's env prefix as leading `export K=V && …` clauses, so the
 -- assignments take effect for the (non-interactive, remote) shell that runs the

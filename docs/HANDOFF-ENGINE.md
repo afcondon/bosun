@@ -1163,3 +1163,95 @@ track the live pgid in `SupState` (which it now threads) rather than re-reading 
 launch-time file. **NB orphan accumulation:** the failed downs have left earlier
 process generations alive on the MBP — a clean black-start (kill by verified identity)
 is wanted once the fix lands.
+
+---
+
+## Engine (2026-06-19): containerless `down` bug — ROOT CAUSE CONFIRMED + the substrate refactor (in progress)
+
+Picking up Chair's `/control/down`-is-a-no-op diagnosis. **Empirically reproduced
+the exact mechanism** (faithful repro of the Exec.js spawn + `daemonize` line on
+this Darwin box):
+
+- A **clean** launch is correct: the server lands in the Node-`detached` `sh`'s
+  process group, `ps -o pgid= -p $!` records it, `kill -- -<pgid>` reaps it.
+- The orphan **seed is relaunch-without-reap**: a Process `Start` (the keep-alive
+  path, `processLaunch`) does NOT pidKill first (Restart does). When a 2nd launch
+  fires while gen-1 still holds the port → gen-2 can't bind (EADDRINUSE), its
+  wrapper dies, **but `recordPgid` overwrites the pidfile with gen-2's dead pgid.**
+  Now the port is owned by gen-1 (alive, NOT in the file); the file points at the
+  dead gen-2. `down`'s `kill -- -<gen-2>` hits nothing, `|| true` reports success.
+  That is Chair's `recorded(66xxx) > live(63xxx)` signature exactly.
+
+**The fix = reap-before-launch on the Start path** (match Restart), so a relaunch
+kills the correctly-recorded current generation before starting the next → no
+orphan can form. (Pre-existing MBP orphans from the buggy era need a one-time
+black-start, as Chair already noted.)
+
+### Andrew's directive: model this as a typed SUPERVISION SUBSTRATE (built now)
+Not a point-patch. Per Andrew (2026-06-19): "be very clear in the code which OS's
+semantics we're modelling where — I intend to scale across Linux and other OSs",
+and "model it similarly to Docker — multiple container options, not just Docker,
+and multiple OSs"; plus "hacks are never acceptable in infrastructure" and "don't
+assume a container engine behaves the same on all OSes."
+
+**`core/src/Bosun/Substrate.purs` is landed (compiling):** two orthogonal
+dimensions — `OS (MacOS | Linux)` for the native-process substrate (detach /
+pgid-capture / group-kill differ by userland; macOS = BSD `ps`+no-setsid, Linux =
+`setsid` makes the server its own group leader) and `ContainerEngine (Docker |
+Podman | Nerdctl)` for the container substrate. `Platform = {os, containerEngine}`
+lives per host. `composeCmd :: Platform -> String` takes the WHOLE platform (does
+NOT assume docker-on-macOS == docker-on-Linux). The OS-specific process commands
+(`daemonize`/`pidKill`) moved here, parameterised + annotated. The down-fix is the
+first concrete instance of the macOS/BSD process substrate.
+
+### Remaining refactor (resume here post-compact)
+1. `Bosun.Target`: add `platform :: Platform` (localTarget/defaultTargets/Targets
+   adapter default `defaultPlatform`).
+2. `Bosun.Apply.commandFor`: render via Substrate — container ops via
+   `composeCmd target.platform`; process via `daemonize target.platform.os` /
+   `pidKill`; **Start reaps-before-launch** (the fix).
+3. `Bosun.CLI.Observe`: `import Bosun.Apply (pidPath)` → `Bosun.Substrate`.
+4. Fix ApplySpec Start-command assertions; re-prove go-conformance + go-apply
+   (apply golden changes: Start gains the reap prefix). Live-verify down on MBP.
+
+### Answers to Chair's two open questions (pt.5)
+- **`x-bosun.routes` in the registry.json format:** the registry adapter doesn't
+  parse routes today, so an edge registered as a flat registry row can't declare R
+  — which is why EDGE MISSING currently can't see your `polyglot:edge` declares the
+  routes. Cleanest: add an optional `routes: [{path,to}]` field on the registry row
+  (mirrors compose's `x-bosun.routes`); I'll wire it in the Registry adapter so
+  `bosun check` goes quiet honestly once the edge row carries R. Low priority (the
+  deploy works regardless) — folding it into this pass's tail.
+- **`fleet.json` trim (30→28):** noted it's my untracked SDI-retirement artifact;
+  I'll fold your 2-stale-row trim into the SSOT when I touch it. Thanks for not
+  committing it.
+
+### DONE (2026-06-19, post-compact) — substrate refactor landed + down-fix verified end-to-end
+All four steps complete; the fix is proven at every tier:
+
+- **Refactor:** `Target` carries `platform :: Platform`; the Targets adapter reads
+  optional `os`/`engine` keys (default `defaultPlatform`); `Apply.commandFor`
+  renders container ops via `composeCmd target.platform` and process launches via
+  `daemonize target.platform.os` / `pidKill` (all moved to `Bosun.Substrate`);
+  `Observe` imports `pidPath` from Substrate. **151 tests green, 0 warnings.**
+- **The fix lives in `Substrate.daemonize`:** reap-before-launch is now built into
+  the (re)launch primitive, guarded by `not alreadyBackgrounds`. Consequence: a
+  Process Start and a Process Restart render the SAME reap-then-launch command —
+  there is no cheaper "restart" for a native process. (ApplySpec Start assertions
+  updated to match; the existing Restart expectation was already that string.)
+- **Conformance:** `go-conformance.sh` → node and purescript-go BYTE-IDENTICAL,
+  and the emitted apply script shows the reap-then-launch. `go-apply.sh` → the
+  backend-go native binary live-launches `fixtures/hello` → HTTP 200.
+- **Live down-cycle on the MBP** (throwaway loopback fixture, non-backgrounding
+  `python3 -m http.server`, so the daemonize+pgid+reap path is actually exercised):
+  - apply: recorded pgid **==** the live listener's process group (the precondition
+    the bug violated); HTTP 200.
+  - apply AGAIN over the live instance (the orphan-seed scenario): recorded **==**
+    live, still exactly ONE listener — the prior generation was reaped first.
+    **No orphan formed.**
+  - single `down`: port free, group dead. The original symptom is gone.
+
+**Still owed (low priority, this pass's tail):** the `x-bosun.routes`-in-registry
+field for EDGE MISSING, and the `fleet.json` 30→28 trim. **For Chair:** pre-existing
+orphans from the buggy era still need the one-time black-start you flagged — the fix
+stops NEW orphans forming but does not reap the historical ones.
