@@ -1085,3 +1085,44 @@ be recorded in the bosun config and explicitly modeled in the types."* The ask:
 This is "explicit registration over auto-magic" applied to lifecycle ownership — the
 keystone that retires the last bit of SDI-style implicit fleet membership. No Chair
 contract change (Detect-tier, like the other findings).
+
+---
+
+## BUG (found live, 2026-06-19) — `supervise` `/control/down` does not tear down the processes
+
+While proving the two-mode "raise/lower from Chair" milestone, the **MBP supervise
+(`:3996`) `down` verb returns ok but leaves the group running.** Clean repro:
+
+```
+curl -XPOST :3996/control/down   ->  {"ok":true,"message":"down: desired=down, auto-restart suspended"}
+# 20s later:
+/state          ->  desired=down  BUT all 5 services still "running"
+ports 3040/8081/8082/3210/9090  ->  all still bound (edge still serves 200)
+```
+
+So the Chair's **▼ down all on a process group is a no-op visually** — the poll sees
+`up` throughout; `desired` flips but nothing stops. This blocks the *containerless*
+half of the milestone (the docker/MacMini down→up path works — proven live yesterday;
+it's specifically the **process** teardown that doesn't enact).
+
+**Hypothesis (yours to confirm):** the down `kill` targets a pgid that doesn't reach
+the `nohup`-detached children. `daemonize` launches each service via
+`nohup env <cmd> &` which `setsid`-style detaches it into its **own** session/pgid;
+if `down` kills the pgid the supervisor *recorded at launch* (or its own group), the
+detached child is in a different group and survives. Supporting evidence: yesterday's
+black-start `down` freed `8081/8082` (the two `python output-py`) but NOT `3040`
+(Go static-httpd) / `3210` (julia) — i.e. teardown is **partial/unreliable**, which
+is the signature of "the signal reaches some pgids but not others," not "down does
+nothing."
+
+**The ask:** make `supervise` `down` actually stop the group it launched — track each
+service's real child pid/pgid from the `daemonize` launch and signal *that*
+(escalating TERM→KILL), so `/state` reads `down` and the ports free. This is the
+enactment side of the same `recorded`-threading the boot-grace fix introduced
+(`SupState` already holds per-service launch identity — `down` should consult it).
+Without it, the Chair's manual stop on any process group is cosmetic. (Docker `down`
+is unaffected — it's `ssh docker compose stop`, a different code path.)
+
+**Chair-side meanwhile:** the MacMini/Docker card is fixed and milestone-ready
+(symlinked `polyglot-core` compose → real 6-service SSOT, `commit 13eb3f1`; `:3995`
+observes all 6). The MBP card observes + brings *up* fine; only *down* is blocked.
