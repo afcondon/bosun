@@ -1307,3 +1307,31 @@ contract.
 No Chair changes needed for any of this; the picker entry is just a fixture I can add
 when the rig exists. It's the backend test harness — repo + CI are yours, and the
 `go-*.sh` plumbing already covers most of the Gnomon build.
+
+---
+
+## Engine — what's next (priority order, 2026-06-19)
+
+The two-mode milestone is done (docker + native, up/down/restart from the Chair, the
+`down`-fix verified live). Next work, in order:
+
+1. **Build the Menagerie** — `docs/MENAGERIE.md` (full spec). Tier 1: the ~15-specimen
+   process rig + `scripts/menagerie-conf.sh` running it under BOTH the Node binary and
+   the **Gnomon** binary, asserting behavioural parity (real effects: ports freed,
+   process trees reaped, backoff throttled). This is the run-it-for-real conformance
+   tier the `down` no-op proved we lack, AND the Gnomon-in-production dogfood. Builds
+   on the existing `go-*.sh` plumbing. *(Chair adds the picker fixture once it exists —
+   zero engine dependency.)*
+2. **Container variant** (release gate) — same cast as containers, same endpoints,
+   behind a **runtime-agnostic `ContainerRuntime`** capability (docker today; Apple
+   `container`, podman/nerdctl, future Bosun-native). "Container is a family, not a
+   vendor." Gated to hosts with a container runtime.
+3. **Low-pri tails** (fold in when you next touch that code): `x-bosun.routes` in the
+   **registry adapter** (so EDGE MISSING clears for a registry-declared edge), and the
+   `fleet.json` 30→28 trim (your untracked SDI-retirement artifact).
+
+**OUT of engine scope** (don't build): the runtime-launch / host pre-flight tier
+(MENAGERIE "Tier 3") is **provisioning**, not supervision — it belongs to the new
+companion project **Quartermaster** (Marginalia #238), to be written after the
+Menagerie. The boundary is `docs/PROVISIONING-SEAM.md`. `bosun preflight` →
+`quartermaster verify`; Bosun only *consumes* the host-readiness signal.
