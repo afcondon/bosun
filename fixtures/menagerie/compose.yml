@@ -1,0 +1,40 @@
+# The Menagerie — MVP triad (docs/MENAGERIE.md). Three tiny-but-real specimens,
+# each exercising ONE supervise axis the 2026-06-19 `down` no-op proved we test
+# only by string-diff, not by real effects:
+#
+#   ticker   — fast bind; readiness == liveness (baseline)
+#   slowboot — boot-grace: `Starting` (not `Down`), ONE launch, no relaunch storm
+#   forker   — pgid-tree reap: `down` must kill its 2 child workers too
+#              (THE regression guard for the down bug)
+#
+# Native processes on the mbp, declared via `x-bosun.process` (absolute cwd per
+# the SDI footgun rule). `ports:` gives each a TCP reachability so the supervisor
+# observes it by port. Driven by scripts/menagerie-conf.sh under the Node binary;
+# the Gnomon column (probe foreigns + a supervise-resident main) lands next.
+#
+# NOTE: cwd is an absolute path to THIS checkout (matches fixtures/hello's
+# convention). Portability across machines/CI is a follow-up (templated cwd).
+services:
+  ticker:
+    ports: ["8790:8790"]
+    x-bosun:
+      host: mbp
+      process:
+        cwd: /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/menagerie/bin
+        command: python3 ticker.py 8790
+
+  slowboot:
+    ports: ["8791:8791"]
+    x-bosun:
+      host: mbp
+      process:
+        cwd: /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/menagerie/bin
+        command: python3 slowboot.py 8791
+
+  forker:
+    ports: ["8792:8792"]
+    x-bosun:
+      host: mbp
+      process:
+        cwd: /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/menagerie/bin
+        command: python3 forker.py 8792

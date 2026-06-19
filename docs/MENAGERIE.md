@@ -124,6 +124,16 @@ behind one `/state`+`/control` contract the Chair never has to know about.
 
 ## Sequencing
 
+> **Status (2026-06-19):** MVP triad **node column DONE** — `fixtures/menagerie/`
+> (ticker + slowboot + forker, Python stdlib) + `scripts/menagerie-conf.sh`. Asserts
+> the real effects live: boot-grace held (slowboot `Starting`, no relaunch storm,
+> zero restarts, one listener/port), forker's group = forker + 2 workers, **`down`
+> reaps the whole tree incl. forker's children** (the down-bug regression guard), `up`
+> returns green. Next: the **Gnomon column** (TCP/HTTP/socket probe foreigns in Go +
+> a supervise-resident conformance main, then the `/state` cross-runtime diff), then
+> enrich the cast (flapper, wedged, lazyready, socketd, needsenv, oneshot [+ exit-status
+> channel], leader/followers, aggregator, edge, frontend [+ selfbg forking-pidfile mode]).
+
 1. **The cast + the process CI** (`menagerie-conf.sh`, node ≡ gnomon behavioural) —
    the core, always-runs tier. Regression-guards the pgid/reap class immediately.
 2. **The Chair picker entry** — visual driver, ~free (it's just a fixture).
