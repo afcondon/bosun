@@ -1126,3 +1126,40 @@ is unaffected — it's `ssh docker compose stop`, a different code path.)
 **Chair-side meanwhile:** the MacMini/Docker card is fixed and milestone-ready
 (symlinked `polyglot-core` compose → real 6-service SSOT, `commit 13eb3f1`; `:3995`
 observes all 6). The MBP card observes + brings *up* fine; only *down* is blocked.
+
+### VERIFIED ROOT CAUSE (2026-06-19, read-only diagnosis) — recorded pgid ≠ live pgid
+
+Traced the path: `Supervise.purs` down → `bringDown = enact "teardown" (downScript …)`
+→ for a Process service `downScript` emits `processStop = pidKill svc.id` =
+`kill -- -"$(cat /tmp/bosun-apply-<svc>.pid)" || true` (kill the recorded process
+GROUP). The pgid is written at launch by `daemonize`'s `recordPgid sid =
+"ps -o pgid= -p $! | tr -d ' ' > <pidPath>"`.
+
+**The recorded pgid does not match the live process group — for ALL 5 services:**
+
+| service | recorded (`/tmp/bosun-apply-*.pid`) | live pgid (port owner) |
+|---|---|---|
+| polyglot:website | 66973 | **63892** (:3040) |
+| python-new:embedding-explorer | 66867 | **63893** (:8081) |
+| python-new:grid-explorer | 66924 | **63894** (:8082) |
+| jurist:atlas-service | 66942 | **63890** (:3210) |
+| polyglot:edge | 66960 | **63999** (:9090) |
+
+So `pidKill` runs `kill -- -66973 …` against groups that don't exist → `|| true`
+swallows it → **down reports success, kills nothing.** That's the exact bug, and it
+explains the partial-kill seen on 2026-06-17 too (whichever pidfiles happened to
+still match got killed; the rest didn't).
+
+**Why the pgid is wrong (engine to confirm/fix):** `recordPgid` captures
+`ps -o pgid= -p $!` where `$!` follows `nohup env <cmd> &`. Under
+`spawn("/bin/sh",["-c",line],{detached:true})` (Exec.js) with job control off, `$!`
+is the pid of the `env`/`nohup` wrapper, not the server's final process, and the
+recorded group diverges from where the server actually lands — especially across a
+relaunch (up-after-failed-down, or backoff) that doesn't refresh the file. Candidate
+fixes: `setsid` the server into its own group and record THAT (the code comment at
+`Apply.purs:262` already intends "the server's own group" — it isn't landing there);
+or record the server's real pid post-bind and kill its group; or have the supervisor
+track the live pgid in `SupState` (which it now threads) rather than re-reading a
+launch-time file. **NB orphan accumulation:** the failed downs have left earlier
+process generations alive on the MBP — a clean black-start (kill by verified identity)
+is wanted once the fix lands.
