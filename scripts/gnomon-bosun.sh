@@ -12,9 +12,9 @@
 # one-line go.mod makes the generated `package main` a module that can import it;
 # backend-go output stays dep-free — only Bosun's IO foreign imports yaml).
 #
-# Covers the DEPLOY/SUPERVISE verbs: check, plan, observe, apply [--dry-run],
-# down [--dry-run], supervise [--port N], docker. `serve` / `serve --audit` are
-# STUBBED (deferred) — use the node CLI (`node cli/run.js serve …`) for those.
+# Covers ALL verbs Node-free: check, plan, observe, apply [--dry-run],
+# down [--dry-run], supervise [--port N], docker, AND serve / serve --audit
+# (the reverse proxy + audit are now real Go foreigns — bosun_cli_{serve,audit}).
 #
 # Usage:  scripts/gnomon-bosun.sh <verb> [args…]      (same args as node bosun)
 #   e.g.  scripts/gnomon-bosun.sh check  fixtures/menagerie/compose.yml fixtures/menagerie/registry.json
@@ -58,7 +58,8 @@ build(){
   cp "$BOSUN"/conformance/go/bosun_exec_foreign.go            "$OUT/"
   cp "$BOSUN"/conformance/go/bosun_probe_foreign.go           "$OUT/"
   cp "$BOSUN"/conformance/go/bosun_resident_foreign.go        "$OUT/"
-  cp "$BOSUN"/conformance/go/bosun_serve_audit_stub_foreign.go "$OUT/"
+  cp "$BOSUN"/conformance/go/bosun_cli_serve_foreign.go       "$OUT/"   # real serveImpl (was a stub)
+  cp "$BOSUN"/conformance/go/bosun_cli_audit_foreign.go       "$OUT/"   # real auditImpl (was a stub)
   log "go build ($(ls "$OUT"/*.go | wc -l | tr -d ' ') Go files; yaml.v3 from cache)"
   (
     cd "$OUT"
