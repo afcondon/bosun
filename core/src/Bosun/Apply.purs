@@ -27,6 +27,7 @@ module Bosun.Apply
 
 import Prelude
 
+import Bosun.Artifact (Artifact(..), ArtifactRef(..))
 import Bosun.Atoms (EnvVar, Port, ServiceId, unAbsPath, unEnvVar, unPort, unServiceId)
 import Bosun.Executor (Executor(..))
 import Bosun.Plan (Change(..), Plan, changeRef, planSteps)
@@ -68,7 +69,10 @@ applyScript tmap vd p =
         -- (e.g. `tailscale funnel` for a service with a Published address),
         -- both at this step's stage so the publish follows the launch in order.
         map (\command -> { stage: step.stage, service: svc.id, command })
-          (A.fromFoldable (commandFor tmap step.change svc) <> publishCommands tmap step.change svc)
+          ( A.fromFoldable (commandFor tmap step.change svc)
+              <> publishCommands tmap step.change svc
+              <> advisoryCommands step.change svc
+          )
   where
   svcs = (unValidatedDeployment vd).services
 
@@ -115,6 +119,26 @@ commandFor tmap change svc = map (wrap target) (raw change)
     , line: envExports target.envPrefix <> "docker compose " <> verb <> " " <> name
     }
 
+  -- Build-once-ship (docs/ARTIFACTS.md): a service whose artifact is a PREBUILT
+  -- image is PULLED, never built per host — `--no-build` refuses a local build
+  -- even if the host compose declares one, so the shipped bytes are what runs.
+  dockerPullUp :: Command
+  dockerPullUp = Shell
+    { cwd: map unAbsPath target.workdir
+    , line: envExports target.envPrefix
+        <> "docker compose pull " <> name
+        <> " && docker compose up -d --no-build " <> name
+    }
+
+  -- A Container Start derives its launch from the artifact: a prebuilt Image is
+  -- pulled-not-built; anything else (a source build, or an unclassified
+  -- container) falls back to plain `up -d` (which respects the host compose) —
+  -- with a build-once-ship advisory emitted alongside for a source build.
+  containerStart :: Command
+  containerStart = case svc.launch.artifact of
+    Just (Image _) -> dockerPullUp
+    _ -> docker "up -d"
+
   -- A Process is a long-running service, so a launch must be DETACHED — else
   -- `apply` blocks forever on the first foreground server (flask, julia, a dev
   -- server). `daemonize` backgrounds + log-redirects the command unless it
@@ -138,7 +162,7 @@ commandFor tmap change svc = map (wrap target) (raw change)
     NoOp _ -> Nothing
     Start _ -> Just case svc.launch.executor of
       Process pr -> processLaunch pr
-      Container _ -> docker "up -d"
+      Container _ -> containerStart
       ex -> manual ex
     Restart _ _ -> Just case svc.launch.executor of
       Process pr -> processRestart pr
@@ -173,6 +197,19 @@ publishCommands tmap change svc = case change of
           , line: envExports target.envPrefix <> "tailscale funnel --bg " <> show (unPort port)
           }) ]
     _, _ -> []
+
+-- | Non-command advisories emitted alongside a launch — surfaced as `Manual`
+-- | notes (the exec edge logs, never runs them). A Container Start whose artifact
+-- | is a `SourceBuild` (built per host) gets a build-once-ship nudge: the launch
+-- | still runs (we cannot do better without a shipped image), but the script
+-- | records that this host is building from source rather than running shipped
+-- | bytes — the drift `docs/ARTIFACTS.md` warns about, made visible at apply time.
+advisoryCommands :: Change -> Service -> Array Command
+advisoryCommands change svc = case change, svc.launch.executor, svc.launch.artifact of
+  Start _, Container _, Just (SourceBuild (ArtifactRef r)) ->
+    [ Manual ("build-once-ship: " <> unServiceId svc.id <> " builds from source ("
+        <> r.source <> ") on the host — ship a prebuilt image instead (docs/ARTIFACTS.md)") ]
+  _, _, _ -> []
 
 isPublished :: Address -> Boolean
 isPublished = case _ of

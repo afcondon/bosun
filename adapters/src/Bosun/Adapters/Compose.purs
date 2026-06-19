@@ -17,6 +17,7 @@ module Bosun.Adapters.Compose (ingestCompose) where
 
 import Prelude
 
+import Bosun.Artifact (Artifact(..), ArtifactRef(..))
 import Bosun.Atoms (AbsPath, EnvVar, Port, mkAbsPath, mkDomain, mkEnvVar, mkHost, mkPort, mkRoutePath, mkServiceId)
 import Bosun.Edge (DepOrdering(..), Gate(..), Requirement(..))
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ImageRef(..))
@@ -55,6 +56,7 @@ decodeService name sj = do
     , role: mkRole (roleFromName name)
     , host: Just (mkHost (placeHost o))   -- finest placement level (x-bosun.place last, else x-bosun.host, else default)
     , executor: executorOf name o
+    , artifact: xbosunArtifact o   -- declared `x-bosun.artifact` (else reconcile derives it)
     , reachability: fromMaybe (maybe noNetwork hostPort (publishPort o)) (xbosunExpose o)
     , health: let pr = effProbe o in { liveness: pr, readiness: pr, startup: Nothing }
     , restart: { base: UnlessStopped, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }
@@ -100,6 +102,28 @@ xbosunProcess o = do
   cwd <- str pr "cwd" >>= mkAbsPath
   command <- str pr "command"
   pure (Process { cwd, command, env: envOf pr })
+
+-- | `x-bosun.artifact: { kind, source, pin? }` → the DECLARED artifact
+-- | (docs/ARTIFACTS.md): the single content declaration `reconcile` prefers over
+-- | the heuristic `artifactOf`. `kind` ∈ static-dir | binary | bundle(+runtime)
+-- | | source-build | image; `pin` is an optional digest/revision/tag that fixes
+-- | "what content". Absent or unknown-kind ⇒ `Nothing` (reconcile derives it
+-- | from the executor instead).
+xbosunArtifact :: Object Json -> Maybe Artifact
+xbosunArtifact o = do
+  xb <- FO.lookup "x-bosun" o >>= toObject
+  a <- FO.lookup "artifact" xb >>= toObject
+  kind <- str a "kind"
+  source <- str a "source"
+  let ref = ArtifactRef { source, pin: str a "pin" }
+  case kind of
+    "static-dir" -> Just (StaticDir ref)
+    "binary" -> Just (Binary ref)
+    "bundle" -> Just (BundleRuntime ref)
+    "bundle+runtime" -> Just (BundleRuntime ref)
+    "source-build" -> Just (SourceBuild ref)
+    "image" -> Just (Image ref)
+    _ -> Nothing
 
 -- `x-bosun.process.env { KEY: "val", … }` → typed launch env. Non-string values
 -- are skipped (launch env is strings); absent ⇒ `[]`.

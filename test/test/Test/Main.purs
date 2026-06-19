@@ -5,7 +5,9 @@ import Prelude
 import Effect (Effect)
 import Test.Bosun.AdapterSpec as AdapterSpec
 import Test.Bosun.ApplySpec as ApplySpec
+import Test.Bosun.ArtifactSpec as ArtifactSpec
 import Test.Bosun.AtomsSpec as AtomsSpec
+import Test.Bosun.DockerPsSpec as DockerPsSpec
 import Test.Bosun.PBTSpec as PBTSpec
 import Test.Bosun.PlanSpec as PlanSpec
 import Test.Bosun.ReachabilitySpec as ReachabilitySpec
@@ -26,6 +28,8 @@ main = runSpecAndExitProcess [specReporter] do
   describe "bosun-core" do
     AtomsSpec.spec
     AdapterSpec.spec
+    ArtifactSpec.spec
+    DockerPsSpec.spec
     ValidateSpec.spec
     ReachabilitySpec.spec
     ReconcileSpec.spec

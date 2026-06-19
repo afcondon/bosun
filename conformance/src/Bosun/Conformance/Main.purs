@@ -149,6 +149,7 @@ inst =
   , role: mkRole "frontend"
   , host: Just (mkHost "mbp")
   , executor: Unmanaged "svc"
+  , artifact: Nothing
   , reachability: noNetwork
   , health: { liveness: NoProbe, readiness: NoProbe, startup: Nothing }
   , restart: { base: Never, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }

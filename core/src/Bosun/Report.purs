@@ -10,6 +10,8 @@
 module Bosun.Report
   ( renderError
   , renderDivergence
+  , renderArtifactDrift
+  , renderTopologyDrift
   , renderReport
   , renderPlan
   , renderChange
@@ -27,8 +29,9 @@ import Bosun.Apply (Command(..), StagedCommand)
 import Bosun.Atoms (Host, ServiceId, unEnvVar, unHost, unPort, unRoutePath, unServiceId)
 import Bosun.Edge (Gate)
 import Bosun.Error (DeployError(..), SdiViolation(..))
+import Bosun.Artifact (artifactLabel)
 import Bosun.Plan (Change(..), Plan, Reason(..), Status(..), planSteps)
-import Bosun.Reconcile (Divergence(..), FacetKey)
+import Bosun.Reconcile (ArtifactDrift(..), Divergence(..), FacetKey, TopologyDrift(..))
 import Bosun.Selector (Selector)
 import Bosun.Serve (RejectReason(..), Redirect, Rejection, Route, ServePlan)
 import Bosun.Service (unServiceRef)
@@ -78,6 +81,38 @@ renderDivergence (Divergence d) =
   unServiceId d.svc <> " has " <> show (NEA.length d.facets)
     <> " deployment facets: "
     <> intercalate "; " (map facetLabel (NEA.toArray d.facets))
+
+-- | The artifact-drift section (docs/ARTIFACTS.md): services whose facets would
+-- | run DIFFERENT content. Distinct from `renderReport` so it can be surfaced
+-- | wherever the reconcile result is shown without re-baselining the
+-- | conformance-pinned report. Empty ⇒ "" (the caller omits the section).
+renderArtifactDrift :: Array ArtifactDrift -> String
+renderArtifactDrift = case _ of
+  [] -> ""
+  drifts ->
+    "ARTIFACT DRIFT (facets would run different content — docs/ARTIFACTS.md)\n"
+      <> intercalate "\n" (map (("  - " <> _) <<< driftLine) drifts)
+  where
+  driftLine (ArtifactDrift d) =
+    unServiceId d.svc <> ": " <> intercalate " ≠ " (map artifactLabel (NEA.toArray d.artifacts))
+      <> "  (same service, different bytes per substrate — ship one built artifact)"
+
+-- | The edge-missing section (docs/ARTIFACTS.md "the edge is topology"): hosts
+-- | that bring up routed backends with no co-located edge serving them. Its own
+-- | section, like `renderArtifactDrift`, so it surfaces without touching the
+-- | conformance-pinned `renderReport`. Empty ⇒ "" (caller omits the section).
+renderTopologyDrift :: Array TopologyDrift -> String
+renderTopologyDrift = case _ of
+  [] -> ""
+  drifts ->
+    "EDGE MISSING (host runs routed backends with no co-located edge — links 404)\n"
+      <> intercalate "\n" (map (("  - " <> _) <<< driftLine) drifts)
+  where
+  driftLine (TopologyDrift d) =
+    unHost d.host <> " serves none of "
+      <> intercalate ", " (map routeLabel (NEA.toArray d.missing))
+      <> "  (add a co-located edge serving these routes — docs/ARTIFACTS.md)"
+  routeLabel r = unRoutePath r.path <> "→" <> unServiceId r.backend
 
 -- | The full report: reconcile errors (conflicts), reconcile info
 -- | (divergences), then the validate errors. Empty sections are omitted; a
@@ -229,6 +264,7 @@ renderReject = case _ of
   NoHostPort -> "no host port to bind"
   NotAProcess -> "not a Process launch (serve spawns local processes only)"
   Sdi why -> "SDI contract — " <> sdiLabel why
+  PortClaimed port -> "public port " <> show port <> " is already claimed by another service (collision)"
 
 -- ── small label helpers (display, not Show) ──────────────────────────────────
 

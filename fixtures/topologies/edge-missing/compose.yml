@@ -1,0 +1,39 @@
+# Fabricated topology fixture — EDGE MISSING (docs/ARTIFACTS.md "the edge is
+# topology, preserve it locally"). The polyglot story in miniature: a website +
+# two backends are reached SAME-ORIGIN behind an edge mapping `/`→website,
+# `/ee`→ee-backend, `/ge`→ge-backend. The edge runs on macmini. But the routed
+# services run NATIVELY on the mbp (the without-Docker path) where there is NO
+# edge — so the website's root-relative links 404 there. `bosun check` flags the
+# mbp as EDGE MISSING: a host running routed backends with no co-located router.
+# The fix is topology, not content (add a local edge process on the mbp —
+# Chair's `polyglot-up` 5th row), NOT a per-environment home page (that
+# reintroduces the artifact-drift anti-pattern build-once-ship exists to kill).
+#
+# Self-contained: bare service names (no project), so the edge's route targets
+# resolve to the same identity as the backends with no alias map. The edge sits
+# on macmini; everything it routes to is on the mbp. Pair with the empty
+# registry.json (the second facet would, in the real rig, be the registry rows).
+services:
+  edge:
+    build: { context: ./edge }
+    ports: ["80:80"]
+    x-bosun:
+      host: macmini
+      routes:
+        - { path: /, to: website }
+        - { path: /ee, to: ee-backend }
+        - { path: /ge, to: ge-backend }
+
+  # the routed services — native on the mbp, with no edge in front of them
+  website:
+    x-bosun:
+      host: mbp
+      process: { cwd: /Users/afc/site/public, command: static-httpd -root . -port 3040 }
+  ee-backend:
+    x-bosun:
+      host: mbp
+      process: { cwd: /Users/afc/ee, command: python3 app.py }
+  ge-backend:
+    x-bosun:
+      host: mbp
+      process: { cwd: /Users/afc/ge, command: python3 app.py }

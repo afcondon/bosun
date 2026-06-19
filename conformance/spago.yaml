@@ -23,5 +23,6 @@ package:
     - foreign-object
     - bosun-core
     - bosun-adapters
+    - bosun-cli
   run:
     main: Bosun.Conformance.Main

@@ -8,6 +8,7 @@ import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.Adapters.Registry (ingestRegistry)
 import Bosun.Adapters.StartCommand (parseStartCommand)
 import Bosun.Adapters.Targets (ingestTargets)
+import Bosun.Artifact (Artifact(..), ArtifactRef(..))
 import Bosun.Atoms (mkEnvVar, mkHost, unAbsPath)
 import Bosun.Executor (Executor(..), ExecutorMechanism(..), mechanism)
 import Bosun.Health (Probe(..))
@@ -138,6 +139,20 @@ spec = describe "Bosun.Adapters" do
           Just s -> case s.executor of
             Process p -> p.env `shouldEqual` [ Tuple (mkEnvVar "ERL_LIBS") "_build/default/lib" ]
             _ -> fail "expected a Process executor"
+
+    it "x-bosun.artifact { kind, source, pin } parses into a declared Artifact" do
+      let pf = """{"services":{
+        "website":{"build":{"context":"../site/web"},"x-bosun":{"host":"macmini","artifact":{"kind":"image","source":"hylograph/website","pin":"sha256:abc"}}}
+      }}"""
+      case jsonParser pf of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> case find (\s -> s.localName == "website") (ingestCompose j) of
+          Nothing -> fail "website not ingested"
+          Just s -> case s.artifact of
+            Just (Image (ArtifactRef r)) -> do
+              r.source `shouldEqual` "hylograph/website"
+              r.pin `shouldEqual` Just "sha256:abc"
+            _ -> fail "expected a declared Image artifact"
 
     it "a relative or missing x-bosun.process cwd is NOT a Process (falls through to Unmanaged)" do
       let pf = """{"services":{"bad":{"x-bosun":{"process":{"cwd":"relative/dir","command":"./run"}}}}}"""

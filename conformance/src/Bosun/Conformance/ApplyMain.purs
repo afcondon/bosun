@@ -82,6 +82,7 @@ server name role port =
       , command: "nohup python3 -m http.server " <> show port <> " >" <> role <> ".log 2>&1 &"
       , env: []
       }
+  , artifact: Nothing
   , reachability: hostPort (port_ port)
   , health: { liveness: NoProbe, readiness: TcpConnect (port_ port), startup: Nothing }
   , restart: { base: Never, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }

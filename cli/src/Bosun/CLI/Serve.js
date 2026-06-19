@@ -33,8 +33,20 @@ export const serveImpl = (config) => {
     const server = http.createServer((req, res) => handle(state, req, res));
     server.on("upgrade", (req, socket, head) => bridgeUpgrade(state, req, socket, head));
     server.on("clientError", (_e, sock) => { try { sock.end("HTTP/1.1 400 Bad Request\r\n\r\n"); } catch (_) {} });
-    server.on("error", (err) =>
-      console.error(`  ✗ cannot bind :${route.publicPort} (${err.code || err.message}) — ${route.serviceId} unserved`));
+    server.on("error", (err) => {
+      if (err.code === "EADDRINUSE") {
+        // ADOPT: the registered public port is already served — the service was
+        // started outside serve (by hand, or another launcher). Benign, not a
+        // failure: serve steps aside and reports it running-external rather than
+        // "unserved". It can neither lazy-spawn nor proxy this route (the external
+        // process owns the public port directly), so the state is terminal until a
+        // reload — exactly right for "I'm working on this one locally myself".
+        state.external = true;
+        console.log(`  ≈ :${route.publicPort} already served externally (adopted) — ${route.serviceId}`);
+      } else {
+        console.error(`  ✗ cannot bind :${route.publicPort} (${err.code || err.message}) — ${route.serviceId} unserved`);
+      }
+    });
     server.listen(route.publicPort, INTERNAL_HOST, () =>
       console.log(`  bound :${route.publicPort} → ${route.serviceId} (idle ${Math.round(route.idleTimeoutMs / 1000)}s)`));
     listeners.set(route.publicPort, { server, state });
@@ -80,7 +92,10 @@ export const serveImpl = (config) => {
       serviceId: s.route.serviceId,
       publicPort: s.route.publicPort,
       internalPort: s.route.internalPort,
-      up: !!s.child,
+      // an adopted route is up (served externally), just not by serve; `external`
+      // flags that serve neither spawned nor proxies it.
+      up: s.external ? true : !!s.child,
+      external: !!s.external,
       pid: s.child ? s.child.pid : null,
     })),
     redirects: [...redirects.entries()].map(([publicPort, r]) => ({ publicPort, ...r })),

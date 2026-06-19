@@ -72,6 +72,7 @@ server name role port =
       , command: "python3 -m http.server " <> show port
       , env: []
       }
+  , artifact: Nothing
   , reachability: hostPort (port_ port)
   , health: { liveness: NoProbe, readiness: TcpConnect (port_ port), startup: Nothing }
   , restart: { base: Always, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }

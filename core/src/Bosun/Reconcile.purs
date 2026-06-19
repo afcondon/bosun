@@ -24,6 +24,9 @@
 module Bosun.Reconcile
   ( FacetKey
   , Divergence(..)
+  , ArtifactDrift(..)
+  , TopologyDrift(..)
+  , RouteReq
   , ReconcileResult
   , AliasMap
   , reconcile
@@ -33,7 +36,9 @@ module Bosun.Reconcile
 
 import Prelude
 
-import Bosun.Atoms (Host, ServiceId, mkServiceId, unAbsPath, unDomain, unPort, unProjectSlug, unRoutePath)
+import Bosun.Artifact (Artifact, ArtifactConsensus(..), artifactConsensus, artifactOf)
+import Control.Alt ((<|>))
+import Bosun.Atoms (Host, RoutePath, ServiceId, mkServiceId, unAbsPath, unDomain, unPort, unProjectSlug, unRoutePath)
 import Bosun.Error (DeployError(..))
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ExecutorMechanism, mechanism)
 import Bosun.Exposure (Exposure(..))
@@ -51,6 +56,7 @@ import Data.Foldable (foldr)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Set as Set
 import Data.String (Pattern(..))
 import Data.String as String
 import Data.Tuple (Tuple(..), fst, snd, uncurry)
@@ -64,10 +70,38 @@ type FacetKey = { host :: Maybe Host, mechanism :: ExecutorMechanism }
 
 data Divergence = Divergence { svc :: ServiceId, facets :: NonEmptyArray FacetKey }
 
+-- | A service whose facets imply DIFFERENT content (docs/ARTIFACTS.md). Unlike a
+-- | `Divergence` (different run-FORMS of the same thing — expected, healthy),
+-- | this is the architectural drift behind the stale public site: the native
+-- | facet and the container facet would serve different bytes. Reported as its
+-- | own finding — not a `DeployError` (it does not block minting a
+-- | `ValidatedDeployment`; you may still deploy the diverged thing while you fix
+-- | it), and not a benign `Divergence`.
+data ArtifactDrift = ArtifactDrift { svc :: ServiceId, artifacts :: NonEmptyArray Artifact }
+
+-- | A required reverse-proxy route: a backend reached same-origin at `path`. The
+-- | declared route table R (docs/ARTIFACTS.md "the edge is topology") is the
+-- | union of these across every facet's `x-bosun.routes`.
+type RouteReq = { path :: RoutePath, backend :: ServiceId }
+
+-- | A HOST that runs routed backends but provides NO co-located edge serving
+-- | them (the routing-contract gap behind "deploys fine on Docker, breaks on the
+-- | MBP"): the website's root-relative links 404 because the executor that
+-- | brought the backends up on this host dropped the edge. Like `ArtifactDrift`,
+-- | this is a per-target architectural finding, NOT a `DeployError` — a valid
+-- | deployment can still be edge-missing on one of its hosts; you may deploy it
+-- | while you add the local edge. The CONSERVATISM (mirroring
+-- | `artifactConsensus`'s basename rule): the edge is expected *co-located* with
+-- | the backends it fronts; a cross-host edge proxying to another host over the
+-- | network is legitimate and not flagged (that richer case is deferred).
+data TopologyDrift = TopologyDrift { host :: Host, missing :: NonEmptyArray RouteReq }
+
 type ReconcileResult =
-  { deployment  :: Deployment            -- representative facets, for validate
-  , conflicts   :: Array DeployError      -- within-facet disagreement (CrossSourceDrift)
-  , divergences :: Array Divergence       -- informational: a service's multiple facets
+  { deployment    :: Deployment            -- representative facets, for validate
+  , conflicts     :: Array DeployError      -- within-facet disagreement (CrossSourceDrift)
+  , divergences   :: Array Divergence       -- informational: a service's multiple facets
+  , artifactDrift :: Array ArtifactDrift    -- facets that would run DIFFERENT content
+  , topologyDrift :: Array TopologyDrift     -- hosts running routed backends with no edge
   }
 
 reconcile :: AliasMap -> Array ServiceInstance -> ReconcileResult
@@ -75,6 +109,8 @@ reconcile aliases insts =
   { deployment: mkDeployment (A.mapMaybe _.loose groups)
   , conflicts: groups >>= _.conflicts
   , divergences: A.mapMaybe _.divergence groups
+  , artifactDrift: A.mapMaybe _.artifactDrift groups
+  , topologyDrift: topologyGaps aliases insts
   }
   where
   grouped :: Map ServiceId (Array ServiceInstance)
@@ -85,12 +121,17 @@ reconcile aliases insts =
   reconcileGroup
     :: ServiceId
     -> Array ServiceInstance
-    -> { conflicts :: Array DeployError, divergence :: Maybe Divergence, loose :: Maybe LooseService }
+    -> { conflicts :: Array DeployError, divergence :: Maybe Divergence, artifactDrift :: Maybe ArtifactDrift, loose :: Maybe LooseService }
   reconcileGroup sid is =
     { conflicts: (Map.toUnfoldable byFacet :: Array (Tuple FacetKey (Array ServiceInstance)))
         >>= \(Tuple _ fis) -> withinFacetConflict sid fis
     , divergence: case NEA.fromArray facetKeys of
         Just nea | NEA.length nea > 1 -> Just (Divergence { svc: sid, facets: nea })
+        _ -> Nothing
+    -- one artifact per facet (its representative instance's executor); if the
+    -- facets imply DIFFERENT content, that's the drift (docs/ARTIFACTS.md).
+    , artifactDrift: case artifactConsensus facetArtifacts of
+        Diverged nea -> Just (ArtifactDrift { svc: sid, artifacts: nea })
         _ -> Nothing
     , loose: map (\rep -> toLoose aliases sid rep is) (A.head is)
     }
@@ -98,6 +139,9 @@ reconcile aliases insts =
     byFacet :: Map FacetKey (Array ServiceInstance)
     byFacet = foldr (\si -> Map.insertWith (<>) (facetKeyOf si) [ si ]) Map.empty is
     facetKeys = map fst (Map.toUnfoldable byFacet :: Array (Tuple FacetKey (Array ServiceInstance)))
+    facetArtifacts =
+      (Map.toUnfoldable byFacet :: Array (Tuple FacetKey (Array ServiceInstance)))
+        # A.mapMaybe (\(Tuple _ fis) -> A.head fis >>= artifactFor)
 
 identityOf :: AliasMap -> ServiceInstance -> ServiceId
 identityOf aliases si = case Map.lookup si.localName aliases of
@@ -108,6 +152,41 @@ identityOf aliases si = case Map.lookup si.localName aliases of
 
 facetKeyOf :: ServiceInstance -> FacetKey
 facetKeyOf si = { host: si.host, mechanism: mechanism si.executor }
+
+-- A facet's artifact: the DECLARED `x-bosun.artifact` if present, else derived
+-- from the executor (`artifactOf`). Declaration is authoritative — it drops the
+-- heuristic's reach limits (docs/ARTIFACTS.md).
+artifactFor :: ServiceInstance -> Maybe Artifact
+artifactFor si = si.artifact <|> artifactOf si.executor
+
+-- | The per-host edge check (docs/ARTIFACTS.md "the edge is topology, preserve
+-- | it locally"). The declared route table R is the union of every facet's
+-- | `x-bosun.routes` (backend identity resolved through the alias map). For each
+-- | host H, a route whose backend has a facet on H but whose path is served by
+-- | NO facet on H is edge-missing on H — the executor that brought the backends
+-- | up there dropped the front door, so the route 404s. Hosts with at least one
+-- | such route yield a `TopologyDrift`. Host-less instances are skipped (we
+-- | cannot name the host to flag — same conservatism as `checkCollisions`).
+topologyGaps :: AliasMap -> Array ServiceInstance -> Array TopologyDrift
+topologyGaps aliases insts = A.mapMaybe gapFor hosts
+  where
+  -- R: the declared route table, backend names resolved to identities.
+  routeTable :: Array RouteReq
+  routeTable = A.nubEq
+    (insts >>= \si -> map (\r -> { path: r.path, backend: resolveName aliases r.to }) si.rawRoutes)
+
+  hosts :: Array Host
+  hosts = A.nub (A.mapMaybe _.host insts)
+
+  gapFor :: Host -> Maybe TopologyDrift
+  gapFor h =
+    let
+      here = A.filter (\si -> si.host == Just h) insts
+      backendsHere = Set.fromFoldable (map (identityOf aliases) here)
+      pathsHere = Set.fromFoldable (here >>= \si -> map _.path si.rawRoutes)
+      missing = routeTable # A.filter \r ->
+        Set.member r.backend backendsHere && not (Set.member r.path pathsHere)
+    in TopologyDrift <<< { host: h, missing: _ } <$> NEA.fromArray (A.nubEq missing)
 
 -- Two sources in the SAME facet disagreeing on exposure ⇒ a real conflict.
 withinFacetConflict :: ServiceId -> Array ServiceInstance -> Array DeployError
@@ -132,7 +211,7 @@ toLoose aliases sid rep is =
   , deps: A.nubEq (is >>= \si -> map (resolveDep aliases) si.rawDeps)
   , routes: A.nubEq (is >>= \si -> map (resolveRoute aliases) si.rawRoutes)
   , selectors: A.nubEq (is >>= _.selectors)
-  , launch: { executor: rep.executor, localName: rep.localName }
+  , launch: { executor: rep.executor, localName: rep.localName, artifact: artifactFor rep }
   }
 
 resolveDep :: AliasMap -> RawDep -> LooseDep

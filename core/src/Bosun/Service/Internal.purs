@@ -17,6 +17,7 @@ module Bosun.Service.Internal where
 
 import Prelude
 
+import Bosun.Artifact (Artifact)
 import Bosun.Atoms (Host, ProjectSlug, RoutePath, ServiceId)
 import Bosun.Edge (DepOrdering, Requirement)
 import Bosun.Executor (Executor)
@@ -63,7 +64,12 @@ type RawRoute = { to :: String, path :: RoutePath }
 -- | profile is read off `Service.selectors`; the compose file path is supplied
 -- | at the CLI edge. Carried on the loose/tight node so the validated graph
 -- | knows how to start each proven service.
-type LaunchSpec = { executor :: Executor, localName :: String }
+-- | `artifact` is the WHAT the launch realises (docs/ARTIFACTS.md): the single
+-- | content declaration each substrate's run-spec derives from. `reconcile`
+-- | fills it (from a declared `x-bosun.artifact`, falling back to `artifactOf`
+-- | the representative executor), so `apply` can pull/ship a built artifact
+-- | rather than build per host. `Nothing` for executors that name no content.
+type LaunchSpec = { executor :: Executor, localName :: String, artifact :: Maybe Artifact }
 
 -- | LOOSE / OPEN (§3.7): the ingest output, one per (source × unit). `extra`
 -- | preserves the byte-identical round-trip. Consumed by `reconcile` (Phase 3).
@@ -74,6 +80,7 @@ type ServiceInstance =
   , role      :: Role
   , host      :: Maybe Host
   , executor  :: Executor
+  , artifact  :: Maybe Artifact   -- declared `x-bosun.artifact`, if any (else reconcile derives it)
   , reachability :: Reachability
   , health    :: Health
   , restart   :: RestartPolicy

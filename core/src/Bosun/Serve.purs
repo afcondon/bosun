@@ -45,11 +45,13 @@ import Bosun.Service (Deployment, LooseService, deploymentServices)
 import Bosun.Target (defaultTargets, networkAddr)
 import Data.Array as A
 import Data.Either (Either(..))
-import Data.Foldable (foldr)
+import Data.Foldable (foldl, foldr)
 import Data.Generic.Rep (class Generic)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..))
+import Data.Set (Set)
+import Data.Set as Set
 import Data.Show.Generic (genericShow)
 import Data.String (Pattern(..), Replacement(..))
 import Data.String as String
@@ -95,6 +97,7 @@ data RejectReason
   = NoHostPort            -- no host port to bind / route
   | NotAProcess           -- container/CDN/systemd/launchd — serve spawns Processes only
   | Sdi SdiViolation      -- PortNotInStartCommand / NoAbsoluteCwd
+  | PortClaimed Int       -- another service already claims this public port
 derive instance Eq RejectReason
 derive instance Generic RejectReason _
 -- Show for test/REPL diagnostics only (entry 73); user-facing text is
@@ -128,12 +131,39 @@ data Admission = Admit Route | Redir Redirect | Reject Rejection
 
 servePlan :: Deployment -> ServePlan
 servePlan dep =
-  foldr classify { routes: [], redirects: [], rejected: [] } (map admit (deploymentServices dep))
+  foldr classify { routes: [], redirects: [], rejected: [] } (arbitrate (map admit (deploymentServices dep)))
   where
   classify adm acc = case adm of
     Admit r -> acc { routes = A.cons r acc.routes }
     Redir d -> acc { redirects = A.cons d acc.redirects }
     Reject x -> acc { rejected = A.cons x acc.rejected }
+
+-- | The single-binder guarantee SDI got implicitly (it owned every port, so two
+-- | rows could never both bind one): make it EXPLICIT and typed. A binder is
+-- | anything that takes a public port — a lazy-spawn `Admit` or a `Redir`'s
+-- | bind+421. Walking the admissions in their (deterministic, ServiceId-ordered)
+-- | deployment order, the FIRST claimant of a public port wins; any later binder
+-- | on the same port becomes a `PortClaimed` rejection rather than a runtime
+-- | `EADDRINUSE`. `Reject`s carry no port and pass through untouched. Total and
+-- | order-deterministic, so it rides the node≡Go conformance unchanged.
+arbitrate :: Array Admission -> Array Admission
+arbitrate adms = (foldl step { claimed: Set.empty, out: [] } adms).out
+  where
+  step st adm = case binderPort adm of
+    Just (Tuple sid port)
+      | Set.member port st.claimed ->
+          st { out = A.snoc st.out (Reject { serviceId: sid, reason: PortClaimed port }) }
+      | otherwise ->
+          st { claimed = Set.insert port st.claimed, out = A.snoc st.out adm }
+    _ -> st { out = A.snoc st.out adm }
+
+-- The public port a binding admission claims (and the service claiming it);
+-- `Reject`s bind nothing.
+binderPort :: Admission -> Maybe (Tuple String Int)
+binderPort = case _ of
+  Admit r -> Just (Tuple r.serviceId r.publicPort)
+  Redir d -> Just (Tuple d.serviceId d.publicPort)
+  Reject _ -> Nothing
 
 -- | Classify one service. A `HostPort` on a remote host becomes a `Redirect`;
 -- | on this machine it must be a launchable `Process` with the literal port in

@@ -1,12 +1,13 @@
-// Resident half of `bosun supervise` — the watch-loop timer + the /state +
-// /control HTTP surface. The DECISIONS (what to start/restart/stop) were already
-// made upstream by the pure planner; this shim only fires the periodic tick and
-// routes HTTP to the PS callbacks. Same surface shape as serve's controlRouter
-// (CORS + JSON) so the Chair lights up against either mode unchanged.
+// The resident-mode shim (docs/EXECUTORS.md) — the substrate-agnostic half of
+// every resident `bosun` daemon: the watch-loop timer + the /state + /control
+// HTTP surface. The DECISIONS (what to observe, start, restart, stop) are made
+// upstream in PureScript; this shim only fires the periodic tick and routes
+// HTTP to the PS callbacks. Same surface shape the Chair already speaks, so it
+// lights up against any executor (process via supervise, docker, …) unchanged.
 import http from "node:http";
 
-// Effect Number — wall-clock ms at the seam (the pure supervisor never reads
-// the clock; it only receives `now`, so it stays conformance-deterministic).
+// Effect Number — wall-clock ms at the seam (the pure core never reads the
+// clock; it only receives `now`, so it stays conformance-deterministic).
 export const nowMs = () => Date.now();
 
 const INTERNAL_HOST = "127.0.0.1";
@@ -16,13 +17,13 @@ const CORS = {
   "access-control-allow-headers": "content-type",
 };
 
-// EffectFn1 SuperviseConfig Unit — called once; runs forever (resident).
-export const superviseImpl = (cfg) => {
+// EffectFn1 Resident Unit — called once; runs forever (resident).
+export const residentImpl = (cfg) => {
   const tick = () => {
     try { cfg.tick(); }
     catch (e) { console.error(`  ✗ tick: ${e && e.message ? e.message : e}`); }
   };
-  // periodic keep-alive reconcile; the initial bring-up already ran in PS.
+  // periodic tick; the substrate's initial bring-up/observe already ran in PS.
   setInterval(tick, cfg.intervalMs);
 
   const server = http.createServer((req, res) => {
@@ -54,8 +55,8 @@ export const superviseImpl = (cfg) => {
   });
 
   server.on("error", (err) =>
-    console.error(`  ✗ supervise /state :${cfg.statusPort} (${err.code || err.message})`));
+    console.error(`  ✗ resident /state :${cfg.statusPort} (${err.code || err.message})`));
   server.listen(cfg.statusPort, INTERNAL_HOST, () =>
     console.log(
-      `  supervise: /state + /control on :${cfg.statusPort}, keep-alive tick ${cfg.intervalMs}ms. Ctrl-C to stop.`));
+      `  resident: /state + /control on :${cfg.statusPort}, tick ${cfg.intervalMs}ms. Ctrl-C to stop.`));
 };

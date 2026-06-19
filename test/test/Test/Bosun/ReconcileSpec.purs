@@ -8,12 +8,12 @@ module Test.Bosun.ReconcileSpec where
 
 import Prelude
 
-import Bosun.Atoms (AbsPath, Port, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkServiceId)
-import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
+import Bosun.Atoms (AbsPath, Port, RoutePath, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkRoutePath, mkServiceId)
+import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Reachability (hostPort, noNetwork)
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Reconcile (reconcile)
-import Bosun.Report (renderReport)
+import Bosun.Report (renderReport, renderTopologyDrift)
 import Bosun.Service (Source(..), ServiceInstance, mkRole)
 import Data.Array (length)
 import Data.Either (Either(..))
@@ -40,6 +40,7 @@ inst =
   , role: mkRole "frontend"
   , host: Just (mkHost "mbp")
   , executor: Unmanaged "svc"
+  , artifact: Nothing
   , reachability: noNetwork
   , health: { liveness: NoProbe, readiness: NoProbe, startup: Nothing }
   , restart: { base: Never, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }
@@ -51,6 +52,9 @@ inst =
 
 container :: String -> Executor
 container image = Container (ContainerSpec { source: Left (ImageRef image), internalPort: Nothing, publish: Nothing })
+
+buildCtx :: String -> Executor
+buildCtx ctx = Container (ContainerSpec { source: Right (BuildContext { context: ctx, dockerfile: Nothing }), internalPort: Nothing, publish: Nothing })
 
 -- ── the §7 fixtures ─────────────────────────────────────────────────────────
 
@@ -89,6 +93,76 @@ spec = describe "Bosun.Reconcile" do
     let r = reconcile aliases [ tiltedRegistry, tiltedCompose ]
     length r.divergences `shouldEqual` 1
     length r.conflicts `shouldEqual` 0
+
+  it "§7 guard: npx-serve native + prebuilt image is NOT artifact drift" do
+    -- neither facet exposes a comparable source dir, so the divergence is benign
+    let r = reconcile aliases [ tiltedRegistry, tiltedCompose ]
+    length r.artifactDrift `shouldEqual` 0
+
+  it "artifact drift: native -root dir vs container build context of a DIFFERENT dir" do
+    let
+      webNative = inst
+        { source = FromRegistry
+        , project = Just (mkProjectSlug "poly")
+        , localName = "polyglot-website"
+        , role = mkRole "website"
+        , host = Just (mkHost "mbp")
+        , executor = Process { cwd: absPath "/Users/afc/work/afc-work/polyglot-deploy", command: "static-httpd -root site/polyglot/public -port 3040", env: [] }
+        , reachability = hostPort (port_ 3040)
+        }
+      webDocker = inst
+        { source = FromCompose
+        , project = Nothing
+        , localName = "website"
+        , role = mkRole "website"
+        , host = Just (mkHost "macmini")
+        , executor = buildCtx "../purescript-polyglot/site/website"
+        , reachability = noNetwork
+        }
+      drifts = reconcile (Map.singleton "website" (mkServiceId "poly:website")) [ webNative, webDocker ]
+    length drifts.artifactDrift `shouldEqual` 1
+
+  describe "topology drift (the edge is topology, per-host)" do
+    let
+      route :: String -> String -> { to :: String, path :: RoutePath }
+      route to path = { to, path: mkRoutePath path }
+      -- an edge declaring its route table; backends keyed by bare localName
+      edgeOn host_ = inst
+        { source = FromCompose, localName = "edge", role = mkRole "edge", host = Just (mkHost host_)
+        , rawRoutes = [ route "website" "/", route "ee-backend" "/ee" ] }
+      backend nm host_ = inst { localName = nm, role = mkRole nm, host = Just (mkHost host_) }
+
+    it "host running routed backends with no co-located edge => 1 TopologyDrift" do
+      let
+        -- macmini: edge + both backends (satisfied); mbp: both backends, no edge
+        r = reconcile Map.empty
+          [ edgeOn "macmini", backend "website" "macmini", backend "ee-backend" "macmini"
+          , backend "website" "mbp", backend "ee-backend" "mbp" ]
+      length r.topologyDrift `shouldEqual` 1            -- only mbp is edge-missing
+
+    it "guard: edge co-located on every host => quiet (Chair's 5th-row fix)" do
+      let
+        r = reconcile Map.empty
+          [ edgeOn "macmini", backend "website" "macmini", backend "ee-backend" "macmini"
+          , edgeOn "mbp", backend "website" "mbp", backend "ee-backend" "mbp" ]
+      length r.topologyDrift `shouldEqual` 0
+
+    it "guard: a backend with no route to it is not edge-gated (reached directly)" do
+      let
+        -- ee-backend has a route; a plain unrouted service on mbp must NOT flag
+        r = reconcile Map.empty
+          [ edgeOn "macmini", backend "ee-backend" "macmini"
+          , inst { localName = "loner", role = mkRole "loner", host = Just (mkHost "mbp") } ]
+      length r.topologyDrift `shouldEqual` 0
+
+    it "renders the gap under EDGE MISSING" do
+      let
+        r = reconcile Map.empty
+          [ edgeOn "macmini", backend "website" "macmini", backend "ee-backend" "macmini"
+          , backend "website" "mbp", backend "ee-backend" "mbp" ]
+        out = renderTopologyDrift r.topologyDrift
+      contains (Pattern "EDGE MISSING") out `shouldEqual` true
+      contains (Pattern "mbp serves none of") out `shouldEqual` true
 
   it "B9 within-facet port disagreement => 1 conflict, 0 divergences" do
     let

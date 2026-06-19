@@ -29,6 +29,7 @@ import Bosun.Atoms (ServiceId, mkServiceId, unServiceId)
 import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeSupSnapshot)
+import Bosun.CLI.Resident (Resident, nowMs, runResident)
 import Bosun.Plan (Change(..), Plan, Status(..), plan, planSteps)
 import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderCommand, renderReport)
@@ -47,25 +48,7 @@ import Data.Validation.Semigroup (toEither)
 import Effect (Effect)
 import Effect.Console (log)
 import Effect.Ref as Ref
-import Effect.Uncurried (EffectFn1, EffectFn2, mkEffectFn2, runEffectFn1)
-
--- The resident shim's hooks. `tick` runs one observe→plan→enact round;
--- `stateBody` renders the current `/state` JSON; `control` handles a
--- `/control/<verb>?service=<arg>` POST and returns a status message.
-type SuperviseConfig =
-  { statusPort :: Int
-  , intervalMs :: Int
-  , tick :: Effect Unit
-  , stateBody :: Effect String
-  , control :: EffectFn2 String String String
-  }
-
-foreign import superviseImpl :: EffectFn1 SuperviseConfig Unit
-
--- | Wall-clock milliseconds at the seam. Lives in the shim (not the pure core),
--- | so `Bosun.Supervisor` stays deterministic and conformance-byte-identical;
--- | the supervisor only ever *receives* time, never reads it.
-foreign import nowMs :: Effect Number
+import Effect.Uncurried (mkEffectFn2)
 
 defaultStatusPort :: Int
 defaultStatusPort = 3996
@@ -175,8 +158,8 @@ runSupervise mPort composePath registryPath = do
           _ -> pure ("unknown control verb: " <> verb)
       log "supervise: initial bring-up…"
       bringUp
-      runEffectFn1 superviseImpl
-        { statusPort: fromMaybe defaultStatusPort mPort, intervalMs, tick, stateBody, control }
+      runResident
+        ({ statusPort: fromMaybe defaultStatusPort mPort, intervalMs, tick, stateBody, control } :: Resident)
 
 -- | `/state` JSON. The `services` map (id → status string) is UNCHANGED — the
 -- | Chair's existing decoder keeps working. Everything else is ADDITIVE (ADR

@@ -53,6 +53,7 @@ decodeRow j = do
     , role: mkRole role
     , host: hostM
     , executor: parseStartCommand (fromMaybe "" (str o "startCommand"))
+    , artifact: Nothing
     , reachability: reach
     , health: { liveness: NoProbe, readiness: NoProbe, startup: Nothing }
     , restart: { base: Always, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }

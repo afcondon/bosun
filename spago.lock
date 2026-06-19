@@ -118,6 +118,7 @@
             "argonaut-core",
             "arrays",
             "bosun-adapters",
+            "bosun-cli",
             "bosun-core",
             "console",
             "effect",

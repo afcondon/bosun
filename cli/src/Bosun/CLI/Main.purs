@@ -32,13 +32,14 @@ import Bosun.CLI.Observe (observeSnapshot)
 import Bosun.CLI.Audit (runAudit)
 import Bosun.CLI.Serve (runServe, runServeLive, runServePlan)
 import Bosun.CLI.Supervise (runSupervise)
+import Bosun.CLI.Docker (runDocker)
 import Bosun.Edge (Gate(..), Requirement(..))
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Reachability (hostPort, noNetwork)
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Plan (Reason(..), Snapshot, Status(..), plan)
 import Bosun.Reconcile (buildAliases, reconcile)
-import Bosun.Report (renderCommand, renderPlan, renderReport, renderScript)
+import Bosun.Report (renderArtifactDrift, renderCommand, renderPlan, renderReport, renderScript, renderTopologyDrift)
 import Bosun.Service (ServiceInstance, Source(..), mkRole)
 import Bosun.Validate (validate)
 import Bosun.Version (version)
@@ -90,6 +91,7 @@ main = do
     [ "down", "--dry-run", composePath, registryPath ] -> runDownDryRun targets composePath registryPath
     [ "down", composePath, registryPath ] -> runDown targets composePath registryPath
     [ "supervise", composePath, registryPath ] -> runSupervise supPort composePath registryPath
+    [ "docker", composePath, registryPath ] -> runDocker targets supPort composePath registryPath
     _ -> runDemo
 
 -- | Pull an optional `<name> <value>` flag out of the argument vector wherever
@@ -126,6 +128,16 @@ runCheck composePath registryPath = do
   log ("bosun " <> version <> " — check " <> composePath <> " + " <> registryPath)
   log ""
   log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
+  -- artifact drift is independent of validation (a valid deployment can still
+  -- run different content per substrate), so it's surfaced separately here.
+  when (not (A.null r.artifactDrift)) do
+    log ""
+    log (renderArtifactDrift r.artifactDrift)
+  -- the per-host edge check is likewise independent of validation: a valid
+  -- deployment can still drop the edge on one of its hosts (links 404 there).
+  when (not (A.null r.topologyDrift)) do
+    log ""
+    log (renderTopologyDrift r.topologyDrift)
 
 -- ── bosun plan <compose> <registry> [snapshot.json] ─────────────────────────
 -- |
@@ -387,6 +399,7 @@ inst =
   , role: mkRole "frontend"
   , host: Just (mkHost "mbp")
   , executor: Unmanaged "svc"
+  , artifact: Nothing
   , reachability: noNetwork
   , health: { liveness: NoProbe, readiness: NoProbe, startup: Nothing }
   , restart: { base: Never, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }

@@ -56,7 +56,7 @@ leaf name =
   , deps: []
   , routes: []
   , selectors: []
-  , launch: { executor: Unmanaged ("test:" <> name), localName: name }
+  , launch: { executor: Unmanaged ("test:" <> name), localName: name, artifact: Nothing }
   }
 
 -- a service publishing several host ports — unrepresentable under old `Exposure`

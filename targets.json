@@ -1,0 +1,14 @@
+{
+  "_comment": "Bosun's host-tag → enactment-profile table — the git-tracked source of truth for machine identity (see docs/PORT-MODEL.md + Bosun.Target). Services in registry/fleet.json reference a STABLE host tag (mbp/macmini/…); this table resolves the tag to the volatile reach info (ssh dest, address, workdir, PATH). Identity churn touches ONE row here, or is invisible (addresses are tailscale MagicDNS names, never raw IPs). This mirrors the built-in defaultTargets; `bosun apply` layers it via --targets. (serve currently uses the built-in defaults, which match; wiring serve to read this file is a small follow-up — as is parameterising serve's own host tag, which it presently hardcodes to mbp.)",
+  "mbp": {
+    "address": "localhost"
+  },
+  "macmini": {
+    "ssh": "andrew@andrews-mac-mini",
+    "address": "andrews-mac-mini",
+    "workdir": "/Users/andrew/psd3/polyglot-deploy",
+    "env": {
+      "PATH": "/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH"
+    }
+  }
+}

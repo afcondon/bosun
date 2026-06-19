@@ -9,6 +9,7 @@ module Test.Bosun.ApplySpec where
 import Prelude
 
 import Bosun.Apply (applyScript, downScript)
+import Bosun.Artifact (Artifact(..), mkRef)
 import Bosun.Atoms (AbsPath, EnvVar, Port, mkAbsPath, mkDomain, mkEnvVar, mkHost, mkPort, mkServiceId)
 import Bosun.Reachability (Address(..), BindScope(..), Reachability(..))
 import Bosun.Target (defaultTargets)
@@ -34,12 +35,14 @@ absPath s = unsafePartial (fromJust (mkAbsPath s))
 
 procLeaf :: String -> String -> String -> LooseService
 procLeaf name cwd cmd =
-  (leaf name) { launch = { executor: Process { cwd: absPath cwd, command: cmd, env: [] }, localName: name } }
+  (leaf name) { launch = { executor: Process { cwd: absPath cwd, command: cmd, env: [] }, localName: name, artifact: Nothing } }
 
 procLeafEnv :: String -> String -> String -> Array (Tuple EnvVar String) -> LooseService
 procLeafEnv name cwd cmd env =
-  (leaf name) { launch = { executor: Process { cwd: absPath cwd, command: cmd, env }, localName: name } }
+  (leaf name) { launch = { executor: Process { cwd: absPath cwd, command: cmd, env }, localName: name, artifact: Nothing } }
 
+-- a container from a PREBUILT image (build-once-ship): apply should pull, not
+-- build, this artifact.
 containerLeaf :: String -> String -> LooseService
 containerLeaf name host =
   (leaf name)
@@ -47,6 +50,20 @@ containerLeaf name host =
     , launch =
         { executor: Container (ContainerSpec { source: Left (ImageRef name), internalPort: Nothing, publish: Nothing })
         , localName: name
+        , artifact: Just (Image (mkRef name))
+        }
+    }
+
+-- a container built from a local SOURCE dir (the build-per-host anti-pattern):
+-- apply should run it but flag a build-once-ship advisory.
+sourceBuildLeaf :: String -> String -> String -> LooseService
+sourceBuildLeaf name host ctx =
+  (leaf name)
+    { host = Just (mkHost host)
+    , launch =
+        { executor: Container (ContainerSpec { source: Left (ImageRef name), internalPort: Nothing, publish: Nothing })
+        , localName: name
+        , artifact: Just (SourceBuild (mkRef ctx))
         }
     }
 
@@ -120,18 +137,29 @@ spec = describe "Bosun.Apply" do
   -- A macmini container resolves to the macmini Target: ssh login, the remote
   -- compose workdir (so the file is found) and Docker Desktop's PATH (so a
   -- non-interactive ssh shell finds `docker`) — all from the target table, no
-  -- host string in the planner.
-  it "macmini Container Start -> ssh-wrapped docker compose up, in the remote workdir with PATH" $
+  -- host string in the planner. Its artifact is a PREBUILT image, so the launch
+  -- is pull-not-build (docs/ARTIFACTS.md): `pull` then `up -d --no-build`.
+  it "macmini Container Start (prebuilt image) -> ssh-wrapped pull-not-build" $
     withScript (mkDeployment [ containerLeaf "web" "macmini" ]) (snap []) \lines ->
       lines `shouldEqual`
-        [ "ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && docker compose up -d web'" ]
+        [ "ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && docker compose pull web && docker compose up -d --no-build web'" ]
+
+  -- A SourceBuild artifact (built per host) still launches via `up -d` (we can't
+  -- do better without a shipped image), but the script carries a build-once-ship
+  -- advisory `# MANUAL:` note — the drift made visible at apply time.
+  it "macmini Container Start (source build) -> up -d PLUS a build-once-ship advisory" $
+    withScript (mkDeployment [ sourceBuildLeaf "web" "macmini" "../site/web" ]) (snap []) \lines ->
+      lines `shouldEqual`
+        [ "ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && docker compose up -d web'"
+        , "# MANUAL: build-once-ship: web builds from source (../site/web) on the host — ship a prebuilt image instead (docs/ARTIFACTS.md)"
+        ]
 
   -- A service with a Published address gets a SECOND command after its launch:
   -- `tailscale funnel` enabling its listening port on the public internet.
-  it "a Published macmini service ALSO emits a tailscale funnel publish step" $
+  it "a Published macmini service (prebuilt) ALSO emits a tailscale funnel publish step" $
     withScript (mkDeployment [ publishedLeaf "edge" "macmini" ]) (snap []) \lines ->
       lines `shouldEqual`
-        [ "ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && docker compose up -d edge'"
+        [ "ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && docker compose pull edge && docker compose up -d --no-build edge'"
         , "ssh andrew@andrews-mac-mini 'export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && tailscale funnel --bg 80'"
         ]
 

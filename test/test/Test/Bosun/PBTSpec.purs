@@ -166,7 +166,7 @@ serveSvc i = build <$> chooseInt 0 5
   proc h cmd = (leaf name)
     { host = Just (mkHost h)
     , reachability = hostPort (port_ port)
-    , launch = { executor: Process { cwd: absPath ("/srv/" <> name), command: cmd, env: [] }, localName: name }
+    , launch = { executor: Process { cwd: absPath ("/srv/" <> name), command: cmd, env: [] }, localName: name, artifact: Nothing }
     }
   build = case _ of
     0 -> proc "mbp" ("run -p " <> show port)                 -- ADMIT (local, port in cmd)
@@ -177,7 +177,7 @@ serveSvc i = build <$> chooseInt 0 5
     _ -> (leaf name)
       { host = Just (mkHost "mbp")
       , reachability = hostPort (port_ port)
-      , launch = { executor: Container (ContainerSpec { source: Left (ImageRef name), internalPort: Nothing, publish: Nothing }), localName: name }
+      , launch = { executor: Container (ContainerSpec { source: Left (ImageRef name), internalPort: Nothing, publish: Nothing }), localName: name, artifact: Nothing }
       } -- REJECT (not a Process)
 
 absPath :: String -> AbsPath

@@ -34,7 +34,7 @@ leaf name =
   , deps: []
   , routes: []
   , selectors: []
-  , launch: { executor: Unmanaged ("test:" <> name), localName: name }
+  , launch: { executor: Unmanaged ("test:" <> name), localName: name, artifact: Nothing }
   }
 
 -- a pure ordering dep (OnStarted needs no readiness, so it never trips a gate)

@@ -35,7 +35,7 @@ procSvc name port host cwd cmd =
   (leaf name)
     { host = Just (mkHost host)
     , reachability = hostPort (port_ port)
-    , launch = { executor: Process { cwd: absPath cwd, command: cmd, env: [] }, localName: name }
+    , launch = { executor: Process { cwd: absPath cwd, command: cmd, env: [] }, localName: name, artifact: Nothing }
     }
 
 spec :: Spec Unit
@@ -62,7 +62,7 @@ spec = describe "Bosun.Serve.servePlan" do
       svc = (leaf "x")
         { host = Just (mkHost "mbp")
         , reachability = hostPort (port_ 3060)
-        , launch = { executor: Unmanaged "flask run -p 3060", localName: "x" }
+        , launch = { executor: Unmanaged "flask run -p 3060", localName: "x", artifact: Nothing }
         }
       p = servePlan (mkDeployment [ svc ])
     p.routes `shouldEqual` []
@@ -83,7 +83,7 @@ spec = describe "Bosun.Serve.servePlan" do
     let
       svc = (leaf "w")
         { host = Just (mkHost "mbp")
-        , launch = { executor: Process { cwd: absPath "/srv/w", command: "run", env: [] }, localName: "w" }
+        , launch = { executor: Process { cwd: absPath "/srv/w", command: "run", env: [] }, localName: "w", artifact: Nothing }
         }
       p = servePlan (mkDeployment [ svc ])
     p.routes `shouldEqual` []
@@ -97,11 +97,23 @@ spec = describe "Bosun.Serve.servePlan" do
         , launch =
             { executor: Container (ContainerSpec { source: Left (ImageRef "c"), internalPort: Nothing, publish: Nothing })
             , localName: "c"
+            , artifact: Nothing
             }
         }
       p = servePlan (mkDeployment [ svc ])
     p.routes `shouldEqual` []
     map _.reason p.rejected `shouldEqual` [ NotAProcess ]
+
+  it "two services on the same public port: first wins, the later is a PortCollision reject (the single-binder guarantee SDI gave implicitly)" do
+    let
+      p = servePlan (mkDeployment
+            [ procSvc "alpha" 3050 "mbp" "/srv/a" "npx serve -p 3050"
+            , procSvc "bravo" 3050 "mbp" "/srv/b" "npx serve -p 3050"
+            ])
+    -- exactly one binds, exactly one is rejected for the collision — and the
+    -- partition still covers both services exactly once.
+    map _.publicPort p.routes `shouldEqual` [ 3050 ]
+    map _.reason p.rejected `shouldEqual` [ PortClaimed 3050 ]
 
   describe "serveDiff (SIGHUP hot-reload)" do
     let planOf = servePlan <<< mkDeployment

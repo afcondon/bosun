@@ -1,0 +1,27 @@
+# The SDI replacement, DOGFOODED: `bosun serve` (the typed lazy-spawn router)
+# run as a SUPERVISED PROCESS under `bosun supervise`. The point is portability,
+# not self-hosting vanity: Bosun's own process executor is the lowest-common-
+# denominator supervisor — it needs only spawn-a-process, is-the-pgid-alive, and
+# probe — primitives that exist on EVERY target PureScript compiles to. So the
+# SAME mechanism keeps the router alive on macOS now, Linux later, and a
+# hypothetical bare PureScript computing surface that has no launchd/systemd/
+# docker at all. Bosun brings its own supervisor; the host need not supply one.
+services:
+  bosun-serve:
+    x-bosun:
+      host: mbp
+      # liveness-only for v1 (the rig-daemon probe): the router process being
+      # alive is the signal, and supervise relaunches it on crash. serve DOES
+      # already expose a /state on :3997, so the principled upgrade — TCP-probe
+      # that for real readiness (and let the Chair see the router) — is available;
+      # probe:process is the deliberate v1 simplification.
+      probe: process
+      process:
+        cwd: /Users/afc/work/afc-work/ShapedSteer/bosun
+        # a PREBUILT artifact, not a build-and-run wrapper (run.js loads the
+        # compiled output). Reads the GIT-TRACKED registry/fleet.json — Bosun's
+        # source of truth for the dev-server fleet (see docs/PORT-MODEL.md). This
+        # drops the router's runtime dependency on Marginalia being up; Marginalia's
+        # /api/ports is now a non-authoritative mirror. The backend-go binary swaps
+        # in here later with zero model change.
+        command: node cli/run.js serve /Users/afc/work/afc-work/ShapedSteer/bosun/registry/fleet.json

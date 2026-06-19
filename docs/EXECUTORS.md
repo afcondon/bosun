@@ -77,7 +77,8 @@ LaunchAgents on the MacMini; today Bosun can't see them.)
 - **An `Executor` interface** = `observe` + `control` (+ a `readiness` capability
   flag). The seam. Each substrate is a small adapter behind it.
 - **Adapters:** `process` (✓, with `bosun-agent` as its readiness arm) · `docker`
-  (next) · `beam` (`BEAM-OBSERVER.md`) · `launchd` · `systemd`. Each adapter is
+  (✓ — `Bosun.CLI.Docker`, readiness from the container healthcheck) · `beam`
+  (`BEAM-OBSERVER.md`) · `launchd` · `systemd`. Each adapter is
   thin; where one has decision logic, conformance-pin it (the node≡Go discipline).
 - **A deployment may be heterogeneous.** The real polyglot deploy already spans
   substrates: docker (edge/website, macmini) + process (showcases, mbp) + launchd
@@ -90,14 +91,18 @@ LaunchAgents on the MacMini; today Bosun can't see them.)
 
 ## Sequencing
 
-1. **Docker-on-Node adapter** — the first mode-2 executor, behind the existing
-   contract. Lights up the MacMini group in the Chair with zero Chair change.
-   Proves the seam carries a foreign supervisor. (Engine handoff below.)
-2. **Extract the `Executor` interface** from `{process, docker}` — once two real
-   adapters exist, the shared shape is visible and safe to name.
+1. ✅ **Docker-on-Node adapter** — the first mode-2 executor, behind the existing
+   contract (`bosun docker`, `Bosun.CLI.Docker` + `Bosun.Adapters.DockerPs`).
+   Lights up the MacMini group in the Chair with zero Chair change. Proven live
+   read-only against the mini (2026-06-18). The seam carries a foreign supervisor.
+2. ✅ **Extracted the interface** from `{process, docker}` — the shared loop +
+   HTTP shim is `Bosun.CLI.Resident`; its `Resident` record is the named seam
+   (called `Resident`, not `Executor`, to avoid clashing with the per-service IR
+   tag `Bosun.Executor`). Both `Supervise` and `Docker` fill it and call
+   `runResident`.
 3. **launchd** (Marginalia/whisper already run this way — immediate real value),
    then **beam** (purerl-tidal voices — `BEAM-OBSERVER.md`), then **systemd**
-   (when a Linux host enters the picture).
+   (when a Linux host enters the picture). Each slots in by filling a `Resident`.
 
 ## Related
 
