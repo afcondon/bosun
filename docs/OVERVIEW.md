@@ -118,8 +118,10 @@ run it.
   runtime.
 - **The Chair** — built; already drives both native processes (on the laptop) and
   Docker over ssh (on the Mac Mini) through the one `/state`+`/control` interface.
-- **Quartermaster** — newest. `verify` and the build *plan* work today; remote
-  (over-ssh) verify and actually running the build are the next steps.
+- **Quartermaster** — newest. `verify` (local and remote, over ssh) and the build
+  *plan* work today, and — like Bosun — it also compiles to a single native binary
+  that needs no Node at runtime (byte-identical to the node build). Actually
+  running the build (a live push) is the next step.
 
 The split above is the whole design as it's meant to fit together.
 
