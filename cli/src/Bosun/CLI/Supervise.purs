@@ -18,7 +18,7 @@
 -- | to restart by marking it `Failed` in the observed snapshot and letting the
 -- | pure planner do the rest (incl. D-E5 coupled co-restart) — no ref-minting,
 -- | no special path.
-module Bosun.CLI.Supervise (runSupervise) where
+module Bosun.CLI.Supervise (runSupervise, superviseResident) where
 
 import Prelude
 
@@ -33,9 +33,9 @@ import Bosun.CLI.Resident (Resident, nowMs, runResident)
 import Bosun.Plan (Change(..), Plan, Status(..), plan, planSteps)
 import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderCommand, renderReport)
-import Bosun.Service (unServiceRef)
+import Bosun.Service (Deployment, ValidatedDeployment, unServiceRef)
 import Bosun.Supervisor (Launch, SupConfig, SupState, SvcState, defaultConfig, emptySupState, recordLaunches, refine)
-import Bosun.Target (defaultTargets)
+import Bosun.Target (TargetMap, defaultTargets)
 import Bosun.Validate (validate)
 import Bosun.Version (version)
 import Data.Array as A
@@ -74,92 +74,103 @@ runSupervise mPort composePath registryPath = do
       log "cannot supervise: the deployment does not validate —"
       log ""
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
-    Right vd -> do
-      desiredUp <- Ref.new true
-      -- The threaded `recorded` state (D-7): launch memory across ticks. This is
-      -- what makes `supervise` more than a stateless plan-loop — without it a
-      -- slow-boot service re-Starts every tick (the relaunch storm).
-      supRef <- Ref.new emptySupState
-      let
-        cfg :: SupConfig
-        cfg = defaultConfig
+    Right vd -> superviseResident defaultTargets mPort dep vd >>= runResident
 
-        runOne sc = case sc.command of
-          Manual note -> log ("  · skip (manual): " <> note)
-          command -> do
-            let line = renderCommand command
-            res <- execLine line
-            log ("  " <> (if res.ok then "✓" else "✗") <> " " <> line)
+-- | Build the supervise `Resident` — Refs for desired-state and launch memory,
+-- | the observe→refine→plan→enact `tick`, the `/state` renderer, the `/control`
+-- | handler — and run the initial bring-up, returning the record for
+-- | `runResident`. Extracted from `runSupervise` so the Go-column conformance
+-- | harness (`Bosun.Conformance.SuperviseMain`) drives the IDENTICAL keep-alive
+-- | logic under backend-go that the node CLI runs — the point of the Menagerie's
+-- | dual-runtime parity test (mirrors `Bosun.CLI.Docker.dockerResident`). The
+-- | `targets` are threaded (not hardcoded) so a remote-host supervise resolves
+-- | the same way `apply` does.
+superviseResident :: TargetMap -> Maybe Int -> Deployment -> ValidatedDeployment -> Effect Resident
+superviseResident targets mPort dep vd = do
+  desiredUp <- Ref.new true
+  -- The threaded `recorded` state (D-7): launch memory across ticks. This is
+  -- what makes `supervise` more than a stateless plan-loop — without it a
+  -- slow-boot service re-Starts every tick (the relaunch storm).
+  supRef <- Ref.new emptySupState
+  let
+    cfg :: SupConfig
+    cfg = defaultConfig
 
-        enact label script =
-          when (not (A.null script)) do
-            log ("supervise: " <> label)
-            traverse_ runOne (A.sortWith _.stage script)
+    runOne sc = case sc.command of
+      Manual note -> log ("  · skip (manual): " <> note)
+      command -> do
+        let line = renderCommand command
+        res <- execLine line
+        log ("  " <> (if res.ok then "✓" else "✗") <> " " <> line)
 
-        -- Which services this plan launches, and whether each is a crash
-        -- relaunch (Restart) or a first bring-up (Start) — so `recordLaunches`
-        -- bumps the badge + arms backoff only for the former.
-        launchesOf :: Plan -> Array Launch
-        launchesOf p = A.mapMaybe toLaunch (planSteps p)
-          where
-          toLaunch step = case step.change of
-            Start ref -> Just { id: unServiceRef ref, isRestart: false }
-            Restart ref _ -> Just { id: unServiceRef ref, isRestart: true }
-            _ -> Nothing
+    enact label script =
+      when (not (A.null script)) do
+        log ("supervise: " <> label)
+        traverse_ runOne (A.sortWith _.stage script)
 
-        -- One reconcile pass against an already-refined observed snapshot:
-        -- plan → enact → stamp launch memory.
-        enactPlan label now observed = do
-          let p = plan vd { desired: vd, recorded: Nothing, observed }
-          enact label (applyScript defaultTargets vd p)
-          Ref.modify_ (recordLaunches cfg now (launchesOf p)) supRef
+    -- Which services this plan launches, and whether each is a crash
+    -- relaunch (Restart) or a first bring-up (Start) — so `recordLaunches`
+    -- bumps the badge + arms backoff only for the former.
+    launchesOf :: Plan -> Array Launch
+    launchesOf p = A.mapMaybe toLaunch (planSteps p)
+      where
+      toLaunch step = case step.change of
+        Start ref -> Just { id: unServiceRef ref, isRestart: false }
+        Restart ref _ -> Just { id: unServiceRef ref, isRestart: true }
+        _ -> Nothing
 
-        bringUp = do
-          now <- nowMs
-          enactPlan "bring-up" now Map.empty
+    -- One reconcile pass against an already-refined observed snapshot:
+    -- plan → enact → stamp launch memory.
+    enactPlan label now observed = do
+      let p = plan vd { desired: vd, recorded: Nothing, observed }
+      enact label (applyScript targets vd p)
+      Ref.modify_ (recordLaunches cfg now (launchesOf p)) supRef
 
-        bringDown = enact "teardown" (downScript defaultTargets vd)
+    bringUp = do
+      now <- nowMs
+      enactPlan "bring-up" now Map.empty
 
-        tick = do
-          up <- Ref.read desiredUp
-          obs <- observeSupSnapshot dep
-          now <- nowMs
-          prev <- Ref.read supRef
-          let refined = refine cfg now prev obs
-          Ref.write refined.state supRef
-          when up (enactPlan "reconcile (keep-alive)" now refined.snapshot)
+    bringDown = enact "teardown" (downScript targets vd)
 
-        stateBody = do
-          st <- Ref.read supRef
-          up <- Ref.read desiredUp
-          pure (snapshotBody up st)
+    tick = do
+      up <- Ref.read desiredUp
+      obs <- observeSupSnapshot dep
+      now <- nowMs
+      prev <- Ref.read supRef
+      let refined = refine cfg now prev obs
+      Ref.write refined.state supRef
+      when up (enactPlan "reconcile (keep-alive)" now refined.snapshot)
 
-        control = mkEffectFn2 \verb arg -> case verb of
-          "up" -> do
-            Ref.write true desiredUp
-            bringUp
-            pure "up: desired=up, bringing up"
-          "down" -> do
-            Ref.write false desiredUp
-            bringDown
-            -- forget launch memory so stopped services read Down, not Failed
-            Ref.write emptySupState supRef
-            pure "down: desired=down, auto-restart suspended"
-          "restart" -> do
-            now <- nowMs
-            obs <- observeSupSnapshot dep
-            prev <- Ref.read supRef
-            let
-              refined = refine cfg now prev obs
-              forced = Map.insert (mkServiceId arg) Failed refined.snapshot
-            Ref.write refined.state supRef
-            enactPlan ("restart " <> arg) now forced
-            pure ("restart: " <> arg)
-          _ -> pure ("unknown control verb: " <> verb)
-      log "supervise: initial bring-up…"
-      bringUp
-      runResident
-        ({ statusPort: fromMaybe defaultStatusPort mPort, intervalMs, tick, stateBody, control } :: Resident)
+    stateBody = do
+      st <- Ref.read supRef
+      up <- Ref.read desiredUp
+      pure (snapshotBody up st)
+
+    control = mkEffectFn2 \verb arg -> case verb of
+      "up" -> do
+        Ref.write true desiredUp
+        bringUp
+        pure "up: desired=up, bringing up"
+      "down" -> do
+        Ref.write false desiredUp
+        bringDown
+        -- forget launch memory so stopped services read Down, not Failed
+        Ref.write emptySupState supRef
+        pure "down: desired=down, auto-restart suspended"
+      "restart" -> do
+        now <- nowMs
+        obs <- observeSupSnapshot dep
+        prev <- Ref.read supRef
+        let
+          refined = refine cfg now prev obs
+          forced = Map.insert (mkServiceId arg) Failed refined.snapshot
+        Ref.write refined.state supRef
+        enactPlan ("restart " <> arg) now forced
+        pure ("restart: " <> arg)
+      _ -> pure ("unknown control verb: " <> verb)
+  log "supervise: initial bring-up…"
+  bringUp
+  pure ({ statusPort: fromMaybe defaultStatusPort mPort, intervalMs, tick, stateBody, control } :: Resident)
 
 -- | `/state` JSON. The `services` map (id → status string) is UNCHANGED — the
 -- | Chair's existing decoder keeps working. Everything else is ADDITIVE (ADR
