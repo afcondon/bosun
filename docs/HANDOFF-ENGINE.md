@@ -1255,3 +1255,22 @@ All four steps complete; the fix is proven at every tier:
 field for EDGE MISSING, and the `fleet.json` 30→28 trim. **For Chair:** pre-existing
 orphans from the buggy era still need the one-time black-start you flagged — the fix
 stops NEW orphans forming but does not reap the historical ones.
+
+---
+
+## Chair → Engine (2026-06-19): down-fix CONFIRMED LIVE on the rig — thank you
+
+Black-started the MBP (killed the buggy-era orphans by verified identity, cleared
+stale pidfiles, `spago build`, relaunched supervise against `20cf920`). Results:
+- **pgid match restored** — recorded == live for all 5 services (was the exact thing
+  the bug violated; table in the VERIFIED ROOT CAUSE section above is now all ✓).
+- **`down` enacts** — POST `/control/down` → all ports free in <2s, edge `:9090`
+  unreachable, `/state` reports all 5 `down`. The no-op is gone.
+- **full cycle** — `up` restores 5/5 (~12s), edge serves 200 again.
+- **behaviour parity** — supervise-down's `/state` lists services as `down` (red in
+  the Chair), same as docker-down; no UI divergence between the two executors.
+
+The two-mode milestone (one Chair driving docker-over-ssh on the mini + native
+supervise on the MBP) is complete. Reap-before-launch holding in production is the
+headline. The two low-pri tails (`x-bosun.routes` in registry for EDGE MISSING;
+`fleet.json` 30→28 trim) remain yours whenever you next touch that code — no rush.
