@@ -121,8 +121,17 @@ defaultTargets = Map.fromFoldable
       , address: "andrews-mac-mini"
       , workdir: mkAbsPath "/Users/andrew/psd3/polyglot-deploy"
       -- PATH covers both `docker` (Docker Desktop) and `tailscale` (the .app's
-      -- CLI is not symlinked onto a standard bin dir on this mini).
-      , envPrefix: [ Tuple "PATH" "/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH" ]
+      -- CLI is not symlinked onto a standard bin dir on this mini). DOCKER_CONFIG
+      -- points at a creds-less config so a non-interactive ssh build (e.g.
+      -- `quartermaster build`'s `docker build`, which pulls a public base image
+      -- from docker.io) doesn't invoke the `desktop` credential helper — that
+      -- helper needs the macOS keychain, which is locked/unreachable over ssh.
+      -- Harmless for Bosun: its pulls are from the local insecure registry, which
+      -- needs no credentials either way.
+      , envPrefix:
+          [ Tuple "PATH" "/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH"
+          , Tuple "DOCKER_CONFIG" "/Users/andrew/.docker-nocreds"
+          ]
       -- the mini is macOS + Docker Desktop today (defaultPlatform); a Linux
       -- box would override `os` (and possibly `engine`) via targets.json.
       , platform: defaultPlatform

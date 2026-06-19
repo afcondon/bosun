@@ -146,7 +146,7 @@ spec = describe "Bosun.Apply" do
   it "macmini Container Start (prebuilt image) -> ssh-wrapped pull-not-build" $
     withScript (mkDeployment [ containerLeaf "web" "macmini" ]) (snap []) \lines ->
       lines `shouldEqual`
-        [ "ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && docker compose pull web && docker compose up -d --no-build web'" ]
+        [ "ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && export DOCKER_CONFIG=/Users/andrew/.docker-nocreds && docker compose pull web && docker compose up -d --no-build web'" ]
 
   -- A SourceBuild artifact (built per host) still launches via `up -d` (we can't
   -- do better without a shipped image), but the script carries a build-once-ship
@@ -154,7 +154,7 @@ spec = describe "Bosun.Apply" do
   it "macmini Container Start (source build) -> up -d PLUS a build-once-ship advisory" $
     withScript (mkDeployment [ sourceBuildLeaf "web" "macmini" "../site/web" ]) (snap []) \lines ->
       lines `shouldEqual`
-        [ "ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && docker compose up -d web'"
+        [ "ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && export DOCKER_CONFIG=/Users/andrew/.docker-nocreds && docker compose up -d web'"
         , "# MANUAL: build-once-ship: web builds from source (../site/web) on the host — run `quartermaster build` to ship a prebuilt image instead (docs/PROVISIONING-SEAM.md)"
         ]
 
@@ -163,8 +163,8 @@ spec = describe "Bosun.Apply" do
   it "a Published macmini service (prebuilt) ALSO emits a tailscale funnel publish step" $
     withScript (mkDeployment [ publishedLeaf "edge" "macmini" ]) (snap []) \lines ->
       lines `shouldEqual`
-        [ "ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && docker compose pull edge && docker compose up -d --no-build edge'"
-        , "ssh andrew@andrews-mac-mini 'export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && tailscale funnel --bg 80'"
+        [ "ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && export DOCKER_CONFIG=/Users/andrew/.docker-nocreds && docker compose pull edge && docker compose up -d --no-build edge'"
+        , "ssh andrew@andrews-mac-mini 'export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && export DOCKER_CONFIG=/Users/andrew/.docker-nocreds && tailscale funnel --bg 80'"
         ]
 
   it "a running service contributes no command (NoOp omitted)" $
