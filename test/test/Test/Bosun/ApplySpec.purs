@@ -155,7 +155,7 @@ spec = describe "Bosun.Apply" do
     withScript (mkDeployment [ sourceBuildLeaf "web" "macmini" "../site/web" ]) (snap []) \lines ->
       lines `shouldEqual`
         [ "ssh andrew@andrews-mac-mini 'cd /Users/andrew/psd3/polyglot-deploy && export PATH=/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH && docker compose up -d web'"
-        , "# MANUAL: build-once-ship: web builds from source (../site/web) on the host — ship a prebuilt image instead (docs/ARTIFACTS.md)"
+        , "# MANUAL: build-once-ship: web builds from source (../site/web) on the host — run `quartermaster build` to ship a prebuilt image instead (docs/PROVISIONING-SEAM.md)"
         ]
 
   -- A service with a Published address gets a SECOND command after its launch:

@@ -213,7 +213,7 @@ advisoryCommands :: Change -> Service -> Array Command
 advisoryCommands change svc = case change, svc.launch.executor, svc.launch.artifact of
   Start _, Container _, Just (SourceBuild (ArtifactRef r)) ->
     [ Manual ("build-once-ship: " <> unServiceId svc.id <> " builds from source ("
-        <> r.source <> ") on the host — ship a prebuilt image instead (docs/ARTIFACTS.md)") ]
+        <> r.source <> ") on the host — run `quartermaster build` to ship a prebuilt image instead (docs/PROVISIONING-SEAM.md)") ]
   _, _, _ -> []
 
 isPublished :: Address -> Boolean
