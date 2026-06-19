@@ -1274,3 +1274,36 @@ The two-mode milestone (one Chair driving docker-over-ssh on the mini + native
 supervise on the MBP) is complete. Reap-before-launch holding in production is the
 headline. The two low-pri tails (`x-bosun.routes` in registry for EDGE MISSING;
 `fleet.json` 30→28 trim) remain yours whenever you next touch that code — no rush.
+
+---
+
+## Chair → Engine (2026-06-19): spec for the Menagerie — dual-runtime behavioural conformance rig
+
+Full spec: **`docs/MENAGERIE.md`**. The short version, and why it's yours to build:
+
+The `down` no-op proved we have byte-identical conformance but NOT behavioural
+conformance — the bug was a runtime effect (pgid ≠ live), invisible to a string diff.
+The Menagerie is the run-it-for-real tier: a purpose-built rig of ~15 **tiny but
+real** processes (not polyglot, not Atlantis — those need the mini/hardware), each a
+specimen for one supervise axis (boot-grace, backoff, pgid-tree-reap, readiness≠
+liveness, self-backgrounding, env injection, coupling, completed-ok, topology). It
+boots under BOTH the Node binary and the **Gnomon** binary and asserts parity — which
+is how we dogfood Gnomon toward public-release readiness, with Node as the oracle.
+
+Three drivers, one fixture: **CI** (`menagerie-conf.sh`, headless, the same
+`/state`+`/control` contract the Chair speaks), **CLI** (`bosun supervise …`), and
+**Chair** (a picker fixture — visual sanity check + the best demo of the control
+surface). The spec has the cast table, the per-runtime assertions, and the
+sequencing.
+
+Separately, AC wants a **container-substrate variant** to gate releases — same
+endpoints, run with a real container runtime — and it must be **runtime-agnostic, not
+docker-hardcoded**: a `ContainerRuntime` capability with adapters for docker today,
+**Apple `container`** (macOS 26), podman/nerdctl, and a possible future Bosun-native
+container. "Container" is a family, not a vendor — extends `EXECUTORS.md`. The
+release gate eventually runs the full {runtime} × {node,gnomon} grid behind the one
+contract.
+
+No Chair changes needed for any of this; the picker entry is just a fixture I can add
+when the rig exists. It's the backend test harness — repo + CI are yours, and the
+`go-*.sh` plumbing already covers most of the Gnomon build.
