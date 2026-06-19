@@ -85,6 +85,12 @@ type Project =
   , supervise :: Maybe Int
   }
 
+-- a control op in flight: PGroup = ▲up all / ▼down all (affects every
+-- controllable node); POne = a per-node ⟳ restart (one serviceId). Drives the
+-- amber "working" wash + disables the group buttons until the (synchronous)
+-- control POST returns. Set/cleared in `control`.
+data Pending = PGroup | POne String
+
 type State =
   { route :: Route
   , currentProject :: Maybe Project
@@ -95,6 +101,7 @@ type State =
   , cockErr :: Maybe String
   , ticks :: Int
   , busy :: Boolean
+  , controlPending :: Maybe Pending  -- in-flight control op → amber wash + disabled group buttons
   -- ingestion (pillar 1)
   , composePath :: String
   , registryPath :: String
@@ -174,7 +181,7 @@ component =
   H.mkComponent
     { initialState: \_ ->
         { route: Projects, currentProject: Nothing
-        , cockpit: Nothing, superv: Nothing, cockErr: Nothing, ticks: 0, busy: false
+        , cockpit: Nothing, superv: Nothing, cockErr: Nothing, ticks: 0, busy: false, controlPending: Nothing
         , composePath: "", registryPath: "", analysis: Nothing, anaErr: Nothing, anaLoading: false
         , overrides: [], mergeName: "", mergeCanon: ""
         , graphFocus: Nothing, graphSelect: Nothing, groupMode: ByDeps
@@ -224,14 +231,16 @@ handleAction = case _ of
     refresh
     void (H.fork pollLoop)
   Refresh -> refresh
-  Reload -> control "/control/reload"
-  Spawn port -> control ("/control/spawn?port=" <> show port)
-  Stop port -> control ("/control/stop?port=" <> show port)
+  Reload -> control Nothing "/control/reload"
+  Spawn port -> control Nothing ("/control/spawn?port=" <> show port)
+  Stop port -> control Nothing ("/control/stop?port=" <> show port)
   -- supervise control: whole-group up/down (desired-state, stop HOLDS) + atomic
   -- per-element restart. All POST to the current project's supervise daemon.
-  GroupUp -> control "/control/up"
-  GroupDown -> control "/control/down"
-  Restart svc -> control ("/control/restart?service=" <> svc)
+  -- The Pending tag drives the "working" amber + button-disable until the
+  -- (synchronous) control POST returns.
+  GroupUp -> control (Just PGroup) "/control/up"
+  GroupDown -> control (Just PGroup) "/control/down"
+  Restart svc -> control (Just (POne svc)) ("/control/restart?service=" <> svc)
   -- navigation is hash-first: set the hash and let `matchesWith` drive the view,
   -- so the URL and the rendered view are always the same fact.
   NavTo route -> H.liftEffect (setHash (print routeCodec route))
@@ -285,12 +294,16 @@ controlBase s = case s.currentProject >>= _.supervise of
   Just port -> "http://localhost:" <> show port
   Nothing -> serveBase
 
-control :: forall o. String -> H.HalogenM State Action () o Aff Unit
-control path = do
+-- `pend` marks the in-flight op so the graph can wash the affected nodes amber
+-- and disable the group buttons. The control POST is SYNCHRONOUS (the resident
+-- doesn't reply until its ssh `docker compose …` finishes), so clearing it on
+-- the response is an exact "done" signal — no timer/guess needed.
+control :: forall o. Maybe Pending -> String -> H.HalogenM State Action () o Aff Unit
+control pend path = do
   base <- H.gets controlBase
-  H.modify_ _ { busy = true }
+  H.modify_ _ { busy = true, controlPending = pend }
   _ <- H.liftAff (AX.post RF.ignore (base <> path) Nothing)
-  H.modify_ _ { busy = false }
+  H.modify_ _ { busy = false, controlPending = Nothing }
   refresh
 
 pollLoop :: forall o. H.HalogenM State Action () o Aff Unit
@@ -523,7 +536,16 @@ appBody s = case s.route of
         ctrl = maybe Map.empty (\sv -> superviseCtrl sv a) s.superv
         superv = maybe Map.empty (\sv -> superviseBadge sv a) s.superv
         desired = map (\sv -> sv.desired == "up") s.superv
-        g = graphView handlers s.armed s.groupMode s.channels s.livePos s.graphFocus s.graphSelect live ctrl superv desired a
+        -- nodes with a control op in flight (amber "working" wash): PGroup washes
+        -- every controllable node; POne washes just the node being restarted.
+        pendingIds = case s.controlPending of
+          Nothing -> Set.empty
+          Just PGroup -> Set.fromFoldable (Map.keys ctrl)
+          Just (POne svc) -> Set.fromFoldable (Map.keys (Map.filter (_ == svc) ctrl))
+        controlBusy = case s.controlPending of
+          Nothing -> false
+          _ -> true
+        g = graphView handlers s.armed s.groupMode s.channels s.livePos s.graphFocus s.graphSelect live ctrl superv desired pendingIds controlBusy a
       in
         -- main on top, the structural rack docked as a horizontal strip along the
         -- bottom (one row, scrolls sideways); the runtime overlay floats fixed in

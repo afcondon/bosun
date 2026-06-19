@@ -314,6 +314,12 @@ liveRedirectColor = SA.RGB 92 116 196
 rebootColor :: SA.Color
 rebootColor = SA.RGB 52 104 196
 
+-- "working" amber: a control op is in flight for this node (a slow ssh
+-- `docker compose stop/up`). Distinct from the blast/down reds — it reads
+-- "transitioning, please wait", and the node settles to red/green when done.
+pendingColor :: SA.Color
+pendingColor = SA.RGB 232 152 30
+
 -- a PUNCHIER version of the depth ramp, for the dot-only small multiple: the
 -- main-card ramp (layerRamp) is deliberately pale and vanishes shrunk to a dot
 -- on near-white, reading as "empty" and colliding with the genuinely-hollow
@@ -518,8 +524,11 @@ type Handlers act =
 -- active supervisor (presence ⇒ "will self-heal" → draw the ↻ glyph); `desired`
 -- is the group's supervise desired-state (`Just false` = held down → auto-restart
 -- suspended, so the ↻ is dimmed).
-graphView :: forall act m. Handlers act -> Boolean -> GroupMode -> Set Channel -> Map String Point -> Maybe String -> Maybe String -> Map String NodeLive -> Map String String -> Map String Int -> Maybe Boolean -> AnalyzeResult -> { main :: H.ComponentHTML act () m, rack :: H.ComponentHTML act () m, overlay :: H.ComponentHTML act () m }
-graphView h armed mode channels livePos focus select live ctrl superv desired a =
+-- `pendingSet` = nodes with a control op in flight (washed amber "working");
+-- `controlBusy` = a control op is in flight (disables the ▲▼ group buttons so a
+-- slow docker teardown can't be button-mashed into a queue of duplicate commands).
+graphView :: forall act m. Handlers act -> Boolean -> GroupMode -> Set Channel -> Map String Point -> Maybe String -> Maybe String -> Map String NodeLive -> Map String String -> Map String Int -> Maybe Boolean -> Set String -> Boolean -> AnalyzeResult -> { main :: H.ComponentHTML act () m, rack :: H.ComponentHTML act () m, overlay :: H.ComponentHTML act () m }
+graphView h armed mode channels livePos focus select live ctrl superv desired pendingSet controlBusy a =
   let
     chOn ch = Set.member ch channels
     insts = a.instances
@@ -580,10 +589,12 @@ graphView h armed mode channels livePos focus select live ctrl superv desired a 
     -- gates by ChLive (so liveOf reads Unknown when off); the rack uses the raw
     -- `live` map so its thumbnail always previews.
     -- runtime status from serve /state ALWAYS reflects reality (no channel gate).
-    -- The on-node DOT is suppressed when armed (the control button colour already
-    -- encodes up/down), but the blast-from-down and the meta counts stay live.
+    -- The on-node DOT stays LIVE even when armed — you want per-item up/down
+    -- feedback *while* operating the control panel (watch a node go red the
+    -- instant you stop it). The control button and the corner status dot are
+    -- separate elements, so they coexist: button = the affordance, dot = the truth.
     liveStatusOf id = fromMaybe LiveUnknown (Map.lookup id live)
-    dotLiveOf id = if armed then LiveUnknown else liveStatusOf id
+    dotLiveOf id = liveStatusOf id
     downIds = Array.filter (\n -> liveStatusOf n.id == LiveDown) nodes
     liveBlast = foldl (\acc n -> Set.union acc (blastRadius edges n.id)) Set.empty downIds
     hasLive = Array.any (\n -> liveStatusOf n.id /= LiveUnknown) nodes
@@ -604,6 +615,7 @@ graphView h armed mode channels livePos focus select live ctrl superv desired a 
       -- (it will self-heal). `count` = restarts so far; `held` dims it when the
       -- group is stopped (desired=down ⇒ auto-restart suspended).
       , autoRestart: map (\c -> { count: c, held: desired == Just false }) (Map.lookup n.id superv)
+      , pending: Set.member n.id pendingSet
       }
     -- the SVG layers, each gated by its channel. The ByDeps axis is BASE (it
     -- names the boot-order direction, not placement). Placement bands, traffic
@@ -654,7 +666,7 @@ graphView h armed mode channels livePos focus select live ctrl superv desired a 
               ]
           ]
     , rack: channelRack h.toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeSetAll
-    , overlay: runtimeOverlay h armed desired maxX maxY nodes live
+    , overlay: runtimeOverlay h armed desired controlBusy maxX maxY nodes live
     }
 
 -- append the dim marker class when brushing has pushed this element to the back
@@ -892,6 +904,7 @@ type NodeFlags =
   , liveWillFall :: Boolean -- transitively depends on a node serve reports DOWN
   , control :: Maybe String -- Just serviceId ⇒ armed + supervised → a ⟳ restart button
   , autoRestart :: Maybe { count :: Int, held :: Boolean } -- Just ⇒ supervised, draw ↻
+  , pending :: Boolean      -- a control op is in flight for this node → wash it amber
   }
 
 nodeMark :: forall act m. Handlers act -> Set Channel -> NodeFlags -> Node -> H.ComponentHTML act () m
@@ -974,8 +987,8 @@ nodeMark h channels flags n =
       in
         [ SE.circle
             [ SA.cx dx, SA.cy dy, SA.r 5.0
-            , SA.fill (liveColor st), SA.stroke paper, SA.strokeWidth 1.6
-            , SA.class_ (H.ClassName (if st == LiveDown then "live-dot down" else "live-dot"))
+            , SA.fill (if flags.pending then pendingColor else liveColor st), SA.stroke paper, SA.strokeWidth 1.6
+            , SA.class_ (H.ClassName (if flags.pending then "live-dot working" else if st == LiveDown then "live-dot down" else "live-dot"))
             ]
         ]
 
@@ -1248,9 +1261,9 @@ channelRack toggleChan channels maxX maxY nodes edges routes cutVertsAll bridgeS
 -- arming. Spatially congruent with the main view (same viewBox).
 runtimeOverlay
   :: forall act m
-   . Handlers act -> Boolean -> Maybe Boolean -> Number -> Number -> Array Node -> Map String NodeLive
+   . Handlers act -> Boolean -> Maybe Boolean -> Boolean -> Number -> Number -> Array Node -> Map String NodeLive
   -> H.ComponentHTML act () m
-runtimeOverlay h armed desired maxX maxY nodes live =
+runtimeOverlay h armed desired busy maxX maxY nodes live =
   if armable && not armed
     -- disarmed + controllable: the whole panel is the arm toggle (Andrew's
     -- "no separate affordance").
@@ -1261,6 +1274,7 @@ runtimeOverlay h armed desired maxX maxY nodes live =
   armable = isJust desired
   heldDown = desired == Just false
   title
+    | busy = "⟳ working…"
     | armed = "⚠ ARMED · control"
     | heldDown = "runtime · held down"
     | otherwise = "runtime"
@@ -1280,8 +1294,10 @@ runtimeOverlay h armed desired maxX maxY nodes live =
   footer
     | armed =
         [ HH.div [ cls "ro-controls" ]
-            [ HH.button [ cls "ro-btn up", HE.onClick \_ -> h.groupUp ] [ HH.text "▲ up all" ]
-            , HH.button [ cls "ro-btn down", HE.onClick \_ -> h.groupDown ] [ HH.text "▼ down all" ]
+            -- disabled while a control op is in flight — the docker teardown is
+            -- slow (ssh × N containers) and re-clicking would queue duplicates.
+            [ HH.button [ cls "ro-btn up", HE.onClick \_ -> h.groupUp, HP.disabled busy ] [ HH.text "▲ up all" ]
+            , HH.button [ cls "ro-btn down", HE.onClick \_ -> h.groupDown, HP.disabled busy ] [ HH.text "▼ down all" ]
             ]
         , HH.button [ cls "ro-disarm", HE.onClick \_ -> h.arm ] [ HH.text "click to disarm" ]
         ]
@@ -1296,7 +1312,11 @@ runtimeOverlay h armed desired maxX maxY nodes live =
     let
       st = statusOf n
       filled = st /= LiveUnknown
-      col = if armed then neutral else liveColor st
+      -- Keep the overlay minimap a LIVE status readout even when armed — it's the
+      -- panel right beside the ▲▼ controls, so you can watch the group flip
+      -- red/green as you raise/lower it. (The big nodes show control buttons when
+      -- armed; this minimap is where status stays visible during control.)
+      col = liveColor st
     in
       SE.circle
         [ SA.cx (n.x + nodeW / 2.0), SA.cy (n.y + nodeH / 2.0), SA.r rData
