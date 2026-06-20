@@ -105,14 +105,14 @@ spec = describe "Bosun.Apply" do
   -- pidfile and `|| true` no-ops.
   it "Process Start -> local, reap-then-daemonize, recording its process group (not ssh-wrapped)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; sleep 0.3; ( nohup env run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; i=0; while kill -0 -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; ( nohup env run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
 
   -- A startCommand may carry a leading env-var assignment (e.g. the julia atlas:
   -- `ATLAS_PORT=3210 julia …`). Bare `nohup VAR=val prog` makes nohup exec the
   -- string `VAR=val` — the `env` prefix lets the shell-style assignment through.
   it "Process Start with an env-var prefix is launched via `env` (not eaten by nohup)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "ATLAS_PORT=3210 run-a" ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; sleep 0.3; ( nohup env ATLAS_PORT=3210 run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; i=0; while kill -0 -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; ( nohup env ATLAS_PORT=3210 run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
 
   -- The typed `x-bosun.process.env` (e.g. purerl-tidal's rebar3
   -- `ERL_LIBS=_build/default/lib`) renders as a leading `KEY=VAL ` assignment
@@ -120,7 +120,7 @@ spec = describe "Bosun.Apply" do
   -- inline-prefix path above, but inspectable instead of buried in the command.
   it "Process Start with a typed env renders leading KEY=VAL assignments" $
     withScript (mkDeployment [ procLeafEnv "a" "/srv/a" "erl -pa ebin" [ Tuple (mkEnvVar "ERL_LIBS") "_build/default/lib" ] ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; sleep 0.3; ( nohup env ERL_LIBS=_build/default/lib erl -pa ebin >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; i=0; while kill -0 -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; ( nohup env ERL_LIBS=_build/default/lib erl -pa ebin >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
 
   it "a Process command that already backgrounds itself is left as-is (no group captured)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a &" ]) (snap []) \lines ->
@@ -136,7 +136,7 @@ spec = describe "Bosun.Apply" do
   it "Process Restart -> kill the recorded group, then relaunch (recording the new one)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) (snap [ Tuple "a" Failed ]) \lines ->
       lines `shouldEqual`
-        [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; sleep 0.3; ( nohup env run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+        [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; i=0; while kill -0 -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; ( nohup env run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
 
   -- A macmini container resolves to the macmini Target: ssh login, the remote
   -- compose workdir (so the file is found) and Docker Desktop's PATH (so a

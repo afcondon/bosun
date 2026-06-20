@@ -148,10 +148,14 @@ daemonize os sid cmd
   | alreadyBackgrounds cmd = cmd
   | otherwise = reapPrior <> launch
   where
-  -- Kill any prior recorded generation before binding the new one. POSIX
-  -- (`kill -- -<pgid>` is identical on BSD and GNU), so OS-independent; the
-  -- small settle lets the freed port/socket close before the relaunch binds.
-  reapPrior = pidKill sid <> "; sleep 0.3; "
+  -- Kill any prior recorded generation, then BLOCK until its group is
+  -- actually gone, before binding the new one (release-before-bind). A fixed
+  -- `sleep` under-waits a slow-dying server — e.g. the BEAM holding a UDP
+  -- listener past 300ms — so the relaunch loses the bind race and comes up
+  -- degraded (the Atlantis 57121 anchor-listener incident, docs/RESTART-
+  -- BARRIER.md). Polling group-existence instead waits exactly as long as
+  -- the corpse takes and no longer. POSIX-portable, so OS-independent.
+  reapPrior = pidKill sid <> "; " <> awaitDead sid
   launch = case os of
     MacOS ->
       "( nohup env " <> cmd <> " >" <> logPath sid <> " 2>&1 & "
@@ -178,6 +182,27 @@ macRecordPgid sid = "ps -o pgid= -p $! | tr -d ' ' > " <> pidPath sid
 -- | daemon, holding live state, is the reuse-safe authority.
 pidKill :: ServiceId -> String
 pidKill sid = "kill -- -\"$(cat " <> pidPath sid <> " 2>/dev/null)\" 2>/dev/null || true"
+
+-- | RELEASE BARRIER. Block until the recorded process GROUP for `sid` is fully
+-- | gone — every member exited, so the kernel has released all its ports and
+-- | sockets — or `releaseMaxPolls` × 100ms elapse. POSIX-portable
+-- | group-existence check (`kill -0 -<pgid>`, signal 0 tests existence without
+-- | signalling), so OS-independent like `pidKill`. A missing/empty pidfile makes
+-- | the guard fail and the loop no-op (a first-ever Start, or an already-`&`
+-- | command Bosun doesn't track). This is the release half of release-before-
+-- | bind; it sits inside `daemonize`'s detached launch subshell, so the new
+-- | generation never binds until the old one is dead.
+awaitDead :: ServiceId -> String
+awaitDead sid =
+  "i=0; while kill -0 -\"$(cat " <> pidPath sid
+    <> " 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt " <> show releaseMaxPolls
+    <> " ]; do sleep 0.1; i=$((i+1)); done; "
+
+-- | Release-barrier budget: 100ms × this. 50 ⇒ up to 5s for a slow-dying group
+-- | (a BEAM's graceful shutdown + socket teardown fits comfortably); a corpse
+-- | that dies promptly costs only one poll.
+releaseMaxPolls :: Int
+releaseMaxPolls = 50
 
 -- | Where a launched Process's process-group id is recorded; `Stop`/`Restart`
 -- | and the supervisor's liveness probe read it. (Path only — OS-independent.)
