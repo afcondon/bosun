@@ -18,9 +18,10 @@ module Bosun.Adapters.Compose (ingestCompose) where
 import Prelude
 
 import Bosun.Artifact (Artifact(..), ArtifactRef(..))
-import Bosun.Atoms (AbsPath, EnvVar, Port, mkAbsPath, mkDomain, mkEnvVar, mkHost, mkPort, mkRoutePath, mkServiceId)
+import Bosun.Atoms (AbsPath, EnvVar, Port, mkAbsPath, mkDomain, mkEnvVar, mkGitWorkdir, mkHost, mkPort, mkRoutePath, mkServiceId, mkUrl)
 import Bosun.Edge (DepOrdering(..), Gate(..), Requirement(..))
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ImageRef(..))
+import Bosun.Publish (PublishChannel(..))
 import Bosun.Reachability (Address(..), BindScope(..), Reachability(..), hostPort, noNetwork)
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Selector (Selector(..))
@@ -71,21 +72,27 @@ roleFromName :: String -> String
 roleFromName name = fromMaybe name (A.last (String.split (Pattern "-") name))
 
 executorOf :: String -> Object Json -> Executor
-executorOf name o = case xbosunProcess o of
-  -- `x-bosun.process: { cwd, command }` declares a NATIVE process, not a
-  -- container — so a compose overlay can model a native-process deployment
-  -- (dev servers, the Atlantis daemon tier) with all of compose's depends_on
-  -- boot-order machinery. Takes precedence; such a service has no image/build.
-  Just proc -> proc
-  Nothing -> case FO.lookup "image" o >>= toString of
-    Just img -> Container (ContainerSpec { source: Left (ImageRef img), internalPort: Nothing, publish: publishPort o })
-    Nothing -> case FO.lookup "build" o >>= toObject of
-      Just b -> Container (ContainerSpec
-        { source: Right (BuildContext { context: fromMaybe "" (str b "context"), dockerfile: str b "dockerfile" })
-        , internalPort: Nothing
-        , publish: publishPort o
-        })
-      Nothing -> Unmanaged name
+executorOf name o = case xbosunStatic o of
+  -- `x-bosun.static: { channel, url, … }` declares a static-site deployment
+  -- to a CDN; mutually exclusive by intent with process/container, and
+  -- checked highest precedence so a stray `image:` on a static service won't
+  -- accidentally make Bosun think it's a docker workload.
+  Just st -> st
+  Nothing -> case xbosunProcess o of
+    -- `x-bosun.process: { cwd, command }` declares a NATIVE process, not a
+    -- container — so a compose overlay can model a native-process deployment
+    -- (dev servers, the Atlantis daemon tier) with all of compose's depends_on
+    -- boot-order machinery. Takes precedence; such a service has no image/build.
+    Just proc -> proc
+    Nothing -> case FO.lookup "image" o >>= toString of
+      Just img -> Container (ContainerSpec { source: Left (ImageRef img), internalPort: Nothing, publish: publishPort o })
+      Nothing -> case FO.lookup "build" o >>= toObject of
+        Just b -> Container (ContainerSpec
+          { source: Right (BuildContext { context: fromMaybe "" (str b "context"), dockerfile: str b "dockerfile" })
+          , internalPort: Nothing
+          , publish: publishPort o
+          })
+        Nothing -> Unmanaged name
 
 -- | `x-bosun.process: { cwd: <abs>, command: <str>, env?: { K: v } }` → a
 -- | `Process` executor. Requires an ABSOLUTE cwd (the SDI footgun, enforced by
@@ -102,6 +109,47 @@ xbosunProcess o = do
   cwd <- str pr "cwd" >>= mkAbsPath
   command <- str pr "command"
   pure (Process { cwd, command, env: envOf pr })
+
+-- | `x-bosun.static: { channel: "<one of three>", url: "<https://…>", … }` →
+-- | a `StaticCDN` executor. The `channel:` string dispatches to the
+-- | publish-channel variant; per-channel fields are required for that variant
+-- | and unused fields are ignored at ingest. A missing/unknown `channel`, a
+-- | missing/invalid `url`, or missing per-channel fields ⇒ `Nothing` (falls
+-- | through to the process / container / unmanaged path). The validator's
+-- | UrlCollision / ChannelCollision / StaticReadinessMismatch checks then
+-- | guard the structural cases past ingest.
+-- |
+-- | Shapes:
+-- |   channel: cloudflare-pages-git
+-- |     cfProject, workdir, branch, subdir
+-- |   channel: cloudflare-pages-wrangler
+-- |     cfProject, artifactDir
+-- |   channel: github-pages-repo-dir
+-- |     workdir, branch, servingDir
+xbosunStatic :: Object Json -> Maybe Executor
+xbosunStatic o = do
+  xb <- FO.lookup "x-bosun" o >>= toObject
+  st <- FO.lookup "static" xb >>= toObject
+  channel <- str st "channel"
+  url <- str st "url" >>= mkUrl
+  publish <- case channel of
+    "cloudflare-pages-git" -> do
+      cfProject <- str st "cfProject"
+      workdir <- str st "workdir" >>= mkGitWorkdir
+      branch <- str st "branch"
+      let subdir = fromMaybe "" (str st "subdir")
+      pure (CloudflarePagesGit { cfProject, workdir, branch, subdir })
+    "cloudflare-pages-wrangler" -> do
+      cfProject <- str st "cfProject"
+      artifactDir <- str st "artifactDir" >>= mkAbsPath
+      pure (CloudflarePagesWrangler { cfProject, artifactDir })
+    "github-pages-repo-dir" -> do
+      workdir <- str st "workdir" >>= mkGitWorkdir
+      branch <- str st "branch"
+      let servingDir = fromMaybe "" (str st "servingDir")
+      pure (GitHubPagesRepoDir { workdir, branch, servingDir })
+    _ -> Nothing
+  pure (StaticCDN { publish, url })
 
 -- | `x-bosun.artifact: { kind, source, pin? }` → the DECLARED artifact
 -- | (docs/ARTIFACTS.md): the single content declaration `reconcile` prefers over

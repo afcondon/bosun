@@ -6,8 +6,10 @@ module Bosun.Error where
 
 import Prelude
 
-import Bosun.Atoms (EnvVar, Host, Port, RoutePath, ServiceId)
+import Bosun.Atoms (EnvVar, Host, Port, RoutePath, ServiceId, Url)
 import Bosun.Edge (Gate)
+import Bosun.Health (Probe)
+import Bosun.Publish (ChannelKey)
 import Bosun.Selector (Selector)
 import Bosun.Service (Source)
 import Data.Array.NonEmpty (NonEmptyArray)
@@ -28,6 +30,25 @@ data DeployError
   | UnboundReference           { svc :: ServiceId, var :: EnvVar }    -- ${VAR} no default, no supplier
   | SdiContractViolation       { svc :: ServiceId, why :: SdiViolation }
   | UnparseableExecutor        { source :: Source, raw :: String }
+  -- | Generalisation of PortCollision into URL space — two StaticCDN services
+  -- | claim the same live URL. The HTTP probe can only attribute reachability
+  -- | to one of them; CDN dashboards would show contradictory custom-domain
+  -- | configs. Different URLs on the same channel project are NOT a collision
+  -- | (that's `ChannelCollision`'s concern); this rule is about the live face.
+  | UrlCollision               Url (NonEmptyArray ServiceId)
+  -- | Two static services target the same publish-channel destination — they
+  -- | would trample each other on deploy. The `ChannelKey` makes "the same
+  -- | destination" precise per channel: same `(cfProject, branch, subdir)` for
+  -- | CF-git, same `cfProject` for CF-wrangler, same `(workdir, branch,
+  -- | servingDir)` for GH Pages. Different channels are never collisions even
+  -- | if surface fields look similar — they go to different CDNs entirely.
+  | ChannelCollision           ChannelKey (NonEmptyArray ServiceId)
+  -- | A StaticCDN service's readiness probe doesn't match its executor: the
+  -- | only meaningful readiness signal for a CDN-served URL is an HTTP GET on
+  -- | that URL. `ProcessAlive`, `TcpConnect`, `SocketReady`, `NotifyReady`,
+  -- | and `NoProbe` are all nonsense here, and Bosun catches them at the type
+  -- | level rather than producing silent always-down or always-up signals.
+  | StaticReadinessMismatch    { svc :: ServiceId, probe :: Probe }
 derive instance Eq DeployError
 
 -- | The SDI lazy-spawn router's contract (§7.2): a spawnable row needs an

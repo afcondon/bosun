@@ -22,9 +22,11 @@ import Prelude
 
 import Bosun.Edge (DepOrdering(..), Gate(..), Requirement(..))
 import Bosun.Error (DeployError(..))
+import Bosun.Executor (Executor(..))
+import Bosun.Publish (ChannelKey, PublishChannel, channelKey)
 import Bosun.Reachability (Address(..), BindScope(..), addresses)
 import Bosun.Health (Probe(..))
-import Bosun.Atoms (Host, Port, ServiceId, unServiceId)
+import Bosun.Atoms (Host, Port, ServiceId, Url, unServiceId)
 import Bosun.Selector (Selector)
 import Bosun.Service.Internal
   ( Deployment, LooseDep, LooseService, Service, ServiceRef, ValidatedDeployment
@@ -68,6 +70,9 @@ validate dep =
   localErrs = A.concat
     [ svcs >>= checkDangling ids
     , checkCollisions svcs
+    , checkUrlCollisions svcs
+    , checkChannelCollisions svcs
+    , svcs >>= checkStaticReadiness
     , svcs >>= checkGates byId
     , svcs >>= checkRoutes ids
     , svcs >>= checkSelectors byId
@@ -163,6 +168,68 @@ checkCollisions svcs =
     HostIface _ -> true
     Internal -> false
     Loopback -> false
+
+-- B-URL — UrlCollision. Generalisation of B3 PortCollision into URL space.
+-- Only StaticCDN services carry a `url`; other executors contribute nothing
+-- here. Two services on the same URL would have the HTTP probe attributing
+-- reachability to one of them and the CDN dashboards showing contradictory
+-- custom-domain config.
+checkUrlCollisions :: Array LooseService -> Array DeployError
+checkUrlCollisions svcs =
+  let
+    claims :: Array (Tuple Url ServiceId)
+    claims = svcs # A.mapMaybe \s -> case unwrapStatic s.launch.executor of
+      Just spec -> Just (Tuple spec.url s.id)
+      Nothing -> Nothing
+    grouped :: Map Url (Array ServiceId)
+    grouped = foldr (\(Tuple k sid) -> Map.insertWith (<>) k [ sid ]) Map.empty claims
+  in
+    Map.toUnfoldable grouped # A.mapMaybe \(Tuple u sids) ->
+      let distinct = A.nub sids in
+      if A.length distinct > 1
+        then map (UrlCollision u) (NEA.fromArray distinct)
+        else Nothing
+
+-- B-CHAN — ChannelCollision. Two static services target the same publish-
+-- channel destination — they would trample each other on deploy (`channelKey`
+-- captures "the same destination" per variant: see `Bosun.Publish`).
+checkChannelCollisions :: Array LooseService -> Array DeployError
+checkChannelCollisions svcs =
+  let
+    claims :: Array (Tuple ChannelKey ServiceId)
+    claims = svcs # A.mapMaybe \s -> case unwrapStatic s.launch.executor of
+      Just spec -> Just (Tuple (channelKey spec.publish) s.id)
+      Nothing -> Nothing
+    grouped :: Map ChannelKey (Array ServiceId)
+    grouped = foldr (\(Tuple k sid) -> Map.insertWith (<>) k [ sid ]) Map.empty claims
+  in
+    Map.toUnfoldable grouped # A.mapMaybe \(Tuple k sids) ->
+      let distinct = A.nub sids in
+      if A.length distinct > 1
+        then map (ChannelCollision k) (NEA.fromArray distinct)
+        else Nothing
+
+-- B-PROBE — StaticReadinessMismatch. A StaticCDN service's readiness must be
+-- an HttpGet (Bosun probes the live URL). The other probes don't make sense
+-- for a CDN-served URL; rejecting them avoids silent always-down or
+-- always-up reachability signals on the Chair.
+checkStaticReadiness :: LooseService -> Array DeployError
+checkStaticReadiness s = case unwrapStatic s.launch.executor of
+  Just _ -> case s.readiness of
+    HttpGet _ -> []
+    p -> [ StaticReadinessMismatch { svc: s.id, probe: p } ]
+  Nothing -> []
+
+-- Peel one or more layers of `Remote` (the ssh wrapper) to inspect the inner
+-- executor's StaticCDN payload. Wrapping a StaticCDN in Remote is nonsense
+-- (CDN publishes aren't ssh-wrapped), but the executor type permits it; this
+-- ensures the validator's truth tracks the executor sum, not the surface
+-- syntax, and that a future "remote-built CDN publish" doesn't slip past.
+unwrapStatic :: Executor -> Maybe { publish :: PublishChannel, url :: Url }
+unwrapStatic = case _ of
+  StaticCDN r -> Just r
+  Remote r -> unwrapStatic r.inner
+  _ -> Nothing
 
 -- B5 — UncheckableGate. A `Requires On{Ready,Healthy}` edge demands the
 -- upstream publish a readiness signal (≠ NoProbe). OnStarted/OnCompleted do not.

@@ -26,9 +26,10 @@ module Bosun.Report
 import Prelude
 
 import Bosun.Apply (Command(..), StagedCommand)
-import Bosun.Atoms (Host, ServiceId, unEnvVar, unHost, unPort, unRoutePath, unServiceId)
+import Bosun.Atoms (Host, ServiceId, unEnvVar, unHost, unPort, unRoutePath, unServiceId, unUrl)
 import Bosun.Edge (Gate)
 import Bosun.Error (DeployError(..), SdiViolation(..))
+import Bosun.Health (Probe(..))
 import Bosun.Artifact (artifactLabel)
 import Bosun.Plan (Change(..), Plan, Reason(..), Status(..), planSteps)
 import Bosun.Reconcile (ArtifactDrift(..), Divergence(..), FacetKey, TopologyDrift(..))
@@ -73,6 +74,14 @@ renderError = case _ of
     "SDI contract: " <> unServiceId r.svc <> " — " <> sdiLabel r.why
   UnparseableExecutor r ->
     "unparseable start command (" <> show r.source <> "): " <> r.raw
+  UrlCollision url ids ->
+    "URL collision: " <> unUrl url <> " claimed by " <> idList ids
+  ChannelCollision key ids ->
+    "publish-channel collision: "
+      <> show key <> " — would be deployed by " <> idList ids
+  StaticReadinessMismatch r ->
+    "static-site readiness mismatch on " <> unServiceId r.svc
+      <> ": expected HttpGet probe; got " <> probeShortLabel r.probe
   where
   claim (Tuple src val) = show src <> " says " <> val
 
@@ -287,3 +296,16 @@ sdiLabel :: SdiViolation -> String
 sdiLabel = case _ of
   NoAbsoluteCwd -> "start command has no absolute cwd anchor (cd /abs)"
   PortNotInStartCommand -> "the literal public port is missing from the start command"
+
+-- | Compact one-line label for a probe, used by the static-readiness-mismatch
+-- | error rendering. The mismatch only ever fires on non-HttpGet probes, so the
+-- | label only needs to NAME the wrong probe — full details would be noise.
+probeShortLabel :: Probe -> String
+probeShortLabel = case _ of
+  HttpGet _ -> "http-get"
+  TcpConnect _ -> "tcp-connect"
+  ExecCmd _ -> "exec-cmd"
+  ProcessAlive -> "process-alive"
+  SocketReady _ -> "socket-ready"
+  NotifyReady -> "notify-ready"
+  NoProbe -> "no-probe"

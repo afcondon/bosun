@@ -16,10 +16,11 @@ module Bosun.View where
 
 import Prelude
 
-import Bosun.Atoms (mkServiceId, unAbsPath, unDomain, unEnvVar, unHost, unPort, unProjectSlug, unRoutePath, unServiceId)
+import Bosun.Atoms (mkServiceId, unAbsPath, unDomain, unEnvVar, unGitWorkdir, unHost, unPort, unProjectSlug, unRoutePath, unServiceId, unUrl)
 import Bosun.Edge (DepOrdering(..), Gate(..), Requirement(..))
 import Bosun.Error (DeployError(..), SdiViolation(..))
-import Bosun.Executor (BuildContext(..), CDNProvider(..), ContainerSpec(..), Executor(..), ExecutorMechanism(..), ImageRef(..), RemoteVia(..), SystemdScope(..), mechanism)
+import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ExecutorMechanism(..), ImageRef(..), RemoteVia(..), SystemdScope(..), mechanism)
+import Bosun.Publish (ChannelKey(..), PublishChannel(..))
 import Bosun.Health (Probe(..))
 import Bosun.Reachability (Address(..), BindScope(..), Openness(..), Reachability, addresses, classify, openness)
 import Bosun.Reconcile (AliasMap, Divergence(..), FacetKey, ReconcileResult, exposureLabel)
@@ -152,15 +153,14 @@ executorDetail = case _ of
     SystemScope -> " (system)"
     UserScope -> " (user)"
   LaunchdJob j -> j.label
-  StaticCDN c -> cdnLabel c.provider <> " " <> unDomain c.domain
+  StaticCDN c -> channelLabel c.publish <> " " <> unUrl c.url
   Remote r -> "ssh " <> remoteLabel r.via <> " → " <> executorDetail r.inner
   Unmanaged s -> "unmanaged: " <> s
   where
-  cdnLabel = case _ of
-    CloudflarePages -> "cloudflare-pages"
-    NetlifyCDN -> "netlify"
-    GitHubPages -> "github-pages"
-    OtherCDN o -> o
+  channelLabel = case _ of
+    CloudflarePagesGit r      -> "cloudflare-pages-git[" <> r.cfProject <> "]"
+    CloudflarePagesWrangler r -> "cloudflare-pages-wrangler[" <> r.cfProject <> "]"
+    GitHubPagesRepoDir r      -> "github-pages[" <> r.branch <> ":" <> r.servingDir <> "]"
   remoteLabel (Ssh s) = maybe "" (_ <> "@") s.user <> unHost s.host
 
 executorView :: Executor -> ExecutorView
@@ -175,6 +175,18 @@ probeLabel = case _ of
   SocketReady p -> "socket " <> unAbsPath p
   NotifyReady -> "notify"
   NoProbe -> "none"
+
+-- | A compact, human-rendered label for a publish-channel collision key.
+-- | Each variant prints just the fields that make two services collide on
+-- | that channel (the same fields `Bosun.Publish.channelKey` extracts).
+channelKeyLabel :: ChannelKey -> String
+channelKeyLabel = case _ of
+  CfGitKey k ->
+    "cloudflare-pages-git[" <> k.cfProject <> " " <> k.branch <> ":" <> k.subdir <> "]"
+  CfWranglerKey cfProject ->
+    "cloudflare-pages-wrangler[" <> cfProject <> "]"
+  GhPagesKey k ->
+    "github-pages[" <> unAbsPath (unGitWorkdir k.workdir) <> " " <> k.branch <> ":" <> k.servingDir <> "]"
 
 selectorLabel :: Selector -> String
 selectorLabel = case _ of
@@ -331,6 +343,9 @@ errKind = case _ of
   UnboundReference _ -> "UnboundReference"
   SdiContractViolation _ -> "SdiContractViolation"
   UnparseableExecutor _ -> "UnparseableExecutor"
+  UrlCollision _ _ -> "UrlCollision"
+  ChannelCollision _ _ -> "ChannelCollision"
+  StaticReadinessMismatch _ -> "StaticReadinessMismatch"
 
 errDetail :: DeployError -> String
 errDetail = case _ of
@@ -356,6 +371,13 @@ errDetail = case _ of
     NoAbsoluteCwd -> "start command has no absolute `cd /…` anchor"
     PortNotInStartCommand -> "start command does not contain its public port literally"
   UnparseableExecutor d -> "could not parse a launch mechanism from " <> sourceLabel d.source <> ": \"" <> d.raw <> "\""
+  UrlCollision url svcs ->
+    unUrl url <> " is claimed by " <> joinIds (NEA.toArray svcs)
+  ChannelCollision key svcs ->
+    "publish-channel " <> channelKeyLabel key <> " would be deployed by " <> joinIds (NEA.toArray svcs)
+  StaticReadinessMismatch d ->
+    unServiceId d.svc <> " has readiness probe " <> probeLabel d.probe
+      <> " but a StaticCDN service requires an HttpGet probe on its live URL"
   where
   joinIds = joinWith ", " <<< map unServiceId
 
@@ -381,6 +403,12 @@ remediation = case _ of
     NoAbsoluteCwd -> [ "Prefix the start command with an absolute anchor: `cd /abs/path && …`." ]
     PortNotInStartCommand -> [ "Embed the public port number literally in the start command so the router can rewrite it." ]
   UnparseableExecutor _ -> [ "Check the start command / service definition for this source." ]
+  UrlCollision _ _ ->
+    [ "Give one site a different URL, or split the two services — one site can have only one live URL." ]
+  ChannelCollision _ _ ->
+    [ "Two services would deploy to the same publish destination. Change one site's cfProject / branch / subdir / artifactDir so they no longer collide." ]
+  StaticReadinessMismatch _ ->
+    [ "StaticCDN services must use an HttpGet readiness probe (Bosun probes the live URL). Set `x-bosun.healthcheck` to an http-get on the site URL, or remove the non-HTTP probe." ]
 
 -- ── codecs (codec-argonaut; one value, shared by both ends) ──────────────────
 

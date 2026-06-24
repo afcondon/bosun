@@ -9,6 +9,8 @@ module Bosun.Atoms
   ( Port, mkPort, unPort
   , AbsPath, mkAbsPath, unAbsPath
   , Domain, mkDomain, unDomain
+  , Url, mkUrl, unUrl
+  , GitWorkdir, mkGitWorkdir, unGitWorkdir
   , RoutePath, mkRoutePath, unRoutePath
   , EnvVar, mkEnvVar, unEnvVar
   , ProjectSlug, mkProjectSlug, unProjectSlug
@@ -61,6 +63,39 @@ mkDomain = Domain
 
 unDomain :: Domain -> String
 unDomain (Domain s) = s
+
+-- | A live URL — scheme + host + path. Distinct from `Domain` (just the
+-- | hostname) because Bosun's HTTP probe needs the whole thing. The smart
+-- | constructor requires a `http://` or `https://` scheme — every other shape
+-- | (bare hostname, scheme-less `://foo`, file://) is `Nothing`.
+newtype Url = Url String
+derive newtype instance Eq Url
+derive newtype instance Ord Url
+derive newtype instance Show Url
+
+mkUrl :: String -> Maybe Url
+mkUrl s
+  | String.take 8 s == "https://" || String.take 7 s == "http://" = Just (Url s)
+  | otherwise = Nothing
+
+unUrl :: Url -> String
+unUrl (Url s) = s
+
+-- | A checked-out git workdir on the local filesystem. The "push side" of a
+-- | git-driven publish channel needs this — we shell out to `git -C <dir>` to
+-- | commit + push, so it has to be a real local working tree (not a remote
+-- | "owner/repo" reference). Wraps `AbsPath`; smart constructor delegates to
+-- | `mkAbsPath` (presence of `.git` is an I/O-edge check, not a type rule).
+newtype GitWorkdir = GitWorkdir AbsPath
+derive newtype instance Eq GitWorkdir
+derive newtype instance Ord GitWorkdir
+derive newtype instance Show GitWorkdir
+
+mkGitWorkdir :: String -> Maybe GitWorkdir
+mkGitWorkdir = map GitWorkdir <<< mkAbsPath
+
+unGitWorkdir :: GitWorkdir -> AbsPath
+unGitWorkdir (GitWorkdir p) = p
 
 newtype RoutePath = RoutePath String
 derive newtype instance Eq RoutePath

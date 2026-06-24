@@ -8,7 +8,8 @@ module Bosun.Executor where
 
 import Prelude
 
-import Bosun.Atoms (AbsPath, Domain, EnvVar, Host, Port)
+import Bosun.Atoms (AbsPath, EnvVar, Host, Port, Url)
+import Bosun.Publish (PublishChannel)
 import Data.Either (Either)
 import Data.Generic.Rep (class Generic)
 import Data.Maybe (Maybe)
@@ -20,7 +21,12 @@ data Executor
   | Container   ContainerSpec
   | SystemdUnit { unit :: String, scope :: SystemdScope }
   | LaunchdJob  { label :: String, keepAlive :: KeepAlive, throttleSec :: Maybe Int }
-  | StaticCDN   { provider :: CDNProvider, domain :: Domain }
+  -- | A static-site deployment: the `publish` channel encodes the platform +
+  -- | delivery mechanism (CF Pages git-watched, CF Pages wrangler, GitHub
+  -- | Pages), and `url` is the live URL Bosun probes for reachability. See
+  -- | `Bosun.Publish` for the channel sum and why this shape replaces the
+  -- | earlier anaemic `{ provider :: CDNProvider, domain :: Domain }`.
+  | StaticCDN   { publish :: PublishChannel, url :: Url }
   | Remote      { via :: RemoteVia, inner :: Executor }   -- ssh wrapper; recursive
   | Unmanaged   String   -- prose-only registry rows: documentation, not instructions
 
@@ -59,11 +65,6 @@ instance Show SystemdScope where show = genericShow
 newtype KeepAlive = KeepAlive Boolean
 derive newtype instance Eq KeepAlive
 derive newtype instance Show KeepAlive
-
-data CDNProvider = CloudflarePages | NetlifyCDN | GitHubPages | OtherCDN String
-derive instance Eq CDNProvider
-derive instance Generic CDNProvider _
-instance Show CDNProvider where show = genericShow
 
 -- | The `ssh andrew@andrews-mac-mini …` wrapper, parsed rather than collapsed
 -- | to an opaque string.
