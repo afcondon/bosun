@@ -59,8 +59,8 @@ intervalMs = 3000
 -- | `bosun supervise [--port N] <compose> <registry>`. The status port defaults
 -- | to 3996; pass `--port` to run one supervisor PER GROUP, each on its own port
 -- | (a group = one deployment), so the Chair polls/controls each independently.
-runSupervise :: Maybe Int -> String -> String -> Effect Unit
-runSupervise mPort composePath registryPath = do
+runSupervise :: Maybe Int -> Boolean -> String -> String -> Effect Unit
+runSupervise mPort startHeld composePath registryPath = do
   composeJson <- readYamlFile composePath
   registryJson <- readJsonFile registryPath
   let
@@ -74,7 +74,7 @@ runSupervise mPort composePath registryPath = do
       log "cannot supervise: the deployment does not validate —"
       log ""
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
-    Right vd -> superviseResident defaultTargets mPort dep vd >>= runResident
+    Right vd -> superviseResident defaultTargets mPort startHeld dep vd >>= runResident
 
 -- | Build the supervise `Resident` — Refs for desired-state and launch memory,
 -- | the observe→refine→plan→enact `tick`, the `/state` renderer, the `/control`
@@ -85,9 +85,16 @@ runSupervise mPort composePath registryPath = do
 -- | dual-runtime parity test (mirrors `Bosun.CLI.Docker.dockerResident`). The
 -- | `targets` are threaded (not hardcoded) so a remote-host supervise resolves
 -- | the same way `apply` does.
-superviseResident :: TargetMap -> Maybe Int -> Deployment -> ValidatedDeployment -> Effect Resident
-superviseResident targets mPort dep vd = do
-  desiredUp <- Ref.new true
+superviseResident :: TargetMap -> Maybe Int -> Boolean -> Deployment -> ValidatedDeployment -> Effect Resident
+superviseResident targets mPort startHeld dep vd = do
+  -- `startHeld` boots the resident with the group HELD DOWN (desired=down) and
+  -- skips the initial bring-up: the daemon is up and answering /state + /control
+  -- so the Chair sees an armable supervise group, but nothing is launched until a
+  -- `POST /control/up` (the Chair's ▲ up all). This is the first-bring-up-from-the
+  -- -Chair path — replacing DeepStar, where the supervisor was resident and you
+  -- ran `deepstar up` to raise the rig. Default (false) keeps `supervise`'s
+  -- bring-it-up-and-keep-it-up lifecycle for the always-on deployments.
+  desiredUp <- Ref.new (not startHeld)
   -- The threaded `recorded` state (D-7): launch memory across ticks. This is
   -- what makes `supervise` more than a stateless plan-loop — without it a
   -- slow-boot service re-Starts every tick (the relaunch storm).
@@ -168,8 +175,11 @@ superviseResident targets mPort dep vd = do
         enactPlan ("restart " <> arg) now forced
         pure ("restart: " <> arg)
       _ -> pure ("unknown control verb: " <> verb)
-  log "supervise: initial bring-up…"
-  bringUp
+  if startHeld then
+    log "supervise: resident, held down (desired=down) — no initial bring-up; raise from the Chair (▲ up all)"
+  else do
+    log "supervise: initial bring-up…"
+    bringUp
   pure ({ statusPort: fromMaybe defaultStatusPort mPort, intervalMs, tick, stateBody, control } :: Resident)
 
 -- | `/state` JSON. The `services` map (id → status string) is UNCHANGED — the

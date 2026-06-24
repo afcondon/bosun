@@ -70,8 +70,10 @@ main = do
   let
     tf = takeFlag "--targets" rawArgs
     pf = takeFlag "--port" tf.rest
-    args = pf.rest
+    hf = takeBoolFlag "--held" pf.rest
+    args = hf.rest
     supPort = pf.value >>= Int.fromString
+    startHeld = hf.present
   targets <- loadTargets tf.value
   case args of
     [ "check", composePath, registryPath ] -> runCheck composePath registryPath
@@ -90,7 +92,7 @@ main = do
     [ "apply", composePath, registryPath, snapshotPath ] -> runApply targets composePath registryPath (Just snapshotPath)
     [ "down", "--dry-run", composePath, registryPath ] -> runDownDryRun targets composePath registryPath
     [ "down", composePath, registryPath ] -> runDown targets composePath registryPath
-    [ "supervise", composePath, registryPath ] -> runSupervise supPort composePath registryPath
+    [ "supervise", composePath, registryPath ] -> runSupervise supPort startHeld composePath registryPath
     [ "docker", composePath, registryPath ] -> runDocker targets supPort composePath registryPath
     _ -> runDemo
 
@@ -105,6 +107,14 @@ takeFlag name args = case A.findIndex (_ == name) args of
         , rest: fromMaybe args (A.deleteAt i args >>= A.deleteAt i)
         }
   _ -> { value: Nothing, rest: args }
+
+-- | Pull an optional valueless boolean flag (e.g. `--held`) out of the argument
+-- | vector wherever it appears, reporting whether it was present and returning
+-- | the remaining args so the positional command forms match unchanged.
+takeBoolFlag :: String -> Array String -> { present :: Boolean, rest :: Array String }
+takeBoolFlag name args = case A.findIndex (_ == name) args of
+  Just i -> { present: true, rest: fromMaybe args (A.deleteAt i args) }
+  Nothing -> { present: false, rest: args }
 
 -- | The built-in `defaultTargets`, with a `targets.json` layered on top (file
 -- | entries win per host — `Map.union` is left-biased).

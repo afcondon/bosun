@@ -315,8 +315,13 @@ pollLoop = do
 -- ── projects (the picker) ────────────────────────────────────────────────────
 
 -- The three live deployments — each backed by its own `bosun supervise` daemon
--- on its own port (B-model: one group at a time). These are the safe engine
--- fixtures; spawning them never touches the real rig.
+-- on its own port (B-model: one group at a time). The two polyglot entries are
+-- safe engine fixtures (spawning them never touches anything real). Atlantis is
+-- the REAL live-coding rig: its compose carries the actual es9-daemon /
+-- link-spike / fh2-daemon / purerl-tidal / calypso launch commands, so arming
+-- it and raising the group starts the real rig (and touches ES-9 / FH-2
+-- hardware). Launch its supervise daemon `--held` so the group boots down and is
+-- raised deliberately from the Chair — the DeepStar-replacement path.
 deployments :: Array Project
 deployments =
   [ { key: "polyglot-mbp"
