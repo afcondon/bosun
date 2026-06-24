@@ -200,11 +200,16 @@ probeOf o = if isJust (FO.lookup "healthcheck" o) then ExecCmd (healthTest o) el
 -- | `process` ⇒ `ProcessAlive` (observe by process existence — the right signal
 -- | for a UDP/socket/no-network daemon a TCP probe would mis-read; the es9/link
 -- | OSC daemons and the fh2 socket daemon). `socket` ⇒ `SocketReady` if an
--- | `x-bosun.expose [{socket}]` is present. Else fall back to the healthcheck.
+-- | `x-bosun.expose [{socket}]` is present. `http` ⇒ `HttpGet` with sane HTTPS
+-- | defaults (port 443, path "/", expect 200) — the right signal for a
+-- | StaticCDN service whose probe target is the live URL; the prober uses the
+-- | URL from the executor, not these placeholder fields. Else fall back to
+-- | the healthcheck.
 effProbe :: Object Json -> Probe
 effProbe o = case (FO.lookup "x-bosun" o >>= toObject) >>= \xb -> str xb "probe" of
   Just "process" -> ProcessAlive
   Just "socket" -> maybe (probeOf o) SocketReady (socketAddr o)
+  Just "http" -> maybe NoProbe (\p -> HttpGet { port: p, path: "/", expectStatus: 200 }) (mkPort 443)
   _ -> probeOf o
 
 -- the first unix-socket path in `x-bosun.expose`, if any
