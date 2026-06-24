@@ -92,7 +92,7 @@ main = do
     [ "apply", composePath, registryPath, snapshotPath ] -> runApply targets composePath registryPath (Just snapshotPath)
     [ "down", "--dry-run", composePath, registryPath ] -> runDownDryRun targets composePath registryPath
     [ "down", composePath, registryPath ] -> runDown targets composePath registryPath
-    [ "supervise", composePath, registryPath ] -> runSupervise supPort startHeld composePath registryPath
+    [ "supervise", composePath, registryPath ] -> runSupervise targets supPort startHeld composePath registryPath
     [ "docker", composePath, registryPath ] -> runDocker targets supPort composePath registryPath
     _ -> runDemo
 

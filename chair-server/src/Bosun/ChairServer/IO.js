@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, renameSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { execSync } from "node:child_process";
 import yaml from "js-yaml";
 
@@ -20,11 +20,12 @@ export const resolvePort = () => {
 };
 
 // --- Registry-edit edge (2026-06-23: Marginalia → Bosun ownership) ---
-// fleet.json is the source of truth for the dev-server registry. Override its
-// location with BOSUN_FLEET_PATH for tests; the bosun-router compose sets the
-// production path to bosun/registry/fleet.json.
+// fleet.json is the source of truth for the dev-server registry. Default
+// resolves to registry/fleet.json under chair-server's cwd — the bosun repo
+// root on both MBP and the mini, so the same compose works either side of the
+// federation. Override with BOSUN_FLEET_PATH for tests.
 
-const DEFAULT_FLEET_PATH = "/Users/afc/work/afc-work/ShapedSteer/bosun/registry/fleet.json";
+const DEFAULT_FLEET_PATH = resolve(process.cwd(), "registry/fleet.json");
 const MARGINALIA_BASE = process.env.MARGINALIA_API || "http://andrews-mac-mini:3100";
 const BOSUN_SERVE_URL = process.env.BOSUN_SERVE_URL || "http://localhost:3997";
 

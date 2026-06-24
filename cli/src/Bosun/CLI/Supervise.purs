@@ -35,7 +35,7 @@ import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderCommand, renderReport)
 import Bosun.Service (Deployment, ValidatedDeployment, unServiceRef)
 import Bosun.Supervisor (Launch, SupConfig, SupState, SvcState, defaultConfig, emptySupState, recordLaunches, refine)
-import Bosun.Target (TargetMap, defaultTargets)
+import Bosun.Target (TargetMap)
 import Bosun.Validate (validate)
 import Bosun.Version (version)
 import Data.Array as A
@@ -59,8 +59,8 @@ intervalMs = 3000
 -- | `bosun supervise [--port N] <compose> <registry>`. The status port defaults
 -- | to 3996; pass `--port` to run one supervisor PER GROUP, each on its own port
 -- | (a group = one deployment), so the Chair polls/controls each independently.
-runSupervise :: Maybe Int -> Boolean -> String -> String -> Effect Unit
-runSupervise mPort startHeld composePath registryPath = do
+runSupervise :: TargetMap -> Maybe Int -> Boolean -> String -> String -> Effect Unit
+runSupervise targets mPort startHeld composePath registryPath = do
   composeJson <- readYamlFile composePath
   registryJson <- readJsonFile registryPath
   let
@@ -74,7 +74,7 @@ runSupervise mPort startHeld composePath registryPath = do
       log "cannot supervise: the deployment does not validate —"
       log ""
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
-    Right vd -> superviseResident defaultTargets mPort startHeld dep vd >>= runResident
+    Right vd -> superviseResident targets mPort startHeld dep vd >>= runResident
 
 -- | Build the supervise `Resident` — Refs for desired-state and launch memory,
 -- | the observe→refine→plan→enact `tick`, the `/state` renderer, the `/control`
