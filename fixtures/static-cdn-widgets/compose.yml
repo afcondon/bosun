@@ -1,0 +1,15 @@
+# Dry-run fixture: declare the widgets static site under Bosun's typed model.
+# DOES NOT TOUCH widgets.hylograph.net. Bosun's apply for StaticCDN is the
+# `Manual` advisory (no automated deploy), and we run only `bosun check`
+# (pure ingest+validate) plus `bosun apply --dry-run` here. The live site
+# stays on its wrangler-publish path.
+services:
+  widgets:
+    x-bosun:
+      host: cloudflare
+      probe: http
+      static:
+        channel: cloudflare-pages-wrangler
+        cfProject: hylograph-widgets
+        artifactDir: /Users/afc/work/afc-work/cloudflare-sites/widgets
+        url: https://widgets.hylograph.net
