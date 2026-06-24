@@ -226,21 +226,6 @@
       "tailscaleName": "andrews-macbook-pro"
     },
     {
-      "id": 140,
-      "projectId": 236,
-      "projectName": "Bosun's Chair",
-      "projectSlug": "kilo-tango-victor-foxtrot",
-      "role": "api",
-      "port": 3022,
-      "url": "http://localhost:3022",
-      "startCommand": "cd /Users/afc/work/afc-work/ShapedSteer/bosun && BOSUN_CHAIR_SERVER_PORT=3022 node chair-server/run.js",
-      "description": "Bosun chair-server — read-only analysis backend (POST /analyze runs the loose->tight ladder over compose+registry). Distinct from bosun serve (process authority). HTTPurple. MVP-PLAN workstream B.",
-      "environment": "native",
-      "prerequisites": null,
-      "host": "mbp",
-      "tailscaleName": "andrews-macbook-pro"
-    },
-    {
       "id": 58,
       "projectId": 132,
       "projectName": "ShapedSteer",
@@ -421,6 +406,6 @@
       "tailscaleName": "andrews-mac-mini"
     }
   ],
-  "count": 30,
+  "count": 27,
   "collisions": {}
 }

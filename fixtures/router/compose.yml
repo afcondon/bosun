@@ -25,3 +25,37 @@ services:
         # /api/ports is now a non-authoritative mirror. The backend-go binary swaps
         # in here later with zero model change.
         command: node cli/run.js serve /Users/afc/work/afc-work/ShapedSteer/bosun/registry/fleet.json
+
+  # Bosun's Chair (#236) — the operational surface and registry-edit cockpit.
+  # Always-up under supervise rather than lazy-spawned, because (a) Chair is THE
+  # dashboard you want running whenever Bosun is, and (b) chair-server is about
+  # to grow the write API for fleet.json — supervised lifecycle keeps the SoT
+  # editor reachable without a cold-start race on first POST.
+  chair-server:
+    x-bosun:
+      host: mbp
+      probe: process
+      process:
+        cwd: /Users/afc/work/afc-work/ShapedSteer/bosun
+        # Read-only analysis backend (POST /analyze runs the loose→tight ladder).
+        # The fleet.json write API (POST /api/servers, GET /api/ports/suggest)
+        # lands here next — chair-server is the registry-mutation host.
+        command: BOSUN_CHAIR_SERVER_PORT=3022 node chair-server/run.js
+      expose:
+        - host: 3022
+
+  chair-frontend:
+    depends_on:
+      - bosun-serve
+      - chair-server
+    x-bosun:
+      host: mbp
+      probe: process
+      process:
+        cwd: /Users/afc/work/afc-work/ShapedSteer/bosun/chair
+        # Halogen SPA — index.html + app.js + assets. http-server serves the
+        # static bundle; the in-page JS talks directly to bosun-serve :3997
+        # (cockpit) and chair-server :3022 (ladder + future registry writes).
+        command: npx http-server . -p 3020 -c-1 --cors
+      expose:
+        - host: 3020
