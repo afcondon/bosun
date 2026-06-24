@@ -17,3 +17,12 @@ chair/app.js
 
 # printed/exported doc artifacts (generated from the .md sources)
 docs/*.pdf
+
+# Working-tree backups (atomic-write .bak from chair-server fleet edits, plus
+# named one-off backups taken before risky migrations). The git history is the
+# real long-tail audit; these are belt-and-braces for the current session only.
+registry/*.bak
+registry/*.bak-*
+
+# macOS
+.DS_Store
