@@ -27,7 +27,9 @@ services:
         cwd: /Users/afc/work/afc-work/music/expert-sleepers/es9-daemon
         command: ./target/release/es9-daemon
       expose:
-        - host: 57120
+        # OSC listen port moved 57120 -> 57130 (purerl-tidal workstream C) so a
+        # real SuperDirt can use the conventional Dirt port 57120.
+        - host: 57130
 
   link-spike:
     x-bosun:
