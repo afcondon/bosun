@@ -238,7 +238,7 @@ wrap target cmd = case cmd of
 
 manual :: Executor -> Command
 manual = case _ of
-  StaticCDN _ -> Manual "static-CDN publish (not automated)"
+  StaticCDN _ -> Manual "static-CDN publish — run `quartermaster publish <compose> <registry>` to ship the site (docs/PROVISIONING-SEAM.md)"
   SystemdUnit u -> Manual ("systemctl start " <> u.unit)
   LaunchdJob j -> Manual ("launchctl load " <> j.label)
   Remote _ -> Manual "remote (ssh) launch (not automated)"

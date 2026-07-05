@@ -310,6 +310,54 @@ implementation pending (the one code follow-up from the doc-only session).
 
 ---
 
+## D-G2 — Quartermaster owns CDN publish; Bosun `apply` advises across the seam
+
+**Context.** A `StaticCDN` service (a site declared with `x-bosun.static`) has to
+reach its CDN somehow. Bosun's `apply` rendered it a dead-end `Manual "static-CDN
+publish (not automated)"` — it knows WHERE the artifact lives and the channel, but
+publishing is *provisioning*, not supervision. Meanwhile Quartermaster already
+owns the sibling case: `build` ships source-built container images (build-once-
+ship), and `Bosun.Publish`'s own header anticipated "the future `quartermaster
+ship` verb". So the home for CDN publish was already implied; it just wasn't built.
+
+**Decision.** **Quartermaster owns CDN publish**, as a new `quartermaster publish`
+verb (chosen over folding it into `build`, which stays docker-only — `build`
+overloads onto a static site badly, and `verify`/`publish` pair cleanly for the
+StaticCDN lifecycle). Bosun does NOT publish; its `apply` advisory for a StaticCDN
+service now **names the Quartermaster command**:
+
+```
+# MANUAL: static-CDN publish — run `quartermaster publish <compose> <registry>` …
+```
+
+exactly mirroring the SourceBuild → `quartermaster build` build-once-ship
+advisory (`advisoryCommands`). Trigger is *advise-then-enact*, not auto-invoke:
+`bosun apply` prints the command; you run `quartermaster publish` (one command —
+"seamless" = one, not zero — keeps the advise/enact seam intact and Bosun
+decoupled from QM).
+
+**Concrete change.** `Bosun.Apply.manual` StaticCDN case → the QM-pointing
+advisory. New Quartermaster `Publish` (pure plan, mirrors `Build`), `CLI.Publish`
+(effectful edge), `publish` verb in `CLI.Main`, `Report.renderPublish`, and
+`Runtime.runtimeOfExecutor` StaticCDN → the publish tool (`Wrangler`/`git`) so
+`verify` asks "can this host publish?" instead of the old bogus `Unknown
+"static-cdn"` → "install the runtime". MVP channel: `cloudflare-pages-wrangler`.
+Procedure + host-prep in `PUBLISH-A-SITE.md`.
+
+**Consequences.** The static-CDN half now matches the container half: Bosun
+declares + advises, Quartermaster ships. `publish` is idempotent and one-shot
+(ensure-project, clean-stage, deploy, ensure-domain — ~4 CF API calls, no retry
+loops). Two credentials stay separate by necessity: wrangler OAuth (deploy +
+domain attach) and a dedicated `QM_CF_DNS_TOKEN` (Zone:DNS:Edit, the CNAME) —
+NOT `CLOUDFLARE_API_TOKEN`, which wrangler would hijack. The DNS-token
+requirement is host-prep, the CF peer of `docker login` for build-once-ship
+(cf #238's near-term "richer host checks"). Proven live 2026-07-05:
+liquid-purescript.hylograph.net published end-to-end through `quartermaster
+publish`. Deferred: the git-push channels; a `build:`-for-static hook; wiring
+publish into the node≡backend-go conformance.
+
+---
+
 ## Still open (deferred, not blocking)
 
 - **E10** — the full EdgeKind × tool *fidelity matrix* (which requirement
