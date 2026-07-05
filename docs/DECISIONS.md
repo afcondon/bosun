@@ -263,6 +263,53 @@ fields ride the same rule.)
 
 ---
 
+## D-G1 — `fleet.json` commit ownership: the write-owner (chair-server) commits
+
+**Context.** `registry/fleet.json` is git-tracked, and the git history is
+declared to be its audit trail — `.gitignore` ignores the atomic-write `.bak`
+copies precisely because "the git history is the real long-tail audit." But
+chair-server *rewrites* `fleet.json` at runtime on every `POST`/`DELETE`
+(register/remove a server), and nothing commits it. So runtime writes pile up
+as an uncommitted working-tree diff and only ever get committed ad hoc, bundled
+into unrelated feature commits. Concrete trigger: a hand-registered row (the
+liquid-purescript docs site) sat uncommitted overnight 2026-07-04→05 — exactly
+the drift the audit-trail claim is supposed to prevent.
+
+**Decision.** The owner of the write owns the commit. Immediately after its
+atomic `writeFleet` + router reload, **chair-server git-adds and commits
+`registry/fleet.json`** with a one-line message:
+
+```
+registry: <verb> <role> <slug> @<port>
+# e.g.  registry: add frontend juliet-whiskey-papa-juliet @3021
+#       registry: rm  frontend juliet-whiskey-papa-juliet @3021
+```
+
+One registry mutation = one commit. Local only, **no push** (audit, not
+distribution). Rejected alternatives: *author-commits-by-hand* (relies on
+discipline; the overnight drift is the proof it fails) and *untrack-with-seed*
+(contradicts the "git history is the audit" philosophy already encoded in
+`.gitignore`, and loses the per-change ledger).
+
+**Concrete change.** A best-effort `commitFleet` step in `chair-server`'s IO,
+called after `writeFleet` in both `handleCreateServer` and `handleDeleteServer`
+(`ChairServer/Main.purs`), running `git -C <repo> add registry/fleet.json &&
+git -C <repo> commit -m …`. It **must be non-fatal**: a commit failure (dirty
+tree, detached HEAD, no git identity) logs and continues — it must never fail
+the registration, whose real success is the write + reload.
+
+**Consequences.** `fleet.json`'s history becomes a clean per-change ledger of
+registry mutations, authored by the daemon, matching the ephemeral-`.bak`
+philosophy. Commit noise is bounded — registrations are rare events, not a hot
+path. A daemon authoring commits means **no human review gate** on registry
+changes; acceptable because the rows are machine-generated from a validated
+POST and Andrew reviews via normal `git log`, not a pre-commit hook. **Interim,
+until implemented:** whoever registers commits by hand with the same message
+format (stated in `REGISTER-A-SERVICE.md`). Status 2026-07-05: decided;
+implementation pending (the one code follow-up from the doc-only session).
+
+---
+
 ## Still open (deferred, not blocking)
 
 - **E10** — the full EdgeKind × tool *fidelity matrix* (which requirement

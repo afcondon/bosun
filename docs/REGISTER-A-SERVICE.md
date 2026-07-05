@@ -1,0 +1,160 @@
+# Registering a service that `bosun serve` should serve
+
+**Status:** current procedure (written 2026-07-05, after registering the
+liquid-purescript docs site the *wrong* way and discovering the right one).
+This is the operational how-to for the lazy-spawn router; the responsibility
+model behind it is `MARGINALIA-SEAM.md`, the router itself is `BOSUN-SERVE.md`.
+
+## The one thing to know
+
+To add a service to the running `bosun serve` router, **POST one request to the
+chair-server on `:3022`**. It assigns the id, denormalises the project
+name/slug from Marginalia, atomically writes `registry/fleet.json`, and nudges
+the router to re-admit the new route immediately.
+
+Do **not**, as a first resort:
+- hand-edit `registry/fleet.json` (chair-server owns it),
+- `POST` the server to Marginalia `:3100/api/projects/:id/servers` (that path is
+  legacy — see the seam note below),
+- `kill -HUP` the router by hand (the POST does the reload for you).
+
+All three still *work*, but they bypass the owner and let the registries drift.
+
+## Why `:3022` and not Marginalia `:3100`
+
+Per `MARGINALIA-SEAM.md`: **Marginalia holds intent, Bosun holds operations.**
+Servers, ports, `startCommand`s and hosts have moved out of Marginalia into
+Bosun's registry (`registry/fleet.json`), which the **chair-server** owns and
+exposes over an HTTP API shape-compatible with Marginalia's old `/api/ports`.
+
+Marginalia is still in the loop for **project identity**: the chair-server POST
+looks up the Marginalia project by id to denormalise `projectName` +
+`projectSlug` into the row. So the project must exist in Marginalia (intent),
+but its *server* row lives in Bosun (ops).
+
+> **Gotcha that bites:** `GET :3100/api/ports/suggest` (Marginalia's DB) and
+> `GET :3022/api/ports/suggest` (fleet.json, what the router actually reads) can
+> return **different** ports — they did on 2026-07-05 (3023 vs 3000). Always use
+> `:3022` for anything Bosun serves, or you may "reserve" a port the router
+> considers taken (or free) when it isn't.
+
+## The chair-server registry API (`:3022`, on the MBP)
+
+```
+GET    /api/ports                    every server row + live collisions
+GET    /api/ports/suggest            next free port from 3000 (over fleet.json)
+GET    /api/projects/:id/servers     servers for one project
+POST   /api/projects/:id/servers     create a row — assigns id, writes fleet.json, reloads serve
+DELETE /api/servers/:id              remove a row, writes fleet.json, reloads serve
+```
+
+The `POST` body mirrors the old Marginalia server shape:
+
+```json
+{ "role": "frontend",
+  "port": 3021,
+  "url": "http://localhost:3021",
+  "startCommand": "cd /abs/path && npx http-server . -p 3021 -c-1 --cors",
+  "description": "...",
+  "host": "mbp",
+  "tailscaleName": "andrews-macbook-pro",
+  "environment": "native" }
+```
+
+`id`, `projectId`, `projectName`, `projectSlug` are filled in by the server —
+don't send them.
+
+## Procedure
+
+1. **Make sure the project exists in Marginalia** (identity). If not, create it
+   there first (`/marginalia` skill) — you need its numeric id.
+2. **Ask Bosun for a free port:** `curl -s :3022/api/ports/suggest`.
+3. **Derive the `startCommand`** for the service kind. It **must** contain:
+   - an absolute **`cd /abs/path &&`** anchor — without it the router spawns the
+     process in *its own* cwd and serves the wrong directory;
+   - the **literal port number** — `bosun serve` admission rejects a row whose
+     `startCommand` doesn't contain its port (`PortNotInStartCommand`).
+4. **Test the command** in a subshell and confirm the port serves, *then* kill
+   it so the router can bind the port.
+5. **Register it:**
+   ```sh
+   curl -s -X POST http://localhost:3022/api/projects/<id>/servers \
+     -H 'Content-Type: application/json' \
+     -d '{"role":"frontend","port":<port>,"url":"http://localhost:<port>",
+          "startCommand":"cd /abs/path && <serve cmd with -p <port>>",
+          "description":"...","host":"mbp",
+          "tailscaleName":"andrews-macbook-pro","environment":"native"}'
+   ```
+   The response is the created row (with its assigned `id`). The router has
+   already been reloaded.
+6. **Verify:**
+   ```sh
+   curl -s :3997/state | jq '.routes[] | select(.publicPort==<port>)'
+   curl -sI http://localhost:<port>/            # lazy-spawns the backend, expect 200
+   ```
+
+## Worked example — a static site (liquid-purescript docs, 2026-07-05)
+
+A folder of hand-written HTML/CSS at
+`/Users/afc/work/afc-work/cloudflare-sites/liquid-purescript`:
+
+```sh
+curl -s :3022/api/ports/suggest                                  # -> 3021
+curl -s -X POST http://localhost:3022/api/projects/246/servers \
+  -H 'Content-Type: application/json' \
+  -d '{"role":"frontend","port":3021,"url":"http://localhost:3021",
+       "startCommand":"cd /Users/afc/work/afc-work/cloudflare-sites/liquid-purescript && npx http-server . -p 3021 -c-1 --cors",
+       "description":"Liquid PureScript docs site — static, Swiss style.",
+       "host":"mbp","tailscaleName":"andrews-macbook-pro","environment":"native"}'
+# -> row with id assigned; site live at http://localhost:3021
+```
+
+`npx http-server . -p <port> -c-1 --cors` is the standard static-serve command
+(`-c-1` disables caching for dev; `python3 -m http.server <port> --bind 127.0.0.1`
+is the zero-dependency alternative).
+
+> **Not to be confused with `x-bosun.static`.** That is a *CDN publish*
+> declaration (host `cloudflare`, `channel: cloudflare-pages-wrangler`) whose
+> `apply` is a manual wrangler advisory — it describes a site deployed to
+> Cloudflare Pages, **not** a directory served locally over HTTP. See
+> `fixtures/static-cdn-widgets/` and `ARTIFACTS.md`. Local dev serving is a
+> plain `fleet.json` frontend row as above.
+
+## Committing the registry change (decision D-G1)
+
+`registry/fleet.json` is git-tracked — its history is the audit trail. By
+**decision D-G1** (`DECISIONS.md`), the write-owner commits: chair-server
+git-adds and commits `fleet.json` right after each write, one commit per
+registration, message `registry: <verb> <role> <slug> @<port>`, local, no push.
+
+**Until that lands in chair-server, commit by hand with the same format:**
+
+```sh
+git -C /Users/afc/work/afc-work/ShapedSteer/bosun add registry/fleet.json
+git -C /Users/afc/work/afc-work/ShapedSteer/bosun commit -m "registry: add frontend juliet-whiskey-papa-juliet @3021"
+```
+
+Never leave a registry write uncommitted — an uncommitted `fleet.json` diff is
+the exact drift D-G1 exists to prevent.
+
+## Port & router facts worth keeping straight
+
+- **Public port = identity** (the address you know the service by). The router
+  binds it on `127.0.0.1` and lazy-spawns the backend on **public + 20000**
+  (e.g. 3021 → 23021) on the first request.
+- **`bosun serve` `/state` is on `:3997`.** (Older docs say `:3998` — that was
+  *SDI's* port, the predecessor. Supervise uses `:3996`, docker `:3997`.)
+- **Reload is `POST :3997/control/reload`** (equivalent to `SIGHUP`), which the
+  chair-server calls for you.
+
+## Known rough edges (2026-07-05)
+
+The seam is landed in mechanism but mid-enactment (MARGINALIA-SEAM.md step 3
+— "update the `/marginalia`, `/what-next`, `deploy.md` skills" — is only
+partially done, which this doc is part of):
+
+- Some services still have **legacy server rows in Marginalia `:3100`** as well
+  as in `fleet.json`; the two aren't synced. For anything Bosun serves, treat
+  `:3022`/`fleet.json` as authoritative.
+- **Quartermaster** (`ShapedSteer/quartermaster`) has no Marginalia project yet.
+- Full findings + history: Marginalia **note on Bosun #227** (2026-07-04/05).
