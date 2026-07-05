@@ -404,8 +404,38 @@
       "prerequisites": null,
       "host": "macmini",
       "tailscaleName": "andrews-mac-mini"
+    },
+    {
+      "id": 148,
+      "projectId": 242,
+      "projectName": "Hylograph Halogen UI",
+      "projectSlug": "whiskey-golf-oscar-lima",
+      "role": "frontend",
+      "port": 3025,
+      "url": "http://localhost:3025",
+      "startCommand": "cd /Users/afc/work/afc-work/purescript-hylograph-halogen-ui/showcase && spago bundle -p hylograph-halogen-ui-showcase && python3 -m http.server 3025",
+      "description": "Hylograph Halogen UI widget showcase — local dev preview: bundles the showcase package and serves the static gallery (index.html + bundle.js). Built site deploys separately to widgets.hylograph.net (CF Pages, project 244).",
+      "environment": "native",
+      "prerequisites": null,
+      "host": "mbp",
+      "tailscaleName": "andrews-macbook-pro"
+    },
+    {
+      "id": 153,
+      "projectId": 246,
+      "projectName": "liquid-purescript",
+      "projectSlug": "juliet-whiskey-papa-juliet",
+      "role": "frontend",
+      "port": 3021,
+      "url": "http://localhost:3021",
+      "startCommand": "cd /Users/afc/work/afc-work/cloudflare-sites/liquid-purescript && npx http-server . -p 3021 -c-1 --cors",
+      "description": "Liquid PureScript docs/showcase site — static, hand-authored (Swiss/International style). Deploy target Cloudflare Pages (project TBD).",
+      "environment": "native",
+      "prerequisites": null,
+      "host": "mbp",
+      "tailscaleName": "andrews-macbook-pro"
     }
   ],
-  "count": 27,
+  "count": 29,
   "collisions": {}
 }
