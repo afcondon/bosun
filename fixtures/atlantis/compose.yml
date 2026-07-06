@@ -83,6 +83,31 @@ services:
       expose:
         - host: 3061
 
+  superdirt:
+    # The rig's sample-playback sound engine (SuperCollider + SuperDirt). Stage 0
+    # — no deps; it just binds UDP and waits for /dirt/play. The SHIPPING path is
+    # BEAM-authoritative: purerl-tidal (and its reef_stellatus voice) emits
+    # /dirt/play straight here, so this is permanent rig infrastructure, not a
+    # dev crutch. It listens on the conventional Dirt port 57120 — the reason
+    # es9-daemon's OSC moved to 57130 above. boot-superdirt.sh runs headless
+    # sclang in its own process group and drains the scsynth child on TERM (the
+    # pgid teardown Bosun's process executor should model). SUPERDIRT_PORT is
+    # port-from-env per the bosun-daemon skill.
+    #
+    # NB the browser-side `stellatus-bridge.mjs` (HTTP→UDP relay) is a DEV-AUDITION
+    # crutch only — it exists because a browser can't send UDP, and it disappears
+    # once the BEAM path lands. It is deliberately NOT modelled here.
+    x-bosun:
+      host: mbp
+      probe: process
+      process:
+        cwd: /Users/afc/work/afc-work/music/live-coding/triggerfish
+        command: ./audio/boot-superdirt.sh
+        env:
+          SUPERDIRT_PORT: "57120"
+      expose:
+        - host: 57120
+
   fh2-daemon:
     x-bosun:
       host: mbp
