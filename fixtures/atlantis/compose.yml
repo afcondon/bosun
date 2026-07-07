@@ -125,6 +125,10 @@ services:
         command: ./audio/boot-superdirt.sh
         env:
           SUPERDIRT_PORT: "57120"
+          # Route scsynth's stereo out to BlackHole so Ableton can take it as an
+          # input (capture / mix / record). Comment out to hear SuperDirt on the
+          # system default output directly. Inherited by sclang via the env.
+          SUPERDIRT_DEVICE: "BlackHole 2ch"
       expose:
         - host: 57120
 
