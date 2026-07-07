@@ -125,11 +125,11 @@ services:
         command: ./audio/boot-superdirt.sh
         env:
           SUPERDIRT_PORT: "57120"
-          # NB: the scsynth output device (BlackHole 2ch, for Ableton capture) is set
-          # inside boot-superdirt.sh, NOT here — Bosun does not yet shell-quote env
-          # values with spaces, so `SUPERDIRT_DEVICE: "BlackHole 2ch"` renders as
-          # `env …=BlackHole 2ch ./…` → `env: 2ch: not found`. Move it back here once
-          # Bosun quotes env values (Marginalia note on project 227).
+          # scsynth output device — BlackHole 2ch, so Ableton captures the stereo
+          # pair. The space is safe: Bosun now shell-quotes env values (project 227
+          # note #398, landed 2026-07-07). boot-superdirt.sh keeps a `:-BlackHole 2ch`
+          # fallback for manual/standalone launches; this is the supervised value.
+          SUPERDIRT_DEVICE: "BlackHole 2ch"
       expose:
         - host: 57120
 
