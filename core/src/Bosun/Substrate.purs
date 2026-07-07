@@ -28,16 +28,19 @@ module Bosun.Substrate
   , pidKill
   , pidPath
   , logPath
+  , shellQuote
   ) where
 
 import Prelude
 
 import Bosun.Atoms (ServiceId, unServiceId)
+import Data.Array as Array
 import Data.Generic.Rep (class Generic)
 import Data.Maybe (isJust)
 import Data.Show.Generic (genericShow)
 import Data.String (Pattern(..), Replacement(..))
 import Data.String as String
+import Data.String.CodeUnits as SCU
 
 -- | The OS whose **native-process** supervision semantics a process substrate
 -- | models. Each constructor names a DISTINCT set of detach / pgid-capture /
@@ -217,3 +220,35 @@ sanitizeId sid =
   ( String.replaceAll (Pattern ":") (Replacement "-")
       >>> String.replaceAll (Pattern "/") (Replacement "-")
   ) (unServiceId sid)
+
+-- | POSIX single-quote a value for safe inclusion in a rendered shell command
+-- | (the `shlex.quote` convention). A value composed ENTIRELY of shell-safe
+-- | characters — the alnum plus the path / port / identifier punctuation that
+-- | env assignments have always carried (`/ . _ - : = @ % + ,`) — is returned
+-- | VERBATIM. That keeps the unquoted `KEY=VAL` form for the paths, ports, and
+-- | identifiers that are the overwhelming common case (`ATLAS_PORT=3210`,
+-- | `ERL_LIBS=_build/default/lib`) and so leaves every existing conformance
+-- | snapshot byte-identical.
+-- |
+-- | Anything else — most importantly a value containing a SPACE
+-- | (`BlackHole 2ch`, the CoreAudio device name that shipped this bug: an
+-- | unquoted `env SUPERDIRT_DEVICE=BlackHole 2ch …` split into an assignment
+-- | plus a bogus `2ch` COMMAND) — is wrapped in SINGLE quotes so nothing inside
+-- | is re-interpreted (no `$var`, no `` `cmd` ``, no backslash escapes). Any
+-- | embedded single quote is rendered with the classic `'\''` break-out
+-- | (close-quote, escaped-quote, reopen-quote). Pure, so it rides go-conformance
+-- | like the rest of the command generation.
+shellQuote :: String -> String
+shellQuote s
+  | s /= "" && Array.all shellSafeChar (SCU.toCharArray s) = s
+  | otherwise =
+      "'" <> String.replaceAll (Pattern "'") (Replacement "'\\''") s <> "'"
+
+-- A character that needs no shell quoting inside a `KEY=VAL` assignment: alnum
+-- plus the path / port / identifier punctuation env values have always used.
+shellSafeChar :: Char -> Boolean
+shellSafeChar c =
+  (c >= 'a' && c <= 'z')
+    || (c >= 'A' && c <= 'Z')
+    || (c >= '0' && c <= '9')
+    || isJust (String.indexOf (Pattern (SCU.singleton c)) "_-./:=@%+,")

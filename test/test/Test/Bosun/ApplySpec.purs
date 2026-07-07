@@ -122,6 +122,15 @@ spec = describe "Bosun.Apply" do
     withScript (mkDeployment [ procLeafEnv "a" "/srv/a" "erl -pa ebin" [ Tuple (mkEnvVar "ERL_LIBS") "_build/default/lib" ] ]) (snap []) \lines ->
       lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; i=0; while kill -0 -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; ( nohup env ERL_LIBS=_build/default/lib erl -pa ebin >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
 
+  -- REGRESSION (note #398): a typed env VALUE with a space (the CoreAudio
+  -- device name `BlackHole 2ch` on SuperDirt) must be single-quoted, or `env`
+  -- reads `SUPERDIRT_DEVICE=BlackHole` as the assignment and `2ch` as the
+  -- COMMAND (`env: 2ch: No such file or directory`). Space-free values
+  -- (ERL_LIBS above) stay unquoted; only this one gets quotes.
+  it "Process Start with a spaced env value single-quotes it (the BlackHole 2ch bug)" $
+    withScript (mkDeployment [ procLeafEnv "a" "/srv/a" "./boot-superdirt.sh" [ Tuple (mkEnvVar "SUPERDIRT_DEVICE") "BlackHole 2ch" ] ]) (snap []) \lines ->
+      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; i=0; while kill -0 -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; ( nohup env SUPERDIRT_DEVICE='BlackHole 2ch' ./boot-superdirt.sh >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+
   it "a Process command that already backgrounds itself is left as-is (no group captured)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a &" ]) (snap []) \lines ->
       lines `shouldEqual` [ "cd /srv/a && run-a &" ]

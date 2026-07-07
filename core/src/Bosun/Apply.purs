@@ -32,7 +32,7 @@ import Bosun.Executor (Executor(..))
 import Bosun.Plan (Change(..), Plan, changeRef, planSteps)
 import Bosun.Reachability (Address(..), addresses)
 import Bosun.Service (Service, ValidatedDeployment, unBootOrder, unServiceRef, unValidatedDeployment)
-import Bosun.Substrate (composeCmd, daemonize, pidKill)
+import Bosun.Substrate (composeCmd, daemonize, pidKill, shellQuote)
 import Bosun.Target (ExecLoc(..), Target, TargetMap, resolveTarget, unSshDest)
 import Data.Array as A
 import Data.Array.NonEmpty as NEA
@@ -248,15 +248,21 @@ manual = case _ of
 -- A Process's typed launch `env` rendered as leading `KEY=VAL ` assignments,
 -- which `daemonize`'s `nohup env <cmd>` (Bosun.Substrate) then applies (same
 -- shell mechanism the `ATLAS_PORT=3210 julia …` startCommand already relies
--- on). Empty ⇒ "" (a transparent passthrough). Values are unquoted, matching
--- that precedent — these are paths/ports/identifiers; a value with spaces would
--- need quoting (and would also trip the known ssh single-quote papercut for
--- remote Process commands).
+-- on). Empty ⇒ "" (a transparent passthrough). Each VALUE is `shellQuote`d —
+-- paths/ports/identifiers pass through verbatim (so the common case, and every
+-- conformance snapshot, is unchanged), but a value with a SPACE is single-
+-- quoted so `env` sees one assignment rather than splitting it into an
+-- assignment plus a spurious command (the `SUPERDIRT_DEVICE="BlackHole 2ch"`
+-- bug — note #398).
 envAssign :: Array (Tuple EnvVar String) -> String
-envAssign = foldMap \(Tuple k v) -> unEnvVar k <> "=" <> v <> " "
+envAssign = foldMap \(Tuple k v) -> unEnvVar k <> "=" <> shellQuote v <> " "
 
 -- Render a target's env prefix as leading `export K=V && …` clauses, so the
 -- assignments take effect for the (non-interactive, remote) shell that runs the
--- command. Empty prefix ⇒ empty string (transparent).
+-- command. Empty prefix ⇒ empty string (transparent). Values are NOT quoted
+-- here (unlike `envAssign`): a target's `envPrefix` is author-controlled shell,
+-- not literal data, and legitimately contains expansions that must survive —
+-- e.g. the macmini `PATH=/usr/local/bin:…:$PATH` deliberately references the
+-- existing `$PATH`, which single-quoting would neuter.
 envExports :: Array (Tuple String String) -> String
 envExports = foldMap \(Tuple k v) -> "export " <> k <> "=" <> v <> " && "
