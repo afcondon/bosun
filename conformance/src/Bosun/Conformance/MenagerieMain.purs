@@ -54,7 +54,9 @@ main = case jsonParser composeJson of
       r = reconcile (buildAliases insts) insts
     case toEither (validate r.deployment) of
       Left _ -> log "menagerie (Go column): fixture failed to validate (should not happen)"
-      Right vd -> superviseResident defaultTargets (Just 8788) false r.deployment vd >>= runResident
+      -- `Nothing` reload source: the fixture is embedded, not a file on disk, so
+      -- there is nothing to re-read — `POST /control/reload` reports that.
+      Right vd -> superviseResident defaultTargets (Just 8788) false Nothing r.deployment vd >>= runResident
 
 -- The JSON equivalent of fixtures/menagerie/compose.yml. Kept in sync by hand
 -- (3 services); the node column reads the YAML, this embeds the same content, and

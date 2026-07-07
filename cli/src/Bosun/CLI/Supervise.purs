@@ -33,8 +33,8 @@ import Bosun.CLI.Resident (Resident, nowMs, runResident)
 import Bosun.Plan (Change(..), Plan, Status(..), plan, planSteps)
 import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderCommand, renderReport)
-import Bosun.Service (Deployment, ValidatedDeployment, unServiceRef)
-import Bosun.Supervisor (Launch, SupConfig, SupState, SvcState, defaultConfig, emptySupState, recordLaunches, refine)
+import Bosun.Service (Deployment, ValidatedDeployment, unServiceRef, unValidatedDeployment)
+import Bosun.Supervisor (Launch, SuperviseDiff, SupConfig, SupState, SvcState, defaultConfig, emptySupState, forgetLaunches, recordLaunches, refine, superviseDiff)
 import Bosun.Target (TargetMap)
 import Bosun.Validate (validate)
 import Bosun.Version (version)
@@ -43,6 +43,7 @@ import Data.Either (Either(..))
 import Data.Foldable (intercalate, traverse_)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
+import Data.Set as Set
 import Data.Tuple (Tuple(..))
 import Data.Validation.Semigroup (toEither)
 import Effect (Effect)
@@ -55,6 +56,29 @@ defaultStatusPort = 3996
 
 intervalMs :: Int
 intervalMs = 3000
+
+-- | A re-ingest capability for hot-reload: re-read the compose + registry from
+-- | disk and reconcile+validate them into a fresh deployment, or a concise
+-- | reason the reload was rejected (kept in the message so the operator sees why
+-- | the running group was left untouched). `Nothing` ⇒ this resident has no
+-- | reload source (the embedded-fixture conformance harness), so `POST
+-- | /control/reload` reports that rather than silently no-op'ing.
+type ReloadSource = Maybe (Effect (Either String (Tuple Deployment ValidatedDeployment)))
+
+-- | Re-read + reconcile + validate the two spec files, for hot-reload. A parse
+-- | or validation failure is a `Left` with a short reason — the resident keeps
+-- | the CURRENT deployment running rather than tearing the rig down over a typo.
+reIngest :: String -> String -> Effect (Either String (Tuple Deployment ValidatedDeployment))
+reIngest composePath registryPath = do
+  composeJson <- readYamlFile composePath
+  registryJson <- readJsonFile registryPath
+  let
+    insts = ingestCompose composeJson <> ingestRegistry registryJson
+    r = reconcile (buildAliases insts) insts
+    dep = r.deployment
+  pure case toEither (validate dep) of
+    Left _ -> Left "reloaded spec does not validate — keeping current deployment"
+    Right vd -> Right (Tuple dep vd)
 
 -- | `bosun supervise [--port N] <compose> <registry>`. The status port defaults
 -- | to 3996; pass `--port` to run one supervisor PER GROUP, each on its own port
@@ -74,7 +98,9 @@ runSupervise targets mPort startHeld composePath registryPath = do
       log "cannot supervise: the deployment does not validate —"
       log ""
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
-    Right vd -> superviseResident targets mPort startHeld dep vd >>= runResident
+    Right vd ->
+      superviseResident targets mPort startHeld (Just (reIngest composePath registryPath)) dep vd
+        >>= runResident
 
 -- | Build the supervise `Resident` — Refs for desired-state and launch memory,
 -- | the observe→refine→plan→enact `tick`, the `/state` renderer, the `/control`
@@ -85,8 +111,8 @@ runSupervise targets mPort startHeld composePath registryPath = do
 -- | dual-runtime parity test (mirrors `Bosun.CLI.Docker.dockerResident`). The
 -- | `targets` are threaded (not hardcoded) so a remote-host supervise resolves
 -- | the same way `apply` does.
-superviseResident :: TargetMap -> Maybe Int -> Boolean -> Deployment -> ValidatedDeployment -> Effect Resident
-superviseResident targets mPort startHeld dep vd = do
+superviseResident :: TargetMap -> Maybe Int -> Boolean -> ReloadSource -> Deployment -> ValidatedDeployment -> Effect Resident
+superviseResident targets mPort startHeld reloadSource dep0 vd0 = do
   -- `startHeld` boots the resident with the group HELD DOWN (desired=down) and
   -- skips the initial bring-up: the daemon is up and answering /state + /control
   -- so the Chair sees an armable supervise group, but nothing is launched until a
@@ -99,6 +125,13 @@ superviseResident targets mPort startHeld dep vd = do
   -- what makes `supervise` more than a stateless plan-loop — without it a
   -- slow-boot service re-Starts every tick (the relaunch storm).
   supRef <- Ref.new emptySupState
+  -- The DEPLOYMENT itself is mutable now: a `POST /control/reload` re-reads the
+  -- spec and swaps these, so the loop below always plans/observes against the
+  -- CURRENT deployment. Before reload this was closed-over-once; the diff-guided
+  -- swap in the `reload` verb is what makes it safe (unchanged services keep
+  -- their launch memory ⇒ never double-launched).
+  depRef <- Ref.new dep0
+  vdRef <- Ref.new vd0
   let
     cfg :: SupConfig
     cfg = defaultConfig
@@ -127,8 +160,10 @@ superviseResident targets mPort startHeld dep vd = do
         _ -> Nothing
 
     -- One reconcile pass against an already-refined observed snapshot:
-    -- plan → enact → stamp launch memory.
+    -- plan → enact → stamp launch memory. Reads the CURRENT deployment from
+    -- `vdRef`, so a reload takes effect on the very next enact.
     enactPlan label now observed = do
+      vd <- Ref.read vdRef
       let p = plan vd { desired: vd, recorded: Nothing, observed }
       enact label (applyScript targets vd p)
       Ref.modify_ (recordLaunches cfg now (launchesOf p)) supRef
@@ -137,10 +172,23 @@ superviseResident targets mPort startHeld dep vd = do
       now <- nowMs
       enactPlan "bring-up" now Map.empty
 
-    bringDown = enact "teardown" (downScript targets vd)
+    bringDown = do
+      vd <- Ref.read vdRef
+      enact "teardown" (downScript targets vd)
+
+    -- Stop just a SUBSET of services (their current, old-spec generation): filter
+    -- the full teardown script to the wanted ids. Used by `reload` to bring down
+    -- only the removed/changed services, leaving the unchanged ones running.
+    stopSubset theVd ids =
+      let
+        wanted = Set.fromFoldable ids :: Set.Set ServiceId
+        only = A.filter (\sc -> Set.member sc.service wanted) (downScript targets theVd)
+      in
+        enact "reload-stop" only
 
     tick = do
       up <- Ref.read desiredUp
+      dep <- Ref.read depRef
       obs <- observeSupSnapshot dep
       now <- nowMs
       prev <- Ref.read supRef
@@ -166,6 +214,7 @@ superviseResident targets mPort startHeld dep vd = do
         pure "down: desired=down, auto-restart suspended"
       "restart" -> do
         now <- nowMs
+        dep <- Ref.read depRef
         obs <- observeSupSnapshot dep
         prev <- Ref.read supRef
         let
@@ -174,6 +223,36 @@ superviseResident targets mPort startHeld dep vd = do
         Ref.write refined.state supRef
         enactPlan ("restart " <> arg) now forced
         pure ("restart: " <> arg)
+      -- HOT-RELOAD (note #397): re-read the spec, diff it against what is
+      -- running, and stop ONLY the services whose launch spec changed (or were
+      -- removed) — the unchanged ones keep running with their launch memory, so
+      -- a live UDP/socket daemon is never double-launched. The changed/added
+      -- services come up on the next keep-alive tick (desired=up). A spec that
+      -- fails to parse/validate is rejected and the running group is untouched.
+      "reload" -> case reloadSource of
+        Nothing -> pure "reload: no reload source configured for this resident"
+        Just reload -> do
+          res <- reload
+          case res of
+            Left err -> pure ("reload: rejected — " <> err)
+            Right (Tuple dep' vd') -> do
+              oldVd <- Ref.read vdRef
+              let
+                d = superviseDiff
+                  (unValidatedDeployment oldVd).services
+                  (unValidatedDeployment vd').services
+                toStop = d.removed <> d.changed
+              -- Stop the CURRENT generation of removed+changed services — render
+              -- their Stop commands from the OLD vd (it describes what is running
+              -- now), then forget their launch memory so the next tick relaunches
+              -- the changed ones with the new spec and leaves the removed dead.
+              stopSubset oldVd toStop
+              Ref.modify_ (forgetLaunches toStop) supRef
+              -- Swap in the new deployment. UNCHANGED services are untouched and
+              -- keep their launch memory (the double-launch guard).
+              Ref.write dep' depRef
+              Ref.write vd' vdRef
+              pure ("reload: " <> reloadSummary d)
       _ -> pure ("unknown control verb: " <> verb)
   if startHeld then
     log "supervise: resident, held down (desired=down) — no initial bring-up; raise from the Chair (▲ up all)"
@@ -181,6 +260,15 @@ superviseResident targets mPort startHeld dep vd = do
     log "supervise: initial bring-up…"
     bringUp
   pure ({ statusPort: fromMaybe defaultStatusPort mPort, intervalMs, tick, stateBody, control } :: Resident)
+
+-- | A one-line human summary of what a hot-reload did, for the `/control/reload`
+-- | response the Chair surfaces.
+reloadSummary :: SuperviseDiff -> String
+reloadSummary d =
+  show (A.length d.added) <> " added, "
+    <> show (A.length d.changed) <> " changed, "
+    <> show (A.length d.removed) <> " removed, "
+    <> show (A.length d.unchanged) <> " unchanged"
 
 -- | `/state` JSON. The `services` map (id → status string) is UNCHANGED — the
 -- | Chair's existing decoder keeps working. Everything else is ADDITIVE (ADR

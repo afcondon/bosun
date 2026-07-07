@@ -136,3 +136,43 @@ observe/control seam abstraction (Docker-on-Node now, BEAM observer later) is
 specced in `BEAM-OBSERVER.md`. Correlation reminder for the overlay: `/state`
 keys by canonical `serviceId` (`projectSlug:role`), graph nodes key by
 `localName` — map through `reconcile.aliases` from `AnalyzeResult`.
+
+## `supervise` control surface + hot-reload (2026-07-07, note #397)
+
+`bosun supervise` exposes the SAME `/state` + `/control/*` seam as `serve`
+(HANDOFF-CHAIR contract), so the Chair drives either. Its control verbs:
+
+| Verb | Effect |
+|---|---|
+| `POST /control/up` | desired=up; bring the group up (the Chair's ▲) |
+| `POST /control/down` | desired=down; tear down + suspend auto-restart, forget launch memory |
+| `POST /control/restart?service=<id>` | force ONE service to restart (mark it `Failed`; the planner does the rest, incl. `binds-to`/`part-of` co-restart) |
+| `POST /control/reload` | **NEW** — re-read compose+registry, diff, restart ONLY what changed |
+
+**Hot-reload (`/control/reload`).** Before this, the compose was captured once at
+supervisor start; changing any service spec (env, command, cwd, port) meant
+killing and relaunching the supervisor *process*. Now `reload` re-reads both
+spec files, reconciles+validates them, and applies a **`SuperviseDiff`** — the
+supervise analogue of `serve`'s `ServeDiff` (`Bosun.Supervisor.superviseDiff`,
+pure ⇒ rides node≡Go conformance). Keyed by `ServiceId`, it partitions by RESTART
+SIGNATURE (`{ host, launch }` — what determines the actual running process):
+
+- **unchanged** → left running, **launch memory preserved** (see the guard below);
+- **changed** → old generation stopped + memory forgotten ⇒ next keep-alive tick
+  relaunches with the new spec;
+- **added** → next tick brings it up; **removed** → stopped, absent from new spec.
+
+A reloaded spec that fails to parse/validate is **rejected** (`reload: rejected —
+…`); the running group is left untouched. The response is a one-line summary,
+e.g. `reload: 0 added, 1 changed, 0 removed, 1 unchanged`.
+
+**The double-launch guard (note #397 part b).** A naive reload that FORGOT launch
+memory would re-observe every service from scratch; a live UDP/socket daemon
+(es9-daemon on OSC 57130, link-spike) is invisible to a TCP probe, so it would
+read `Down` → "never launched" → `Start` a SECOND copy, colliding on the
+CoreAudio device / OSC port. `superviseDiff` never touches unchanged services, so
+their launch memory (the pgid the supervisor holds — the honest liveness signal)
+survives the reload and they are never double-launched. **Corollary requirement:**
+a UDP/socket/no-network daemon MUST declare `x-bosun.probe: process` so its
+readiness is read by pgid, not by the TCP fallback (`effProbe` maps `process` →
+`ProcessAlive`; the atlantis fixture already does this for es9-daemon/link-spike).

@@ -43,16 +43,22 @@ module Bosun.Supervisor
   , backoffMs
   , refine
   , recordLaunches
+  , SuperviseDiff
+  , superviseDiff
+  , forgetLaunches
   ) where
 
 import Prelude
 
 import Bosun.Atoms (ServiceId)
 import Bosun.Plan (Snapshot, Status(..))
+import Bosun.Service (Service)
+import Data.Array as A
 import Data.Foldable (foldr)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, isJust)
+import Data.Set as Set
 import Data.Tuple (Tuple(..))
 
 -- | Milliseconds since some fixed epoch — supplied by the caller's clock at the
@@ -232,3 +238,71 @@ recordLaunches cfg now launches st = foldr stamp st launches
             }
     in
       Map.insert l.id s' acc
+
+-- ── hot-reload: what a resident `supervise` must do when its spec is re-read ──
+
+-- | What a hot-reload must do to the RUNNING group when `supervise` re-reads the
+-- | compose/registry while resident — the supervise analogue of
+-- | `Bosun.Serve.serveDiff`. Keyed by `ServiceId` (stable across a reload), it
+-- | partitions the union of old+new services by their RESTART SIGNATURE — the
+-- | launch spec + host that determine the actual running process. A change to a
+-- | service's deps / routes / probe alone does NOT appear here: those change what
+-- | the planner *observes* or *orders*, not the process that is running, so they
+-- | need no kill.
+-- |
+-- |   * `removed`   — in old, gone from new ⇒ stop it, forget its launch memory.
+-- |   * `changed`   — in both, signature differs ⇒ stop the old generation and
+-- |                   forget its memory, so the next keep-alive tick relaunches it
+-- |                   with the new spec (a native Process has no cheaper restart;
+-- |                   `Substrate.daemonize` reaps-before-launch regardless).
+-- |   * `added`     — new only ⇒ nothing to stop; the next tick brings it up
+-- |                   (no launch memory ⇒ observed `Down` ⇒ `Start`).
+-- |   * `unchanged` — in both, identical signature ⇒ LEAVE IT RUNNING and, above
+-- |                   all, KEEP its launch memory. This is the double-launch
+-- |                   guard (note #397 part b): a reload that forgot memory would
+-- |                   re-read a live UDP/socket daemon (es9-daemon on OSC 57130,
+-- |                   link-spike) — which a TCP probe cannot see — as "never
+-- |                   launched" and `Start` a SECOND copy, colliding on the
+-- |                   CoreAudio device / OSC port. The pgid the supervisor holds
+-- |                   is the honest liveness signal; preserving it across the
+-- |                   reload is precisely what makes re-observe safe.
+-- |
+-- | Pure and order-deterministic (ids walked in sorted-Set order), so it rides
+-- | node≡Go conformance like `serveDiff` / `refine`.
+type SuperviseDiff =
+  { removed   :: Array ServiceId
+  , added     :: Array ServiceId
+  , changed   :: Array ServiceId
+  , unchanged :: Array ServiceId
+  }
+
+superviseDiff :: Map ServiceId Service -> Map ServiceId Service -> SuperviseDiff
+superviseDiff old new =
+  foldr bucket { removed: [], added: [], changed: [], unchanged: [] } allIds
+  where
+  allIds :: Array ServiceId
+  allIds = Set.toUnfoldable (Set.union (Map.keys old) (Map.keys new))
+
+  bucket sid acc = case Map.lookup sid old, Map.lookup sid new of
+    Just o, Just n
+      | sameProcess o n -> acc { unchanged = A.cons sid acc.unchanged }
+      | otherwise -> acc { changed = A.cons sid acc.changed }
+    Just _, Nothing -> acc { removed = A.cons sid acc.removed }
+    Nothing, Just _ -> acc { added = A.cons sid acc.added }
+    Nothing, Nothing -> acc   -- unreachable: sid came from old∪new
+
+  -- The restart signature: everything that determines the actual launched
+  -- process. `launch` (executor cwd/command/env for a Process, or the container
+  -- spec) and `host` (which machine / ssh target). All `Eq`, so this is a plain
+  -- structural comparison — no bespoke Show/serialisation to drift.
+  sameProcess o n =
+    { host: o.host, launch: o.launch } == { host: n.host, launch: n.launch }
+
+-- | Drop launch memory for a set of services — the counterpart to
+-- | `recordLaunches`, used on hot-reload for the `removed`/`changed` services so
+-- | the next tick sees them as un-launched (a `changed` service then relaunches
+-- | with its new spec; a `removed` one, absent from the new deployment, simply
+-- | stops being observed). Services NOT in the list keep their memory — the
+-- | double-launch guard that `superviseDiff.unchanged` relies on.
+forgetLaunches :: Array ServiceId -> SupState -> SupState
+forgetLaunches ids st = foldr Map.delete st ids

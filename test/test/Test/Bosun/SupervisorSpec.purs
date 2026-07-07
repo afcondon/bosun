@@ -8,16 +8,33 @@ module Test.Bosun.SupervisorSpec where
 
 import Prelude
 
-import Bosun.Atoms (ServiceId, mkServiceId)
+import Bosun.Atoms (ServiceId, mkEnvVar, mkServiceId, unServiceId)
 import Bosun.Plan (Reason(..), Status(..))
-import Bosun.Supervisor (Observation, SupConfig, SvcState, backoffMs, emptySupState, initialSvc, recordLaunches, refine)
+import Bosun.Service (Deployment, Service, mkDeployment, unValidatedDeployment)
+import Bosun.Supervisor (Observation, SupConfig, SvcState, backoffMs, emptySupState, forgetLaunches, initialSvc, recordLaunches, refine, superviseDiff)
+import Bosun.Validate (validate)
+import Data.Either (Either(..))
+import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Tuple (Tuple(..))
+import Data.Validation.Semigroup (toEither)
+import Test.Bosun.ApplySpec (procLeaf, procLeafEnv)
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual)
 
 sid :: String -> ServiceId
 sid = mkServiceId
+
+-- Validate a fixture deployment and pull out its ServiceId→Service map — the
+-- input `superviseDiff` compares. (These leaf fixtures always validate.)
+servicesOf :: Deployment -> Map ServiceId Service
+servicesOf d = case toEither (validate d) of
+  Left _ -> Map.empty
+  Right vd -> (unValidatedDeployment vd).services
+
+names :: Array ServiceId -> Array String
+names = map unServiceId
 
 -- `Status` has no `Show` (it's pattern-matched, not printed, in the core); a
 -- local token lets these assertions read with `shouldEqual`.
@@ -125,3 +142,53 @@ spec = describe "Bosun.Supervisor" do
       backoffMs cfg 4 `shouldEqual` 40000.0
       backoffMs cfg 5 `shouldEqual` 60000.0    -- 80000 capped
       backoffMs cfg 10 `shouldEqual` 60000.0   -- well past the cap
+
+  -- The hot-reload diff (note #397): what a `POST /control/reload` must do to the
+  -- running group. Signature = launch spec + host, so only a real launch change
+  -- restarts; an unchanged service is left running (its launch memory preserved,
+  -- the double-launch guard).
+  describe "superviseDiff — hot-reload partition" do
+
+    it "identical spec ⇒ everything unchanged, nothing stopped" do
+      let
+        d = mkDeployment [ procLeaf "a" "/srv/a" "run-a", procLeaf "b" "/srv/b" "run-b" ]
+        r = superviseDiff (servicesOf d) (servicesOf d)
+      names r.unchanged `shouldEqual` [ "a", "b" ]
+      r.changed `shouldEqual` []
+      r.added `shouldEqual` []
+      r.removed `shouldEqual` []
+
+    it "a changed command ⇒ that service is `changed`, the rest unchanged" do
+      let
+        old = mkDeployment [ procLeaf "a" "/srv/a" "run-a", procLeaf "b" "/srv/b" "run-b" ]
+        new = mkDeployment [ procLeaf "a" "/srv/a" "run-a", procLeaf "b" "/srv/b" "run-b --flag" ]
+        r = superviseDiff (servicesOf old) (servicesOf new)
+      names r.changed `shouldEqual` [ "b" ]
+      names r.unchanged `shouldEqual` [ "a" ]
+
+    it "a changed ENV value ⇒ `changed` (the SuperDirt device-name case, #397/#398)" do
+      let
+        old = mkDeployment [ procLeafEnv "sd" "/srv/sd" "./boot.sh" [] ]
+        new = mkDeployment [ procLeafEnv "sd" "/srv/sd" "./boot.sh" [ Tuple (mkEnvVar "SUPERDIRT_DEVICE") "BlackHole 2ch" ] ]
+        r = superviseDiff (servicesOf old) (servicesOf new)
+      names r.changed `shouldEqual` [ "sd" ]
+
+    it "added and removed services are classified, not restarted" do
+      let
+        old = mkDeployment [ procLeaf "a" "/srv/a" "run-a", procLeaf "b" "/srv/b" "run-b" ]
+        new = mkDeployment [ procLeaf "a" "/srv/a" "run-a", procLeaf "c" "/srv/c" "run-c" ]
+        r = superviseDiff (servicesOf old) (servicesOf new)
+      names r.added `shouldEqual` [ "c" ]
+      names r.removed `shouldEqual` [ "b" ]
+      names r.unchanged `shouldEqual` [ "a" ]
+      r.changed `shouldEqual` []
+
+  describe "forgetLaunches — drop memory for stopped services on reload" do
+    it "removes exactly the listed services, preserving the rest (the guard)" do
+      let
+        st = recordLaunches cfg 1000.0
+          [ { id: sid "keep", isRestart: false }, { id: sid "drop", isRestart: false } ]
+          emptySupState
+        st' = forgetLaunches [ sid "drop" ] st
+      Map.member (sid "drop") st' `shouldEqual` false
+      Map.member (sid "keep") st' `shouldEqual` true
