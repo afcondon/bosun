@@ -83,6 +83,26 @@ services:
       expose:
         - host: 3061
 
+  triggerfish-frontend:
+    # The Triggerfish instrument suite (Halogen: Odonus/Balistes/Sufflamen/
+    # Stellatus + Vetula). A rig WS client of purerl-tidal :3012 (Binnacle
+    # transport + Stellatus scene push), so it sits at stage 2 like calypso-server.
+    # Static public/ (bundle.js + samples/) served by the PREBUILT static-httpd Go
+    # binary — the AC-blessed prebuilt-artifact static server (no python/npx as a
+    # runtime dep; cf polyglot-deploy/static-httpd). Port 3023 allocated by the
+    # Marginalia registry (server #154); replaces the ad-hoc `python -m http.server
+    # 4321` that was serving it outside the infrastructure.
+    depends_on:
+      - purerl-tidal
+    x-bosun:
+      host: mbp
+      probe: process
+      process:
+        cwd: /Users/afc/work/afc-work/polyglot-deploy/static-httpd
+        command: ./static-httpd -port 3023 -root /Users/afc/work/afc-work/music/live-coding/triggerfish/public
+      expose:
+        - host: 3023
+
   superdirt:
     # The rig's sample-playback sound engine (SuperCollider + SuperDirt). Stage 0
     # — no deps; it just binds UDP and waits for /dirt/play. The SHIPPING path is
