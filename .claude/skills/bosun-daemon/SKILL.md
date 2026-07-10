@@ -69,3 +69,10 @@ free. Each rule cites the lesson that earned it.
 The full agent wire protocol, the pgid×health status-mapping table, and the
 per-language build plan live in `docs/AGENT-CONTRACT.md` in the Bosun repo.
 `docs/SDI-COMPATIBILITY.md` is the sibling checklist for the lazy-spawn router.
+
+Once the daemon is written to these rules, **`docs/REGISTER-A-SUPERVISED-SERVICE.md`**
+is the operational how-to for adding it to a running `supervise` group (edit the
+group `compose.yml` → `POST :<groupPort>/control/reload` → **reload the Chair**,
+which analyses the graph on view-load and won't otherwise show the new member).
+That is a different path from `docs/REGISTER-A-SERVICE.md` (the `bosun serve` /
+`fleet.json` flow) — supervised services live in the compose, not fleet.json.

@@ -429,15 +429,36 @@ refresh = do
   res <- H.liftAff (AX.get RF.json (base <> "/state"))
   -- a supervise project speaks the {desired, services} shape; serve speaks
   -- {routes,redirects,rejected}. Decode the one this daemon emits.
-  H.modify_ \s -> case res of
-    Left err -> s { cockErr = Just (AX.printError err), ticks = s.ticks + 1 }
-    Right resp -> case s.currentProject >>= _.supervise of
+  case res of
+    Left err ->
+      H.modify_ \s -> s { cockErr = Just (AX.printError err), ticks = s.ticks + 1 }
+    Right resp -> case s0.currentProject >>= _.supervise of
       Just _ -> case decodeSuperviseState resp.body of
-        Left e -> s { cockErr = Just (printJsonDecodeError e), ticks = s.ticks + 1 }
-        Right v -> s { superv = Just v, cockpit = Nothing, cockErr = Nothing, ticks = s.ticks + 1 }
+        Left e ->
+          H.modify_ \s -> s { cockErr = Just (printJsonDecodeError e), ticks = s.ticks + 1 }
+        Right v -> do
+          H.modify_ \s -> s { superv = Just v, cockpit = Nothing, cockErr = Nothing, ticks = s.ticks + 1 }
+          -- Auto-re-analyze when the supervised service SET changes under us — a
+          -- member added (or removed) via `control/reload`. The graph is analyzed
+          -- on project-select (guarded on key change), and the poll otherwise only
+          -- refreshes existing nodes' status, so without this a reload'd service is
+          -- running in /state yet missing from the graph (the "why isn't it in the
+          -- Chair" trap). Comparing against the PREVIOUS poll's key set converges —
+          -- after the re-analyze the sets match — and never loops on a phantom key.
+          -- `s0.superv` is Nothing right after openProject, so no redundant analyze
+          -- on first load (openProject already analyzed).
+          case s0.superv of
+            Just prev
+              | supervKeys prev /= supervKeys v
+              , not s0.anaLoading -> runAnalyze
+            _ -> pure unit
       Nothing -> case decodeStateView resp.body of
-        Left e -> s { cockErr = Just (printJsonDecodeError e), ticks = s.ticks + 1 }
-        Right v -> s { cockpit = Just v, superv = Nothing, cockErr = Nothing, ticks = s.ticks + 1 }
+        Left e ->
+          H.modify_ \s -> s { cockErr = Just (printJsonDecodeError e), ticks = s.ticks + 1 }
+        Right v ->
+          H.modify_ \s -> s { cockpit = Just v, superv = Nothing, cockErr = Nothing, ticks = s.ticks + 1 }
+  where
+  supervKeys v = Set.fromFoldable (FO.keys v.services) :: Set String
 
 -- ── ingestion (pillar 1) — talk to chair-server ──────────────────────────────
 

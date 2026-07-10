@@ -133,6 +133,28 @@ services:
       expose:
         - host: 57120
 
+  amphora:
+    # The Atlantis artefact store — a content-addressed DuckDB library the
+    # browser editors read/write over HTTP (Balistes' genre-starter pattern
+    # library is the first client; Odonus scenes + the scale universe follow).
+    # Stage 0 (no deps): it binds :3024 and serves. The FIRST STATEFUL member of
+    # the group — a DuckDB file under db/ — so it's the real test of Bosun
+    # supervising a service with persistent state (rule 5: process exit releases
+    # the DuckDB lock, so a restart re-acquires cleanly; verified by kill+restart).
+    # Prebuilt artifact: `spago build` once, then `node run.js` (the toolchain-
+    # free runner that imports compiled output/Amphora.Main — like calypso/fh2).
+    # Port embedded literally in the command (rule 1); the DB path is cwd-relative.
+    # No depends_on and nothing depends on it: the frontend fetches at runtime and
+    # falls back to bundled patterns if the store is down, so boot never blocks on
+    # it. Default TCP-to-port readiness on 3024. Marginalia registry server #155.
+    x-bosun:
+      host: mbp
+      process:
+        cwd: /Users/afc/work/afc-work/music/live-coding/amphora
+        command: AMPHORA_PORT=3024 node run.js
+      expose:
+        - host: 3024
+
   fh2-daemon:
     x-bosun:
       host: mbp
