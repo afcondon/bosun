@@ -171,3 +171,30 @@ services:
         command: node run-daemon.mjs --daemon
       expose:
         - socket: /Users/afc/.fh2/control.sock
+
+  fh2-drumkit:
+    # The FH-2 drum-trigger breakout config, re-applied on rig setup. The FH-2
+    # does not persist its MCV config through a powercycle unless saved to flash,
+    # so we keep the config in the repo (fh2-config/scripts/apply-drum-breakout.mjs
+    # — the source of truth) and re-apply it here, the declarative-config-as-data
+    # way (cf the Selene polysignals). It sets one note-filtered trigger MCV per
+    # Balistes drum note (bd/sn/cp/hh = 36/38/39/42, ch 10) → FHX-8GT jacks 1-4 →
+    # the vpme.de QuadDrum, leaving the FH-2's CV-capable main jacks free.
+    #
+    # A SETUP member, not a daemon: Bosun is keep-alive-only (no oneshot — a
+    # process that exits is relaunched), so the command applies the config then
+    # `exec sleep`s to stay RESIDENT (the systemd RemainAfterExit idiom) — Bosun's
+    # process probe reads the resident sleep as "up" and never restart-spams the
+    # FH-2 with SysEx. depends_on fh2-daemon → applied AFTER the daemon binds its
+    # socket (the script retries the connect to cover the daemon's process-probe
+    # readiness racing the actual bind), and D-E5-co-restarted (re-applied)
+    # whenever the daemon bounces. No port/socket of its own → no expose. To also
+    # persist to the FH-2's flash, run the script by hand with --save.
+    depends_on:
+      - fh2-daemon
+    x-bosun:
+      host: mbp
+      probe: process
+      process:
+        cwd: /Users/afc/work/afc-work/music/expert-sleepers/fh2-config
+        command: sh -c 'node scripts/apply-drum-breakout.mjs; exec sleep 2147483647'
