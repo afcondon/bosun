@@ -434,8 +434,22 @@
       "prerequisites": null,
       "host": "mbp",
       "tailscaleName": "andrews-macbook-pro"
+    },
+    {
+      "role": "frontend",
+      "port": 3026,
+      "url": "http://localhost:3026",
+      "startCommand": "cd /Users/afc/work/afc-work/kibitzer && npx http-server frontend/public -p 3026 -c-1 --cors",
+      "description": "kibitzer — Cluedo-watcher metadata-inference demo (Halogen split-screen; static serve of frontend/public, bundle via make bundle)",
+      "host": "mbp",
+      "tailscaleName": "andrews-macbook-pro",
+      "environment": "native",
+      "id": 154,
+      "projectSlug": "kilo-papa-zulu-delta",
+      "projectName": "kibitzer",
+      "projectId": 251
     }
   ],
-  "count": 29,
+  "count": 30,
   "collisions": {}
 }
