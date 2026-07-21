@@ -519,20 +519,6 @@
       "projectId": 134
     },
     {
-      "role": "app",
-      "port": 3082,
-      "url": "http://localhost:3082",
-      "startCommand": "cd /Users/afc/work/afc-work/ShapedSteer/minard-for-nix && PORT=3082 node server/run.js",
-      "description": "Unified HTTPurple server: serves the built frontend + the observation bus (watches /nix/store, SSE /api/events beats on change, POST /api/refresh/{store,projects}). Run from repo root; env PORT, MINARD_ROOT. Hand-run dev tool (not yet Bosun-supervised).",
-      "host": "mbp",
-      "tailscaleName": "andrews-macbook-pro",
-      "environment": "native",
-      "id": 161,
-      "projectSlug": "charlie-bravo-sierra-foxtrot",
-      "projectName": "Minard for Nix",
-      "projectId": 261
-    },
-    {
       "role": "api",
       "port": 3300,
       "url": "http://localhost:3300",
@@ -659,6 +645,6 @@
       "projectId": 185
     }
   ],
-  "count": 45,
+  "count": 44,
   "collisions": {}
 }
