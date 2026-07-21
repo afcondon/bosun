@@ -21,7 +21,7 @@ import Affjax.RequestBody as RB
 import Affjax.ResponseFormat as RF
 import Affjax.Web as AX
 import Bosun.View (TopologyEntry, topologyCodec)
-import Data.Argonaut.Core (fromNumber, fromObject, fromString, toArray, toNumber, toObject, toString)
+import Data.Argonaut.Core (fromNumber, fromObject, fromString, toArray, toObject, toString)
 import Data.Array as Array
 import Data.Codec.Argonaut as CA
 import Data.Either (Either(..))
@@ -62,10 +62,11 @@ fetchTopology = do
       Left e -> Left (CA.printJsonDecodeError e)
       Right t -> Right t
 
--- | port → human projectName, read from chair-server's fleet.json (`/api/ports`).
--- | The serve router's `/state` only carries the slug:role serviceId; this is
--- | how the fleet section shows a readable name instead of a NATO callsign.
-fetchFleetNames :: Aff (Map Int String)
+-- | projectSlug → human projectName, read from chair-server's fleet.json
+-- | (`/api/ports`). Both the serve router's `/state` serviceId (`slug:role`) and
+-- | the supervise views key by slug, so a slug→name map makes every surface
+-- | (landing fleet, cockpit tables) show a readable name, not a NATO callsign.
+fetchFleetNames :: Aff (Map String String)
 fetchFleetNames = do
   res <- AX.get RF.json (analyzeBase <> "/api/ports")
   pure case res of
@@ -77,6 +78,6 @@ fetchFleetNames = do
   where
   rowKV j = do
     o <- toObject j
-    p <- toNumber =<< FO.lookup "port" o
+    slug <- toString =<< FO.lookup "projectSlug" o
     n <- toString =<< FO.lookup "projectName" o
-    pure (Tuple (Int.round p) n)
+    pure (Tuple slug n)

@@ -131,7 +131,7 @@ type State =
   -- name→status map polled from every group's /state (the live overlay).
   , topo :: Array TopologyEntry
   , topoStatus :: FO.Object String
-  , fleetNames :: Map Int String   -- serve route port → human projectName
+  , fleetNames :: Map String String   -- projectSlug → human projectName (fleet.json)
   }
 
 -- one node's position transition (interpolating a 2D Point through the engine)
@@ -760,19 +760,36 @@ statusDotClass = case _ of
 -- one lazy-spawn serve route: a status dot (up ⇒ a backend is live), the human
 -- project NAME (from fleet.json, keyed by port — the router only knows the
 -- slug:role serviceId), its role, and its public port. Click opens the Cockpit.
-fleetRow :: forall m. Map Int String -> RouteStatus -> H.ComponentHTML Action () m
+fleetRow :: forall m. Map String String -> RouteStatus -> H.ComponentHTML Action () m
 fleetRow names r =
   HH.button [ cls "fleet-row", HE.onClick \_ -> NavTo CockpitR ]
     [ HH.span [ cls ("topo-dot " <> if r.up then "up" else "down") ] []
-    , HH.span [ cls "fleet-name" ] [ HH.text name ]
-    , if role == "" then HH.text "" else HH.span [ cls "fleet-role" ] [ HH.text role ]
+    , HH.span [ cls "fleet-name" ] [ HH.text (serviceName names r.serviceId) ]
+    , case roleOf r.serviceId of
+        "" -> HH.text ""
+        role -> HH.span [ cls "fleet-role" ] [ HH.text role ]
     , HH.span [ cls "fleet-port" ] [ HH.text (":" <> show r.publicPort) ]
     ]
-  where
-  name = fromMaybe r.serviceId (Map.lookup r.publicPort names)
-  role = case String.split (String.Pattern ":") r.serviceId of
-    [ _, rl ] -> rl
-    _ -> ""
+
+-- a serve/supervise id is "slug:role". Resolve the slug to a human name (from
+-- fleet.json; fallback = the id itself), split out the role, or a combined label.
+serviceName :: Map String String -> String -> String
+serviceName names sid = fromMaybe sid (Map.lookup (slugOf sid) names)
+
+slugOf :: String -> String
+slugOf sid = fromMaybe sid (Array.head (String.split (String.Pattern ":") sid))
+
+roleOf :: String -> String
+roleOf sid = case String.split (String.Pattern ":") sid of
+  [ _, rl ] -> rl
+  _ -> ""
+
+serviceLabel :: Map String String -> String -> String
+serviceLabel names sid =
+  let n = serviceName names sid
+  in case roleOf sid of
+       "" -> n
+       r -> n <> " · " <> r
 
 projCard :: forall m. State -> Boolean -> Project -> H.ComponentHTML Action () m
 projCard _ controllable p =
@@ -798,38 +815,38 @@ renderCockpit s =
     , maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text ("serve unreachable — " <> e) ]) s.cockErr
     , case s.cockpit of
         Nothing -> HH.p [ cls "muted" ] [ HH.text "waiting for serve…" ]
-        Just v -> cockpitBody v
+        Just v -> cockpitBody s.fleetNames v
     ]
 
-cockpitBody :: forall m. StateView -> H.ComponentHTML Action () m
-cockpitBody v =
+cockpitBody :: forall m. Map String String -> StateView -> H.ComponentHTML Action () m
+cockpitBody names v =
   HH.div_
     [ HH.div [ cls "stats" ]
         [ stat "admitted" (show (Array.length (Array.filter _.up v.routes)) <> " / " <> show (Array.length v.routes) <> " up")
         , stat "redirect" (show (Array.length v.redirects))
         , stat "rejected" (show (Array.length v.rejected))
         ]
-    , sectionTable "ADMITTED" (Array.length v.routes) [ "port", "service", "state", "backend", "pid", "" ] (map routeRow v.routes)
-    , sectionTable "REDIRECT (421)" (Array.length v.redirects) [ "port", "service", "host", "→ target" ] (map redirectRow v.redirects)
-    , sectionTable "REJECTED" (Array.length v.rejected) [ "service", "reason" ] (map rejectRow v.rejected)
+    , sectionTable "ADMITTED" (Array.length v.routes) [ "port", "service", "state", "backend", "pid", "" ] (map (routeRow names) v.routes)
+    , sectionTable "REDIRECT (421)" (Array.length v.redirects) [ "port", "service", "host", "→ target" ] (map (redirectRow names) v.redirects)
+    , sectionTable "REJECTED" (Array.length v.rejected) [ "service", "reason" ] (map (rejectRow names) v.rejected)
     ]
 
-routeRow :: forall m. RouteStatus -> H.ComponentHTML Action () m
-routeRow r =
+routeRow :: forall m. Map String String -> RouteStatus -> H.ComponentHTML Action () m
+routeRow names r =
   HH.tr_
     [ td (show r.publicPort)
-    , td r.serviceId
+    , td (serviceLabel names r.serviceId)
     , HH.td_ [ HH.span [ cls (if r.up then "dot up" else "dot down") ] [ HH.text (if r.up then "up" else "down") ] ]
     , td (show r.internalPort)
     , td (maybe "—" show r.pid)
     , HH.td_ [ HH.button [ cls "btn sm", HE.onClick \_ -> (if r.up then Stop else Spawn) r.publicPort ] [ HH.text (if r.up then "stop" else "spawn") ] ]
     ]
 
-redirectRow :: forall m. RedirectInfo -> H.ComponentHTML Action () m
-redirectRow r = HH.tr_ [ td (show r.publicPort), td r.serviceId, td r.host, td r.target ]
+redirectRow :: forall m. Map String String -> RedirectInfo -> H.ComponentHTML Action () m
+redirectRow names r = HH.tr_ [ td (show r.publicPort), td (serviceLabel names r.serviceId), td r.host, td r.target ]
 
-rejectRow :: forall m. RejectInfo -> H.ComponentHTML Action () m
-rejectRow r = HH.tr_ [ td r.serviceId, td r.reason ]
+rejectRow :: forall m. Map String String -> RejectInfo -> H.ComponentHTML Action () m
+rejectRow names r = HH.tr_ [ td (serviceLabel names r.serviceId), td r.reason ]
 
 -- ── ingestion view (the MISU ladder) ─────────────────────────────────────────
 
