@@ -28,7 +28,7 @@ import Prelude hiding ((/))
 
 import Bosun.Analyze (AnalyzeInput, analyze)
 import Bosun.ChairServer.IO (fetchMarginaliaProject, readFleet, readJsonFile, readJsonUrl, readYamlFile, reloadBosunServe, resolvePort, writeFleet)
-import Bosun.View (AnalyzeRequest, analyzeRequestCodec, analyzeResultCodec)
+import Bosun.View (AnalyzeRequest, ServiceInstanceView, TopologyEntry, analyzeRequestCodec, analyzeResultCodec, topologyCodec)
 import Data.Argonaut.Core (Json, jsonNull, stringify)
 import Data.Argonaut.Core as J
 import Data.Argonaut.Parser (jsonParser)
@@ -56,6 +56,7 @@ import Routing.Duplex.Generic.Syntax ((/))
 
 data Route
   = Analyze
+  | Topology
   | Health
   | ApiPorts
   | ApiPortsSuggest
@@ -67,6 +68,7 @@ derive instance Generic Route _
 route :: RouteDuplex' Route
 route = root $ sum
   { "Analyze": "analyze" / noArgs
+  , "Topology": "topology" / noArgs
   , "Health": "health" / noArgs
   , "ApiPorts": "api" / "ports" / noArgs
   , "ApiPortsSuggest": "api" / "ports" / "suggest" / noArgs
@@ -111,6 +113,74 @@ resolveInput rq = do
   resolveRegistry p = liftEffect (if isHttp p then readJsonUrl p else readJsonFile p)
   isHttp p = String.take 4 p == "http"
 
+-- ── topology (the declared supervisor tree) ──────────────────────────────────
+
+-- | Pull `--port N <compose> <registry>` out of a `… supervise …` command.
+parseSupervise :: String -> Maybe { port :: Int, compose :: String, registry :: String }
+parseSupervise detail =
+  let toks = A.filter (_ /= "") (String.split (String.Pattern " ") detail)
+  in
+    if not (A.elem "supervise" toks) then Nothing
+    else case A.elemIndex "--port" toks of
+      Nothing -> Nothing
+      Just i -> do
+        port <- Int.fromString =<< A.index toks (i + 1)
+        compose <- A.index toks (i + 2)
+        registry <- A.index toks (i + 3)
+        pure { port, compose, registry }
+
+-- | DFS-resolve one group into a flat entry list: the group's own entry, then
+-- | each member (a sub-supervisor recurses; a leaf service is emitted directly).
+-- | Depth-capped; a group whose compose fails to read yields no children rather
+-- | than sinking the whole tree.
+resolveTopoNode :: Int -> Maybe String -> String -> Int -> String -> String -> Aff (Array TopologyEntry)
+resolveTopoNode depth parent name gport composePath registryPath = do
+  let selfEntry = { name, port: Nothing, groupPort: Just gport, compose: Just composePath, registry: Just registryPath, parent, mechanism: "supervise", depth }
+  children <-
+    if depth >= 6 then pure []
+    else do
+      res <- attempt do
+        input <- resolveInput { compose: Just composePath, registry: Just registryPath, overrides: [] }
+        pure (analyze input)
+      case res of
+        Left _ -> pure []
+        Right a -> map A.concat (traverse (resolveInstance (depth + 1) name) a.instances)
+  pure (A.cons selfEntry children)
+
+resolveInstance :: Int -> String -> ServiceInstanceView -> Aff (Array TopologyEntry)
+resolveInstance depth parent inst = case parseSupervise inst.executor.detail of
+  Just sup -> resolveTopoNode depth (Just parent) inst.localName sup.port sup.compose sup.registry
+  Nothing -> pure
+    [ { name: inst.localName
+      , port: A.findMap _.port inst.reachability
+      , groupPort: Nothing
+      , compose: Nothing
+      , registry: Nothing
+      , parent: Just parent
+      , mechanism: inst.executor.mechanism
+      , depth
+      } ]
+
+-- | POST /topology — body `{ compose, registry, port }` → the declared tree,
+-- | flattened DFS. `port` is the root supervisor's own `/state` port (external
+-- | knowledge — launchd passes it to `bosun supervise --port`).
+handleTopology :: String -> ResponseM
+handleTopology bodyStr = case jsonParser bodyStr of
+  Left err -> badRequest' jsonCors ("invalid JSON: " <> err)
+  Right j -> case extractTopoReq j of
+    Nothing -> badRequest' jsonCors "topology: expected { compose, registry, port }"
+    Just req -> do
+      entries <- resolveTopoNode 0 Nothing "root" req.port req.compose req.registry
+      ok' jsonCors (stringify (CA.encode topologyCodec entries))
+
+extractTopoReq :: Json -> Maybe { compose :: String, registry :: String, port :: Int }
+extractTopoReq j = do
+  o <- J.toObject j
+  compose <- J.toString =<< FO.lookup "compose" o
+  registry <- J.toString =<< FO.lookup "registry" o
+  portN <- J.toNumber =<< FO.lookup "port" o
+  pure { compose, registry, port: Int.round portN }
+
 router :: Request Route -> ResponseM
 router { route: r, method, body } = case method of
   Options -> ok' corsHeaders ""
@@ -123,6 +193,9 @@ router { route: r, method, body } = case method of
         Right rq -> do
           input <- resolveInput rq
           ok' jsonCors (stringify (CA.encode analyzeResultCodec (analyze input)))
+    Topology -> do
+      bodyStr <- toString body
+      handleTopology bodyStr
     ApiPorts -> handleGetPorts
     ApiPortsSuggest -> handleSuggest
     ApiProjectsServers pid -> case method of

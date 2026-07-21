@@ -122,6 +122,24 @@ type AnalyzeResult =
   , result    :: ValidationView
   }
 
+-- | One node of the DECLARED supervisor topology, flattened depth-first so the
+-- | Chair renders it as an indented tree (`depth` = indent). `groupPort = Just p`
+-- | marks a sub-supervisor (its live `/state` is on `p`); `Nothing` is a leaf
+-- | service. `parent` is the enclosing group's name (`Nothing` at the root).
+-- | Resolved server-side by recursively analysing the compose tree (a member
+-- | whose launch command is `supervise --port N <compose> <registry>` is a
+-- | sub-group). The launchd → root → sub-supervisors → services spine, typed.
+type TopologyEntry =
+  { name      :: String
+  , port      :: Maybe Int      -- the service's own exposed port, if any
+  , groupPort :: Maybe Int      -- Just ⇒ a sub-supervisor; its /state port
+  , compose   :: Maybe String   -- a group's own compose (for the detail graph)
+  , registry  :: Maybe String
+  , parent    :: Maybe String
+  , mechanism :: String
+  , depth     :: Int
+  }
+
 -- ── display labels (entry-73: display functions, never `show`) ───────────────
 
 sourceLabel :: Source -> String
@@ -523,6 +541,21 @@ analyzeResultCodec = CAR.object "AnalyzeResult"
   , reconcile: reconcileViewCodec
   , result: validationViewCodec
   }
+
+topologyEntryCodec :: CA.JsonCodec TopologyEntry
+topologyEntryCodec = CAR.object "TopologyEntry"
+  { name: CA.string
+  , port: CAC.maybe CA.int
+  , groupPort: CAC.maybe CA.int
+  , compose: CAC.maybe CA.string
+  , registry: CAC.maybe CA.string
+  , parent: CAC.maybe CA.string
+  , mechanism: CA.string
+  , depth: CA.int
+  }
+
+topologyCodec :: CA.JsonCodec (Array TopologyEntry)
+topologyCodec = CA.array topologyEntryCodec
 
 -- ── the request contract (frontend → chair-server) ───────────────────────────
 

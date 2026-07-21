@@ -17,10 +17,11 @@ import Prelude
 import Affjax.RequestBody as RB
 import Affjax.ResponseFormat as RF
 import Affjax.Web as AX
-import Bosun.View (AliasEntry, AliasOverride(..), AnalyzeRequest, AnalyzeResult, ConflictView, DeployErrorView, DivergenceView, RouteBacking, ServiceInstanceView, SvcView, ValidationView(..), analyzeRequestCodec, analyzeResultCodec)
+import Bosun.View (AliasEntry, AliasOverride(..), AnalyzeRequest, AnalyzeResult, ConflictView, DeployErrorView, DivergenceView, RouteBacking, ServiceInstanceView, SvcView, TopologyEntry, ValidationView(..), analyzeRequestCodec, analyzeResultCodec)
 import Chair.Graph (Channel, GroupMode(..), NodeLive(..), allChannels, graphView, layoutPositions, nextMode)
 import Chair.Routes (Route(..), routeCodec)
 import Chair.State (RedirectInfo, RejectInfo, RouteStatus, StateView, SuperviseState, decodeStateView, decodeSuperviseState)
+import Chair.Topo (fetchTopology)
 import Data.Argonaut.Decode.Error (printJsonDecodeError)
 import Data.Array as Array
 import Data.Codec.Argonaut as CA
@@ -28,7 +29,7 @@ import Data.Either (Either(..))
 import Data.Foldable (all)
 import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromMaybe, maybe)
+import Data.Maybe (Maybe(..), fromMaybe, isJust, maybe)
 import Data.Set (Set)
 import Data.Set as Set
 import Data.String as String
@@ -126,6 +127,10 @@ type State =
   , channels :: Set Channel  -- which structural channels are composited into the view
   , armed :: Boolean         -- control mode: armed via the runtime overlay (destructive)
   , zoom :: Maybe ZoomHandle -- the pan/zoom handle for the main SVG (Hylograph.Interaction.Zoom)
+  -- the landing's declared topology (from chair-server /topology) + a merged
+  -- name→status map polled from every group's /state (the live overlay).
+  , topo :: Array TopologyEntry
+  , topoStatus :: FO.Object String
   }
 
 -- one node's position transition (interpolating a 2D Point through the engine)
@@ -161,6 +166,7 @@ data Action
   | HideAllChannels
   | ToggleArm
   | ResetZoom
+  | LoadTopo                   -- landing: (re)fetch the declared topology tree
 
 -- the router speaks to the component through this query: `matchesWith` fires
 -- `Navigate` on every hash change (and once for the initial hash).
@@ -189,6 +195,7 @@ component =
         , channels: Set.fromFoldable allChannels   -- default: full composite (clutter is a fine resting state)
         , armed: false
         , zoom: Nothing
+        , topo: [], topoStatus: FO.empty
         }
     , render
     , eval: H.mkEval H.defaultEval
@@ -215,11 +222,21 @@ handleQuery (Navigate route a) = do
 -- load a project by key: point compose/registry at it, remember it (so the poll
 -- and control target its supervise daemon), and analyze.
 openProject :: forall o. String -> H.HalogenM State Action () o Aff Unit
-openProject key = case Array.find (\p -> p.key == key) projects of
-  Nothing -> H.modify_ _ { currentProject = Nothing, anaErr = Just ("unknown project: " <> key) }
-  Just p -> do
-    -- a fresh project: drop any armed state and the previous daemon's snapshot so
-    -- a stale armed mode can't command the new (or wrong) daemon.
+openProject key = do
+  -- a topology GROUP (a sub-supervisor) opens its own compose+daemon; otherwise
+  -- fall back to a hardcoded study fixture. Either way, drop any armed state and
+  -- the previous daemon's snapshot so a stale armed mode can't command the wrong
+  -- daemon.
+  s <- H.get
+  case Array.find (\e -> e.name == key && isJust e.groupPort) s.topo of
+    Just e -> setProj
+      { key, label: key, blurb: "", supervise: e.groupPort
+      , compose: fromMaybe "" e.compose, registry: fromMaybe "" e.registry }
+    Nothing -> case Array.find (\p -> p.key == key) projects of
+      Nothing -> H.modify_ _ { currentProject = Nothing, anaErr = Just ("unknown project: " <> key) }
+      Just p -> setProj p
+  where
+  setProj p = do
     H.modify_ _ { currentProject = Just p, composePath = p.compose, registryPath = p.registry
                 , armed = false, superv = Nothing, cockpit = Nothing }
     runAnalyze
@@ -229,8 +246,10 @@ handleAction :: forall o. Action -> H.HalogenM State Action () o Aff Unit
 handleAction = case _ of
   Initialize -> do
     refresh
+    loadTopo
     void (H.fork pollLoop)
   Refresh -> refresh
+  LoadTopo -> loadTopo
   Reload -> control Nothing "/control/reload"
   Spawn port -> control Nothing ("/control/spawn?port=" <> show port)
   Stop port -> control Nothing ("/control/stop?port=" <> show port)
@@ -309,8 +328,41 @@ control pend path = do
 pollLoop :: forall o. H.HalogenM State Action () o Aff Unit
 pollLoop = do
   H.liftAff (delay (Milliseconds pollMs))
-  refresh
+  s <- H.get
+  case s.route of
+    Projects -> refreshTopoStatus   -- landing: poll every group's /state
+    _ -> refresh                    -- a project view: poll its own daemon
   pollLoop
+
+-- ── the declared topology (landing) ──────────────────────────────────────────
+
+-- | Fetch the tree from chair-server (which resolves it from the compose
+-- | files), then overlay live status.
+loadTopo :: forall o. H.HalogenM State Action () o Aff Unit
+loadTopo = do
+  res <- H.liftAff fetchTopology
+  case res of
+    Left _ -> pure unit
+    Right t -> H.modify_ _ { topo = t }
+  refreshTopoStatus
+
+-- | Poll every group `/state` in the tree, merging name→status into one map
+-- | (service names are unique across groups). This is the landing's live layer.
+refreshTopoStatus :: forall o. H.HalogenM State Action () o Aff Unit
+refreshTopoStatus = do
+  s <- H.get
+  let ports = Array.nub (Array.mapMaybe _.groupPort s.topo)
+  maps <- H.liftAff (traverse fetchGroupStatus ports)
+  H.modify_ _ { topoStatus = Array.foldl FO.union FO.empty maps }
+
+fetchGroupStatus :: Int -> Aff (FO.Object String)
+fetchGroupStatus port = do
+  res <- AX.get RF.json ("http://localhost:" <> show port <> "/state")
+  pure case res of
+    Left _ -> FO.empty
+    Right resp -> case decodeSuperviseState resp.body of
+      Left _ -> FO.empty
+      Right v -> v.services
 
 -- ── projects (the picker) ────────────────────────────────────────────────────
 
@@ -643,13 +695,48 @@ renderProjects :: forall m. State -> H.ComponentHTML Action () m
 renderProjects s =
   HH.div [ cls "picker-page" ]
     [ maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text e ]) s.anaErr
-    , HH.h2 [ cls "picker-h" ] [ HH.text "Deployments" ]
-    , HH.p [ cls "muted" ] [ HH.text "each backed by a bosun supervise daemon — live status and control" ]
-    , HH.div [ cls "proj-grid" ] (map (projCard s true) deployments)
+    , HH.h2 [ cls "picker-h" ] [ HH.text "Root topology" ]
+    , HH.p [ cls "muted" ] [ HH.text "the single launchd root and everything it supervises — live, from declared state (click a group to drill in)" ]
+    , if Array.null s.topo then HH.p [ cls "muted" ] [ HH.text "resolving topology…" ]
+      else HH.div [ cls "topo-tree" ] (map (topoRow s) s.topo)
     , HH.h2 [ cls "picker-h" ] [ HH.text "Study fixtures" ]
     , HH.p [ cls "muted" ] [ HH.text "view-only — explore the ingestion / validation surface and the structural channels" ]
     , HH.div [ cls "proj-grid" ] (map (projCard s false) studyFixtures)
     ]
+
+-- one row of the declared tree: indent by depth, a status dot polled from the
+-- owning group's /state, the name, its port chip, and the raw status token.
+-- Group rows (sub-supervisors) are clickable — they open their detail graph.
+topoRow :: forall m. State -> TopologyEntry -> H.ComponentHTML Action () m
+topoRow s e =
+  HH.div
+    ( [ cls ("topo-row" <> if isGroup then " group" else "")
+      , HP.style ("padding-left:" <> show (8 + e.depth * 22) <> "px")
+      ] <> clickProps )
+    [ HH.span [ cls ("topo-dot " <> statusDotClass status) ] []
+    , HH.span [ cls "topo-name" ] [ HH.text e.name ]
+    , if portTxt == "" then HH.text "" else HH.span [ cls portCls ] [ HH.text portTxt ]
+    , HH.span [ cls "topo-stat" ] [ HH.text status ]
+    ]
+  where
+  isGroup = isJust e.groupPort
+  status = fromMaybe "—" (FO.lookup e.name s.topoStatus)
+  clickProps = if isGroup then [ HE.onClick \_ -> NavTo (GraphR e.name) ] else []
+  portTxt = case e.groupPort, e.port of
+    Just gp, _ -> ":" <> show gp
+    _, Just p -> ":" <> show p
+    _, _ -> ""
+  portCls = if isGroup then "topo-gport" else "topo-port"
+
+statusDotClass :: String -> String
+statusDotClass = case _ of
+  "running" -> "up"
+  "starting" -> "up"
+  "completed-ok" -> "up"
+  "in-backoff" -> "warn"
+  "down" -> "down"
+  "failed" -> "down"
+  _ -> "unknown"
 
 projCard :: forall m. State -> Boolean -> Project -> H.ComponentHTML Action () m
 projCard _ controllable p =

@@ -116,6 +116,25 @@
     .proj-port.view { color: var(--muted); font-weight: 400; text-transform: uppercase; letter-spacing: 0.06em; }
     .proj-blurb { color: var(--muted); font-size: 12.5px; margin-top: 6px; line-height: 1.45; }
 
+    /* ── root topology tree (the landing, live from declared state) ── */
+    .topo-tree { margin: 14px 0 8px; background: var(--panel); border: 1px solid var(--line); padding: 8px 0; }
+    .topo-row { display: flex; align-items: baseline; gap: 10px; padding: 4px 16px 4px 8px;
+                font-variant-numeric: tabular-nums; line-height: 1.5; }
+    .topo-row.group { cursor: pointer; }
+    .topo-row.group:hover { background: #f4f4f5; }
+    .topo-row.group .topo-name { font-weight: 700; }
+    .topo-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto;
+                background: var(--down); transform: translateY(-1px); }
+    .topo-dot.up { background: var(--up); }
+    .topo-dot.down { background: var(--reject); }
+    .topo-dot.warn { background: var(--redirect); }
+    .topo-dot.unknown { background: var(--down); }
+    .topo-name { font-size: 13.5px; color: var(--ink); }
+    .topo-gport { font-size: 11px; color: var(--up); font-weight: 600; }
+    .topo-port { font-size: 11px; color: var(--muted); }
+    .topo-stat { margin-left: auto; font-size: 11px; color: var(--muted);
+                 text-transform: uppercase; letter-spacing: 0.05em; }
+
     /* ── ingestion: source picker ── */
     .picker { margin-top: 28px; background: var(--panel); border: 1px solid var(--line); padding: 18px 20px; }
     .field { display: block; margin-bottom: 12px; }
