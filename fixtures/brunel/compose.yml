@@ -1,0 +1,33 @@
+# Brunel — the operations-cartography stratum, supervised by Bosun.
+#
+# First member: minard-for-nix, the Nix-store provision map (the live
+# observation bus — a persistent /nix/store watcher + SSE). It is a
+# DAEMON, not a lazy-spawn frontend: `bosun serve` spawned-then-reaped it
+# (the watcher/SSE keep the event loop alive, so its graceful shutdown
+# hung — the "stabbed in the back" reap), which is why it lives here under
+# `bosun supervise` instead. Levantine and future Brunel operations tools
+# join this group as they graduate.
+#
+# This group's supervisor (`bosun supervise --port 3993`) is itself
+# supervised — it's a member of the launchd-rooted :3990 group
+# (fixtures/router/compose.yml, `brunel-supervisor`). So the whole tree
+# hangs off ONE host bootstrap; every level is `bosun supervise` using
+# only spawn / pgid-alive / probe — the primitives that exist on every
+# target PureScript compiles to. No per-service launchd; portable by
+# construction.
+services:
+  minard-for-nix:
+    x-bosun:
+      host: mbp
+      # omit `probe:` → default TCP-to-port readiness on the exposed port,
+      # which is right for an HTTP server (the port accepting connections
+      # is the ready signal). The server drains on SIGTERM (rule 5) so a
+      # supervise restart is clean.
+      process:
+        cwd: /Users/afc/work/afc-work/ShapedSteer/minard-for-nix
+        # prebuilt artifact: run.js imports compiled output/ (no build at
+        # launch). PORT literal in the command (rule 1); MINARD_ROOT
+        # defaults to cwd, which the absolute cwd above pins.
+        command: PORT=3082 node server/run.js
+      expose:
+        - host: 3082

@@ -59,3 +59,24 @@ services:
         command: npx http-server . -p 3020 -c-1 --cors
       expose:
         - host: 3020
+
+  # The supervisor-of-supervisors edge (2026-07-21). This launchd-rooted
+  # group is the ONE host bootstrap; making it supervise OTHER groups'
+  # supervisors keeps the whole tree alive off a single hook — the portable
+  # answer to "no per-service launchd". First sub-group: Brunel (the
+  # operations-cartography stratum, minard-for-nix its first member). A
+  # supervised process that is itself a `bosun supervise` — the same
+  # dogfooding as bosun-serve above. Extend with atlantis-/polyglot-
+  # supervisor members to give those groups reboot-persistence too.
+  brunel-supervisor:
+    x-bosun:
+      host: mbp
+      # liveness-only (like bosun-serve): the supervisor process being alive
+      # is the signal; it exposes its own /state on :3993 for the principled
+      # TCP-probe upgrade later.
+      probe: process
+      process:
+        cwd: /Users/afc/work/afc-work/ShapedSteer/bosun
+        command: node cli/run.js supervise --port 3993 /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/brunel/compose.yml /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/brunel/registry.json
+      expose:
+        - host: 3993
