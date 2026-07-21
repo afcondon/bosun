@@ -50,13 +50,19 @@ services:
       - chair-server
     x-bosun:
       host: mbp
-      probe: process
+      # NO probe: process here — this is an HTTP server, so omit it to get the
+      # default TCP-to-port readiness on 3020. `probe: process` + the old `npx
+      # http-server` command was a 1500-restart flap: npx forks the real server
+      # as a GRANDCHILD, so the recorded pgid misread as dead → the supervisor
+      # relaunched → the relaunch hit EADDRINUSE (the orphaned original still
+      # held :3020) → crash → repeat. Fixed by (a) TCP probe + (b) a single-
+      # process command below (stable pgid, no npx wrapper).
       process:
         cwd: /Users/afc/work/afc-work/ShapedSteer/bosun/chair
-        # Halogen SPA — index.html + app.js + assets. http-server serves the
-        # static bundle; the in-page JS talks directly to bosun-serve :3997
-        # (cockpit) and chair-server :3022 (ladder + future registry writes).
-        command: npx http-server . -p 3020 -c-1 --cors
+        # Halogen SPA — index.html + app.js + assets, served single-process.
+        # The in-page JS talks to bosun-serve :3997 + chair-server :3022 cross-
+        # origin (those set CORS), so the static host needs no --cors of its own.
+        command: python3 -m http.server 3020 --bind 127.0.0.1
       expose:
         - host: 3020
 

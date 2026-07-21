@@ -353,7 +353,8 @@ refreshTopoStatus = do
   s <- H.get
   let ports = Array.nub (Array.mapMaybe _.groupPort s.topo)
   maps <- H.liftAff (traverse fetchGroupStatus ports)
-  H.modify_ _ { topoStatus = Array.foldl FO.union FO.empty maps }
+  serve <- H.liftAff fetchServeState   -- the lazy-spawn fleet (serve :3997)
+  H.modify_ _ { topoStatus = Array.foldl FO.union FO.empty maps, cockpit = serve }
 
 fetchGroupStatus :: Int -> Aff (FO.Object String)
 fetchGroupStatus port = do
@@ -363,6 +364,15 @@ fetchGroupStatus port = do
     Right resp -> case decodeSuperviseState resp.body of
       Left _ -> FO.empty
       Right v -> v.services
+
+fetchServeState :: Aff (Maybe StateView)
+fetchServeState = do
+  res <- AX.get RF.json (serveBase <> "/state")
+  pure case res of
+    Left _ -> Nothing
+    Right resp -> case decodeStateView resp.body of
+      Left _ -> Nothing
+      Right v -> Just v
 
 -- ── projects (the picker) ────────────────────────────────────────────────────
 
@@ -699,6 +709,12 @@ renderProjects s =
     , HH.p [ cls "muted" ] [ HH.text "the single launchd root and everything it supervises — live, from declared state (click a group to drill in)" ]
     , if Array.null s.topo then HH.p [ cls "muted" ] [ HH.text "resolving topology…" ]
       else HH.div [ cls "topo-tree" ] (map (topoRow s) s.topo)
+    , HH.h2 [ cls "picker-h" ] [ HH.text "Serve fleet" ]
+    , HH.p [ cls "muted" ] [ HH.text "lazy-spawn dev services on the bosun serve router (:3997) — spawned on first request; green = a backend is live" ]
+    , case s.cockpit of
+        Just sv | not (Array.null sv.routes) ->
+          HH.div [ cls "fleet-grid" ] (map fleetRow (Array.sortWith _.publicPort sv.routes))
+        _ -> HH.p [ cls "muted" ] [ HH.text "serve router unreachable or no routes" ]
     , HH.h2 [ cls "picker-h" ] [ HH.text "Study fixtures" ]
     , HH.p [ cls "muted" ] [ HH.text "view-only — explore the ingestion / validation surface and the structural channels" ]
     , HH.div [ cls "proj-grid" ] (map (projCard s false) studyFixtures)
@@ -737,6 +753,16 @@ statusDotClass = case _ of
   "down" -> "down"
   "failed" -> "down"
   _ -> "unknown"
+
+-- one lazy-spawn serve route: a status dot (up ⇒ a backend is live), the
+-- serviceId, and its public port. Clicking opens the Cockpit (its natural home).
+fleetRow :: forall m. RouteStatus -> H.ComponentHTML Action () m
+fleetRow r =
+  HH.button [ cls "fleet-row", HE.onClick \_ -> NavTo CockpitR ]
+    [ HH.span [ cls ("topo-dot " <> if r.up then "up" else "down") ] []
+    , HH.span [ cls "fleet-name" ] [ HH.text r.serviceId ]
+    , HH.span [ cls "fleet-port" ] [ HH.text (":" <> show r.publicPort) ]
+    ]
 
 projCard :: forall m. State -> Boolean -> Project -> H.ComponentHTML Action () m
 projCard _ controllable p =
