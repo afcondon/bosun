@@ -80,3 +80,18 @@ services:
         command: node cli/run.js supervise --port 3993 /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/brunel/compose.yml /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/brunel/registry.json
       expose:
         - host: 3993
+
+  # The live-coding rig, folded under the single root (2026-07-21). Was a
+  # standalone ad-hoc `bosun supervise --port 3994`; now the launchd root
+  # owns it, so it survives reboot with everything else. A fresh supervisor
+  # has no in-process pgid memory, so the cutover down'd the ad-hoc group
+  # and let this one bring the rig up clean.
+  atlantis-supervisor:
+    x-bosun:
+      host: mbp
+      probe: process
+      process:
+        cwd: /Users/afc/work/afc-work/ShapedSteer/bosun
+        command: node cli/run.js supervise --port 3994 /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/atlantis/compose.yml /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/atlantis/registry.json
+      expose:
+        - host: 3994
