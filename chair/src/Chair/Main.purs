@@ -21,7 +21,7 @@ import Bosun.View (AliasEntry, AliasOverride(..), AnalyzeRequest, AnalyzeResult,
 import Chair.Graph (Channel, GroupMode(..), NodeLive(..), allChannels, graphView, layoutPositions, nextMode)
 import Chair.Routes (Route(..), routeCodec)
 import Chair.State (RedirectInfo, RejectInfo, RouteStatus, StateView, SuperviseState, decodeStateView, decodeSuperviseState)
-import Chair.Topo (fetchTopology)
+import Chair.Topo (fetchTopology, fetchFleetNames)
 import Data.Argonaut.Decode.Error (printJsonDecodeError)
 import Data.Array as Array
 import Data.Codec.Argonaut as CA
@@ -131,6 +131,7 @@ type State =
   -- name→status map polled from every group's /state (the live overlay).
   , topo :: Array TopologyEntry
   , topoStatus :: FO.Object String
+  , fleetNames :: Map Int String   -- serve route port → human projectName
   }
 
 -- one node's position transition (interpolating a 2D Point through the engine)
@@ -195,7 +196,7 @@ component =
         , channels: Set.fromFoldable allChannels   -- default: full composite (clutter is a fine resting state)
         , armed: false
         , zoom: Nothing
-        , topo: [], topoStatus: FO.empty
+        , topo: [], topoStatus: FO.empty, fleetNames: Map.empty
         }
     , render
     , eval: H.mkEval H.defaultEval
@@ -344,6 +345,8 @@ loadTopo = do
   case res of
     Left _ -> pure unit
     Right t -> H.modify_ _ { topo = t }
+  names <- H.liftAff fetchFleetNames   -- port → human name (fleet.json)
+  H.modify_ _ { fleetNames = names }
   refreshTopoStatus
 
 -- | Poll every group `/state` in the tree, merging name→status into one map
@@ -713,7 +716,7 @@ renderProjects s =
     , HH.p [ cls "muted" ] [ HH.text "lazy-spawn dev services on the bosun serve router (:3997) — spawned on first request; green = a backend is live" ]
     , case s.cockpit of
         Just sv | not (Array.null sv.routes) ->
-          HH.div [ cls "fleet-grid" ] (map fleetRow (Array.sortWith _.publicPort sv.routes))
+          HH.div [ cls "fleet-grid" ] (map (fleetRow s.fleetNames) (Array.sortWith _.publicPort sv.routes))
         _ -> HH.p [ cls "muted" ] [ HH.text "serve router unreachable or no routes" ]
     , HH.h2 [ cls "picker-h" ] [ HH.text "Study fixtures" ]
     , HH.p [ cls "muted" ] [ HH.text "view-only — explore the ingestion / validation surface and the structural channels" ]
@@ -754,15 +757,22 @@ statusDotClass = case _ of
   "failed" -> "down"
   _ -> "unknown"
 
--- one lazy-spawn serve route: a status dot (up ⇒ a backend is live), the
--- serviceId, and its public port. Clicking opens the Cockpit (its natural home).
-fleetRow :: forall m. RouteStatus -> H.ComponentHTML Action () m
-fleetRow r =
+-- one lazy-spawn serve route: a status dot (up ⇒ a backend is live), the human
+-- project NAME (from fleet.json, keyed by port — the router only knows the
+-- slug:role serviceId), its role, and its public port. Click opens the Cockpit.
+fleetRow :: forall m. Map Int String -> RouteStatus -> H.ComponentHTML Action () m
+fleetRow names r =
   HH.button [ cls "fleet-row", HE.onClick \_ -> NavTo CockpitR ]
     [ HH.span [ cls ("topo-dot " <> if r.up then "up" else "down") ] []
-    , HH.span [ cls "fleet-name" ] [ HH.text r.serviceId ]
+    , HH.span [ cls "fleet-name" ] [ HH.text name ]
+    , if role == "" then HH.text "" else HH.span [ cls "fleet-role" ] [ HH.text role ]
     , HH.span [ cls "fleet-port" ] [ HH.text (":" <> show r.publicPort) ]
     ]
+  where
+  name = fromMaybe r.serviceId (Map.lookup r.publicPort names)
+  role = case String.split (String.Pattern ":") r.serviceId of
+    [ _, rl ] -> rl
+    _ -> ""
 
 projCard :: forall m. State -> Boolean -> Project -> H.ComponentHTML Action () m
 projCard _ controllable p =

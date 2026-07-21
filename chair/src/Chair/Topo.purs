@@ -9,6 +9,7 @@
 -- | side where compose-reading belongs.
 module Chair.Topo
   ( fetchTopology
+  , fetchFleetNames
   , rootCompose
   , rootRegistry
   , rootPort
@@ -20,11 +21,14 @@ import Affjax.RequestBody as RB
 import Affjax.ResponseFormat as RF
 import Affjax.Web as AX
 import Bosun.View (TopologyEntry, topologyCodec)
-import Data.Argonaut.Core (fromNumber, fromObject, fromString)
+import Data.Argonaut.Core (fromNumber, fromObject, fromString, toArray, toNumber, toObject, toString)
+import Data.Array as Array
 import Data.Codec.Argonaut as CA
 import Data.Either (Either(..))
 import Data.Int as Int
-import Data.Maybe (Maybe(..))
+import Data.Map (Map)
+import Data.Map as Map
+import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Tuple (Tuple(..))
 import Effect.Aff (Aff)
 import Foreign.Object as FO
@@ -57,3 +61,22 @@ fetchTopology = do
     Right resp -> case CA.decode topologyCodec resp.body of
       Left e -> Left (CA.printJsonDecodeError e)
       Right t -> Right t
+
+-- | port → human projectName, read from chair-server's fleet.json (`/api/ports`).
+-- | The serve router's `/state` only carries the slug:role serviceId; this is
+-- | how the fleet section shows a readable name instead of a NATO callsign.
+fetchFleetNames :: Aff (Map Int String)
+fetchFleetNames = do
+  res <- AX.get RF.json (analyzeBase <> "/api/ports")
+  pure case res of
+    Left _ -> Map.empty
+    Right resp -> fromMaybe Map.empty do
+      obj <- toObject resp.body
+      servers <- toArray =<< FO.lookup "servers" obj
+      pure (Map.fromFoldable (Array.mapMaybe rowKV servers))
+  where
+  rowKV j = do
+    o <- toObject j
+    p <- toNumber =<< FO.lookup "port" o
+    n <- toString =<< FO.lookup "projectName" o
+    pure (Tuple (Int.round p) n)
