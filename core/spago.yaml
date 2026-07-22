@@ -18,3 +18,4 @@ package:
     - codec
     - codec-argonaut
     - validation
+    - bosun-protocol

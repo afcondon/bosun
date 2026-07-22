@@ -22,11 +22,13 @@ component.
 - **Registry deps to add to Brunel**: affjax, affjax-web, http-methods,
   halogen-svg-elems, hylograph-transitions, web-dom, argonaut-codecs,
   foreign-object, routing, routing-duplex.
-- **Vendor** `Bosun.View` (+ its transitive bosun-core modules: Atoms, Edge,
-  Error, Executor, Health, Publish, Reachability, Reconcile, Selector, Service)
-  into Brunel — the wire/view types the Chair decodes `/analyze` and `/state`
-  into. The Chair keeps its **direct `/analyze` fetch** (it needs the rich shape
-  the CHANNELS render from; Brunel's `topology.json` is coarser).
+- **Depend on `bosun-protocol`** (NOT vendor). The `/analyze` + `/state` wire
+  contract was extracted out of `Bosun.View` into a thin `bosun-protocol` package
+  (types + codecs, zero engine) on 2026-07-22, so there is nothing to copy —
+  Brunel path-deps `bosun-protocol` like any consumer, and so does its own
+  `topology.json` ingest (collapsing the coarse re-model it hand-rolls today). One
+  contract, N consumers, no duplication. The Chair keeps its **direct `/analyze`
+  fetch** (it needs the rich shape the CHANNELS render from).
 - **Host-parameterize**: `serveBase`/`analyzeBase`/`controlBase` stop being
   `localhost` constants and derive from a component `Input = { host }`; add
   `receive` so Brunel's machine dropdown re-scopes it live. This *is* the

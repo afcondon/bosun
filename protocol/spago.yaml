@@ -1,0 +1,17 @@
+# bosun-protocol — the /analyze + /state WIRE CONTRACT, alone.
+#
+# The flat, display-oriented view types the Chair renders + their bidirectional
+# codec-argonaut codecs (one value, shared by both ends so the contract cannot
+# drift). Extracted from Bosun.View so a CLIENT can depend on the contract WITHOUT
+# dragging in the reconcile engine: bosun-core's Bosun.View builds these from the
+# IR (and re-exports them), chair-server encodes them, and any other consumer
+# (Brunel, and later its own topology ingest) DECODES them — one definition, N
+# consumers, zero duplication. No engine, no Effect; minimal deps on purpose.
+package:
+  name: bosun-protocol
+  description: "The Bosun /analyze + /state wire contract: flat view types + shared codecs. No engine."
+  dependencies:
+    - prelude
+    - maybe
+    - codec-argonaut
+    - profunctor
