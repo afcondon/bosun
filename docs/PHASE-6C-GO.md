@@ -8,7 +8,7 @@ it launches two HTTP servers → `HTTP 200`.
 ## Run it
 
 ```bash
-cd /Users/afc/work/afc-work/ShapedSteer/bosun
+cd /path/to/bosun
 ./scripts/go-apply.sh
 ```
 

@@ -66,12 +66,14 @@ pollMs :: Number
 pollMs = 1500.0
 
 -- The frozen Detect corpus — a one-click sample for the ingestion view.
+-- Repo-relative: chair-server reads these from its cwd (the bosun repo root),
+-- the same basis registry/fleet.json already resolves against.
 corpusDir :: String
-corpusDir = "/Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/polyglot-2026-06-14"
+corpusDir = "fixtures/polyglot-2026-06-14"
 
 -- Fabricated topology fixtures (rich dependency structure for the graph view).
 fixturesDir :: String
-fixturesDir = "/Users/afc/work/afc-work/ShapedSteer/bosun/fixtures"
+fixturesDir = "fixtures"
 
 -- | A Project is the unit you pick and operate on: a validated deployment (with
 -- | a `supervise` daemon you can drive) or a study fixture (view-only). `key` is

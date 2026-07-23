@@ -10,7 +10,7 @@ tier that needed the thunk thread-safety fix.
 ## Run it
 
 ```bash
-cd /Users/afc/work/afc-work/ShapedSteer/bosun
+cd /path/to/bosun
 ./scripts/go-serve.sh
 ```
 

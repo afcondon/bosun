@@ -130,8 +130,8 @@ registration, message `registry: <verb> <role> <slug> @<port>`, local, no push.
 **Until that lands in chair-server, commit by hand with the same format:**
 
 ```sh
-git -C /Users/afc/work/afc-work/ShapedSteer/bosun add registry/fleet.json
-git -C /Users/afc/work/afc-work/ShapedSteer/bosun commit -m "registry: add frontend juliet-whiskey-papa-juliet @3021"
+git add registry/fleet.json   # run from the bosun repo root
+git commit -m "registry: add frontend juliet-whiskey-papa-juliet @3021"
 ```
 
 Never leave a registry write uncommitted — an uncommitted `fleet.json` diff is

@@ -40,11 +40,13 @@ analyzeBase = "http://localhost:3022"
 rootPort :: Int
 rootPort = 3990
 
+-- Repo-relative: chair-server reads these from its own cwd (the bosun repo
+-- root), the same basis registry/fleet.json already resolves against.
 rootCompose :: String
-rootCompose = "/Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/router/compose.yml"
+rootCompose = "fixtures/router/compose.yml"
 
 rootRegistry :: String
-rootRegistry = "/Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/router/registry.json"
+rootRegistry = "fixtures/router/registry.json"
 
 -- | `POST /topology { compose, registry, port }` → the declared tree (flat DFS).
 fetchTopology :: Aff (Either String (Array TopologyEntry))
