@@ -1,0 +1,9 @@
+# Portable-fixture demo — see the ${BOSUN_ROOT} seam in cli/src/Bosun/CLI/IO.js.
+# Services are declared in registry.json; this compose just satisfies the
+# two-source CLI shape (like fixtures/hello). The registry's startCommand uses
+# ${BOSUN_ROOT} instead of a hardcoded absolute path, so the fixture validates
+# on ANY checkout: `bosun check` expands the token to an absolute anchor
+# (default = the repo root Bosun runs from; override with BOSUN_ROOT), which
+# satisfies Bosun's NoAbsoluteCwd invariant while carrying no machine-specific
+# path. This is the portable answer to "composes need absolute cwds."
+services: {}

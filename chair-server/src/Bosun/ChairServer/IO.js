@@ -3,9 +3,17 @@ import { dirname, resolve } from "node:path";
 import { execSync } from "node:child_process";
 import yaml from "js-yaml";
 
+// ${BOSUN_ROOT} expansion — portable-fixture seam. A compose/registry may write
+// `${BOSUN_ROOT}/fixtures/...`; the token expands to an absolute anchor at read
+// time (default process.cwd() = the repo root chair-server runs from; override
+// BOSUN_ROOT), keeping Bosun's absolute-cwd invariant while decoupling fixtures
+// from any one checkout path. No-op with no token. (Twin of cli/…/IO.js.)
+const expandBosunRoot = (text) =>
+  text.replaceAll("${BOSUN_ROOT}", process.env.BOSUN_ROOT || process.cwd());
+
 // EffectFn1: f(path) reads + parses, returning a value that IS an argonaut Json.
-export const readYamlImpl = (path) => yaml.load(readFileSync(path, "utf8"));
-export const readJsonImpl = (path) => JSON.parse(readFileSync(path, "utf8"));
+export const readYamlImpl = (path) => yaml.load(expandBosunRoot(readFileSync(path, "utf8")));
+export const readJsonImpl = (path) => JSON.parse(expandBosunRoot(readFileSync(path, "utf8")));
 
 // Fetch + parse a JSON URL synchronously (the no-Aff seam — straight-line curl).
 // Lets the Chair point at the live Marginalia registry (/api/ports).

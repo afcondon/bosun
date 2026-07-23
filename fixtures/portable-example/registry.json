@@ -1,0 +1,8 @@
+{
+  "servers": [
+    { "role": "greeter", "port": 8771, "host": "mbp",
+      "projectSlug": "portable", "projectName": "portable-greeter",
+      "startCommand": "cd ${BOSUN_ROOT}/fixtures/portable-example && nohup python3 -m http.server 8771 >greeter.log 2>&1 &" }
+  ],
+  "count": 1
+}
