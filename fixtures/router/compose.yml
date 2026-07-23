@@ -17,14 +17,14 @@ services:
       # probe:process is the deliberate v1 simplification.
       probe: process
       process:
-        cwd: /Users/afc/work/afc-work/ShapedSteer/bosun
+        cwd: ${BOSUN_ROOT}
         # a PREBUILT artifact, not a build-and-run wrapper (run.js loads the
         # compiled output). Reads the GIT-TRACKED registry/fleet.json — Bosun's
         # source of truth for the dev-server fleet (see docs/PORT-MODEL.md). This
         # drops the router's runtime dependency on Marginalia being up; Marginalia's
         # /api/ports is now a non-authoritative mirror. The backend-go binary swaps
         # in here later with zero model change.
-        command: node cli/run.js serve /Users/afc/work/afc-work/ShapedSteer/bosun/registry/fleet.json
+        command: node cli/run.js serve ${BOSUN_ROOT}/registry/fleet.json
 
   # Bosun's Chair (#236) — the operational surface and registry-edit cockpit.
   # Always-up under supervise rather than lazy-spawned, because (a) Chair is THE
@@ -36,7 +36,7 @@ services:
       host: mbp
       probe: process
       process:
-        cwd: /Users/afc/work/afc-work/ShapedSteer/bosun
+        cwd: ${BOSUN_ROOT}
         # Read-only analysis backend (POST /analyze runs the loose→tight ladder).
         # The fleet.json write API (POST /api/servers, GET /api/ports/suggest)
         # lands here next — chair-server is the registry-mutation host.
@@ -58,7 +58,7 @@ services:
       # held :3020) → crash → repeat. Fixed by (a) TCP probe + (b) a single-
       # process command below (stable pgid, no npx wrapper).
       process:
-        cwd: /Users/afc/work/afc-work/ShapedSteer/bosun/chair
+        cwd: ${BOSUN_ROOT}/chair
         # Halogen SPA — index.html + app.js + assets, served single-process.
         # The in-page JS talks to bosun-serve :3997 + chair-server :3022 cross-
         # origin (those set CORS), so the static host needs no --cors of its own.
@@ -82,8 +82,8 @@ services:
       # TCP-probe upgrade later.
       probe: process
       process:
-        cwd: /Users/afc/work/afc-work/ShapedSteer/bosun
-        command: node cli/run.js supervise --port 3993 /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/brunel/compose.yml /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/brunel/registry.json
+        cwd: ${BOSUN_ROOT}
+        command: node cli/run.js supervise --port 3993 ${BOSUN_ROOT}/fixtures/brunel/compose.yml ${BOSUN_ROOT}/fixtures/brunel/registry.json
       expose:
         - host: 3993
 
@@ -97,7 +97,7 @@ services:
       host: mbp
       probe: process
       process:
-        cwd: /Users/afc/work/afc-work/ShapedSteer/bosun
-        command: node cli/run.js supervise --port 3994 /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/atlantis/compose.yml /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/atlantis/registry.json
+        cwd: ${BOSUN_ROOT}
+        command: node cli/run.js supervise --port 3994 ${BOSUN_ROOT}/fixtures/atlantis/compose.yml ${BOSUN_ROOT}/fixtures/atlantis/registry.json
       expose:
         - host: 3994
