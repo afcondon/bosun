@@ -643,8 +643,22 @@
       "projectSlug": "india-papa-kilo-india",
       "projectName": "es9-daemon",
       "projectId": 185
+    },
+    {
+      "role": "frontend",
+      "port": 3001,
+      "url": "http://localhost:3001",
+      "startCommand": "cd /Users/afc/work/afc-work/music/marquetry && spago bundle --outfile static/index.js && npx http-server static -p 3001 -c-1 --cors",
+      "description": "Marquetry — eurorack rack layout planner. PureScript/Halogen static page over data/modules.json + data/racks.json. Bundles before serving so a source change takes effect on the next lazy-spawn; static/data is a symlink to the repo data/ dir.",
+      "host": "mbp",
+      "tailscaleName": "andrews-macbook-pro",
+      "environment": "native",
+      "id": 171,
+      "projectSlug": "quebec-whiskey-uniform-charlie",
+      "projectName": "Marquetry",
+      "projectId": 262
     }
   ],
-  "count": 44,
+  "count": 45,
   "collisions": {}
 }
