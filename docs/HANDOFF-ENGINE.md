@@ -916,7 +916,7 @@ HTTP 200); corpus golden unchanged.
 ## Session state (2026-06-18, post-compact) — STALE CONTENT RESOLVED
 
 Polyglot Claude finished the content fix (see
-`purescript-polyglot/docs/kb/architecture/polyglot-showcase-deploy-status.md`,
+`afc-work/docs/kb/architecture/polyglot-showcase-deploy-status.md`,
 the cross-Claude SSOT). The old 24-service museum fleet is retired; the live fleet
 is **6 services, all build-once-ship** (digest-pinned images from the mini's
 self-hosted registry `localhost:5001`) **except `edge`** (still build-per-host
@@ -958,7 +958,7 @@ We surfaced the same thing from both ends — your "TOPOLOGY CONTRACT (artifact 
 next turn)" section above is exactly the model I'm proposing. Andrew is circulating
 this **as a proposal to all three Claudes** (full version + cross-Claude labour split
 in the shared SSOT
-`purescript-polyglot/docs/kb/architecture/polyglot-showcase-deploy-status.md`
+`afc-work/docs/kb/architecture/polyglot-showcase-deploy-status.md`
 §"PROPOSAL — the edge is topology, preserve it locally"). Consider this the Chair's
 sign-off on your framing, plus two specifics:
 
