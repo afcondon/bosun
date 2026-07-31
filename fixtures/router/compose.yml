@@ -10,12 +10,14 @@ services:
   bosun-serve:
     x-bosun:
       host: mbp
-      # liveness-only for v1 (the rig-daemon probe): the router process being
-      # alive is the signal, and supervise relaunches it on crash. serve DOES
-      # already expose a /state on :3997, so the principled upgrade — TCP-probe
-      # that for real readiness (and let the Chair see the router) — is available;
-      # probe:process is the deliberate v1 simplification.
-      probe: process
+      # NO probe: process — see the chair-frontend note below. serve binds a TCP
+      # port (/state on :3997), so exposing it and omitting `probe` gives
+      # TcpConnect readiness (Observe.purs: NoProbe + HostPort ⇒ TcpConnect).
+      # `probe: process` here was the "deliberate v1 simplification" and it cost
+      # 54,444 reconciles and a 43 MB log between 25 and 31 Jul 2026: the pgid
+      # apply recorded went stale, every relaunch hit EADDRINUSE from the
+      # untracked survivor, and nothing ever noticed. A port probe adopts the
+      # survivor instead of fighting it.
       process:
         cwd: ${BOSUN_ROOT}
         # a PREBUILT artifact, not a build-and-run wrapper (run.js loads the
@@ -25,6 +27,8 @@ services:
         # /api/ports is now a non-authoritative mirror. The backend-go binary swaps
         # in here later with zero model change.
         command: node cli/run.js serve ${BOSUN_ROOT}/registry/fleet.json
+      expose:
+        - host: 3997
 
   # Bosun's Chair (#236) — the operational surface and registry-edit cockpit.
   # Always-up under supervise rather than lazy-spawned, because (a) Chair is THE
@@ -34,7 +38,7 @@ services:
   chair-server:
     x-bosun:
       host: mbp
-      probe: process
+      # NO probe: process — TCP readiness on the exposed :3022 below.
       process:
         cwd: ${BOSUN_ROOT}
         # Read-only analysis backend (POST /analyze runs the loose→tight ladder).
@@ -77,10 +81,11 @@ services:
   brunel-supervisor:
     x-bosun:
       host: mbp
-      # liveness-only (like bosun-serve): the supervisor process being alive
-      # is the signal; it exposes its own /state on :3993 for the principled
-      # TCP-probe upgrade later.
-      probe: process
+      # NO probe: process — TCP readiness on the exposed :3993 below. Under the
+      # pgid probe this layered rather than replaced: a relaunched supervisor
+      # whose :3993 is already held does NOT exit (unlike serve/chair-server), so
+      # the stale-pgid relaunch left a second, permanently blind supervisor
+      # double-owning the group. A port probe reads the incumbent as up.
       process:
         cwd: ${BOSUN_ROOT}
         command: node cli/run.js supervise --port 3993 ${BOSUN_ROOT}/fixtures/brunel/compose.yml ${BOSUN_ROOT}/fixtures/brunel/registry.json
@@ -95,7 +100,8 @@ services:
   atlantis-supervisor:
     x-bosun:
       host: mbp
-      probe: process
+      # NO probe: process — TCP readiness on the exposed :3994 below (same
+      # layering failure as brunel-supervisor above).
       process:
         cwd: ${BOSUN_ROOT}
         command: node cli/run.js supervise --port 3994 ${BOSUN_ROOT}/fixtures/atlantis/compose.yml ${BOSUN_ROOT}/fixtures/atlantis/registry.json

@@ -3,7 +3,7 @@
   "servers": [
     { "role": "website", "port": 3040, "host": "mbp",
       "projectSlug": "polyglot", "projectName": "polyglot-website",
-      "startCommand": "cd /Users/afc/work/afc-work/polyglot-deploy/static-httpd && ./static-httpd -port 3040 -root /Users/afc/work/afc-work/purescript-polyglot/site/polyglot/public" },
+      "startCommand": "cd /Users/afc/work/afc-work/polyglot/polyglot-deploy/static-httpd && ./static-httpd -port 3040 -root /Users/afc/work/afc-work/polyglot/purescript-polyglot-site/site/polyglot/public" },
 
     { "role": "embedding-explorer", "port": 8081, "host": "mbp",
       "projectSlug": "python-new", "projectName": "embedding-explorer",

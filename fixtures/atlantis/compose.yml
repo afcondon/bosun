@@ -96,9 +96,11 @@ services:
       - purerl-tidal
     x-bosun:
       host: mbp
-      probe: process
+      # NO probe: process — this is a TCP HTTP server, so the exposed :3023 gives
+      # TcpConnect readiness. (The OSC/UDP members above KEEP probe: process — a
+      # TCP probe mis-reads a UDP socket. The distinction is protocol, not taste.)
       process:
-        cwd: /Users/afc/work/afc-work/polyglot-deploy/static-httpd
+        cwd: /Users/afc/work/afc-work/polyglot/polyglot-deploy/static-httpd
         command: ./static-httpd -port 3023 -root /Users/afc/work/afc-work/music/live-coding/triggerfish/public
       expose:
         - host: 3023
