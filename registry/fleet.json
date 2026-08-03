@@ -16,21 +16,6 @@
       "tailscaleName": "andrews-mac-mini"
     },
     {
-      "id": 31,
-      "projectId": 152,
-      "projectName": "hylograph-hosta-atlas",
-      "projectSlug": "india-uniform-hotel-alpha",
-      "role": "frontend",
-      "port": 3004,
-      "url": "http://localhost:3004/viewer/",
-      "startCommand": "cd /Users/afc/work/afc-work/purescript-hylograph-showcases/hylograph-hosta-atlas && python3 -m http.server 3004 --bind 127.0.0.1",
-      "description": "Static data browser for the parsed AHS hosta registry. Master-detail UI: searchable/filterable list on the left, full per-cultivar record on the right. Has a Random 20 button for sanity sampling. Loads /data/parsed/all.json directly.",
-      "environment": "mbp-native",
-      "prerequisites": null,
-      "host": "mbp",
-      "tailscaleName": "andrews-macbook-pro"
-    },
-    {
       "id": 25,
       "projectId": 144,
       "projectName": "Producing With Your Feet",
@@ -727,6 +712,20 @@
       "projectSlug": "juliet-bravo-juliet-mike",
       "projectName": "polyglot-pythia-showcases",
       "projectId": 78
+    },
+    {
+      "role": "frontend",
+      "port": 3004,
+      "url": "http://localhost:3004/viewer/",
+      "startCommand": "cd /Users/afc/work/afc-work/hosta-atlas && python3 -m http.server 3004 --bind 127.0.0.1",
+      "description": "Hosta Atlas viewer — static viewer over the AHS cultivar catalogue (DuckDB + scraped data). A standalone garden project; moved out of purescript-hylograph-showcases on 2026-08-03.",
+      "host": "mbp",
+      "tailscaleName": "andrews-macbook-pro",
+      "environment": "native",
+      "id": 182,
+      "projectSlug": "india-uniform-hotel-alpha",
+      "projectName": "hosta-atlas",
+      "projectId": 152
     }
   ],
   "count": 50,
