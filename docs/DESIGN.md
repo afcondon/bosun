@@ -656,7 +656,7 @@ catch *real* bugs that exist *today*:
    |---|---|---|
    | Tilted Radio frontend | `psd3-tilted-radio` @ **3013**, native/mbp, SDI | `tidal-frontend`, **no host port**, edge/macmini, profile `tidal,full` |
    | Minard API | `minard` api @ **3000** native | `minard-backend` **3000:3000**, profile `minard,full` |
-   | EE API | `hypo-punter ee-api` @ **3020** | `ee-backend` **3020:3020** |
+   | EE API | `polyglot-pythia-showcases ee-api` @ **3020** | `ee-backend` **3020:3020** |
 
    Reconciliation (§5) groups them and reports the intended facet divergence
    vs the accidental drift.

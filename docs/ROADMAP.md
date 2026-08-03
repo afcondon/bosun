@@ -60,7 +60,7 @@ The apply path *already ssh-wraps macmini commands.*
    `core` profile (edge + website) as a macmini *container* deployment, show a
    `bosun apply --dry-run` of the ssh+`docker compose up -d` script (zero outward
    effect), then live-fire with Andrew present. Note: `polyglot-deploy` still
-   wires the *old* hypo-punter `ee/ge-server` python — updating to the current
+   wires the *old* polyglot-pythia-showcases `ee/ge-server` python — updating to the current
    `purescript-python` exhibits is its own small co-design. Bonus: macmini
    services are containers, so `bosun down` = `docker compose stop` already works
    (apply↔down symmetry for this target, unlike the local-Process gap — task #8).

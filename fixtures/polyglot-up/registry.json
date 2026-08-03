@@ -1,5 +1,5 @@
 {
-  "_comment": "The CURRENT polyglot exhibits (not the stale purepy hypo-punter rows). Python = purescript-python examples on 8081/8082 (ports chosen to dodge SDI; dir was renamed from purescript-python-new); julia = Jurist stability-atlas; site = polyglot website, now served by polyglot-deploy/static-httpd (a single Go binary, no python/npx on the target — build it once: `cd polyglot-deploy/static-httpd && go build -o static-httpd main.go`).",
+  "_comment": "The CURRENT polyglot exhibits (not the stale purepy polyglot-pythia-showcases rows). Python = purescript-python examples on 8081/8082 (ports chosen to dodge SDI; dir was renamed from purescript-python-new); julia = Jurist stability-atlas; site = polyglot website, now served by polyglot-deploy/static-httpd (a single Go binary, no python/npx on the target — build it once: `cd polyglot-deploy/static-httpd && go build -o static-httpd main.go`).",
   "servers": [
     { "role": "website", "port": 3040, "host": "mbp",
       "projectSlug": "polyglot", "projectName": "polyglot-website",
