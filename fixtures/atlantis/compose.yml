@@ -113,8 +113,16 @@ services:
     # dev crutch. It listens on the conventional Dirt port 57120 — the reason
     # es9-daemon's OSC moved to 57130 above. boot-superdirt.sh runs headless
     # sclang in its own process group and drains the scsynth child on TERM (the
-    # pgid teardown Bosun's process executor should model). SUPERDIRT_PORT is
+    # pgid teardown Bosun's process executor should model) — it now WAITS for the
+    # tree to actually die and escalates to KILL, because sclang segfaults rather
+    # than draining when memory is tight, and the old fire-and-exit teardown left
+    # ~1 GB of orphaned scsynth behind on every such attempt. SUPERDIRT_PORT is
     # port-from-env per the bosun-daemon skill.
+    #
+    # Launched via the CORE wrapper: superdirt-core.sh loads ~9 MB of sample
+    # banks instead of all 217 Dirt-Samples (~935 MB of scsynth footprint, which
+    # was this rig's single largest memory holder). The sibling superdirt-full.sh
+    # is the sound-hunting path — not what a supervised rig should hold open.
     #
     # NB the browser-side `stellatus-bridge.mjs` (HTTP→UDP relay) is a DEV-AUDITION
     # crutch only — it exists because a browser can't send UDP, and it disappears
@@ -124,7 +132,7 @@ services:
       probe: process
       process:
         cwd: /Users/afc/work/afc-work/music/live-coding/triggerfish
-        command: ./audio/boot-superdirt.sh
+        command: ./audio/superdirt-core.sh
         env:
           SUPERDIRT_PORT: "57120"
           # scsynth output device — BlackHole 2ch, so Ableton captures the stereo
