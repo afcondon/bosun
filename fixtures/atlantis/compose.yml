@@ -208,3 +208,35 @@ services:
       process:
         cwd: /Users/afc/work/afc-work/music/expert-sleepers/fh2-config
         command: sh -c 'node scripts/apply-drum-breakout.mjs; exec sleep 2147483647'
+
+  continuo:
+    # The AUDITION VOICE (Marginalia #267, music/continuo). A headless JUCE
+    # console daemon hosting one AU/VST3 instrument (Piano One) and playing
+    # incoming MIDI to CoreAudio, so the Triggerfish instruments — Vetula
+    # especially — have a real timbre to be heard through without Ableton.
+    # Stage 0 (no deps): it creates the "continuo" virtual CoreMIDI destination
+    # + ~/.continuo/control.sock (load/gain/panic/status verbs, clean SIGTERM
+    # drain) and waits. A native process like fh2-daemon, so probe: process —
+    # the socket is the reachability, not a TCP port. Prebuilt binary (cmake
+    # build once); NB load the plugin by FULL PATH — a bare name triggers a
+    # destructive full AU scan that crashy AUv3s on this machine can kill (the
+    # PianoOne.component path has no spaces, so no quoting needed). Bosun owns it
+    # going forward; the Vetula WebMIDI route prefers this "continuo" port when
+    # it's live (else the IAC bus).
+    #
+    # --plugin is REPEATABLE — each is a LAYER, all sounding the same notes. The
+    # audition voice is piano + LABS strings: the second layer is Spitfire LABS
+    # via the Splice wrapper (AU id AudioUnit:Synths/aumu,Inst,Splc — loads its
+    # patch headless, no GUI). Both tokens are space-free so the space-split
+    # command is safe. Drop the second --plugin if LABS/Splice ever needs online
+    # auth at boot; the DLSMusicDevice (AudioUnit:Synths/aumu,dls ,appl) is a
+    # self-contained fallback (but its id HAS a space — quote or use LABS/DLS via
+    # the `add` socket verb instead).
+    x-bosun:
+      host: mbp
+      probe: process
+      process:
+        cwd: /Users/afc/work/afc-work/music/continuo
+        command: ./build/continuo_artefacts/continuo --plugin /Library/Audio/Plug-Ins/Components/PianoOne.component --plugin AudioUnit:Synths/aumu,Inst,Splc --gain 0.7
+      expose:
+        - socket: /Users/afc/.continuo/control.sock
