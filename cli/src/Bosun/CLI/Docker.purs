@@ -31,7 +31,7 @@ import Bosun.Apply (Command(..), applyScript, downScript)
 import Bosun.Atoms (Host, ServiceId, mkServiceId, unAbsPath, unServiceId)
 import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (readJsonFile, readYamlFile)
-import Bosun.CLI.Resident (Resident, runResident)
+import Bosun.CLI.Resident (Resident, accepted, refused, runResident)
 import Bosun.Executor (ExecutorMechanism(..), mechanism)
 import Bosun.Plan (Status(..), plan)
 import Bosun.Reconcile (buildAliases, reconcile)
@@ -148,15 +148,21 @@ dockerResident targets mPort vd = do
           "up" -> do
             Ref.write "up" desiredRef
             bringUp
-            pure "up: deploy (docker compose up -d)"
+            accepted "up: deploy (docker compose up -d)"
           "down" -> do
             Ref.write "down" desiredRef
             teardown
-            pure "down: teardown (docker compose stop)"
+            accepted "down: teardown (docker compose stop)"
           "restart" -> do
-            restartOne arg
-            pure ("restart: " <> arg)
-          _ -> pure ("unknown control verb: " <> verb)
+            snap <- Ref.read snapRef
+            -- as in supervise: a name this group does not contain is a refusal,
+            -- not a restart that happens to have done nothing
+            if not (Map.member (mkServiceId arg) snap) then
+              refused ("restart: no service `" <> arg <> "` in this group")
+            else do
+              restartOne arg
+              accepted ("restart: " <> arg)
+          _ -> refused ("unknown control verb: " <> verb)
       log "docker: initial observe (read-only)…"
       observe
       pure

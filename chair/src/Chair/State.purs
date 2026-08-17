@@ -25,12 +25,28 @@ import Data.Either (Either)
 import Data.Maybe (Maybe, fromMaybe)
 import Foreign.Object (Object)
 
+-- | One lazy-spawn route as the router currently finds it. `up` is not enough on
+-- | its own: a route can be up because an EXTERNAL process (one serve did not
+-- | start) holds the public port, and it can be down-and-unreachable because the
+-- | router never managed to bind that port at all. Both are rendered, because
+-- | both were previously indistinguishable from an ordinary idle route.
+-- |
+-- | The four additive fields are `Maybe` so a router binary predating them still
+-- | decodes (the same convention as `drift`).
 type RouteStatus =
   { serviceId :: String
   , publicPort :: Int
   , internalPort :: Int
   , up :: Boolean
   , pid :: Maybe Int
+  -- served by a process serve did not spawn; it holds the public port itself
+  , external :: Maybe Boolean
+  -- when that adoption claim was last probed — `up` is only as good as this
+  , externalCheckedAt :: Maybe String
+  -- does the router hold the public port? `false` + not external ⇒ nothing is
+  -- listening, so no request can arrive and lazy-spawn can never fire
+  , bound :: Maybe Boolean
+  , bindError :: Maybe String
   }
 
 type RedirectInfo =
@@ -56,7 +72,16 @@ type DriftInfo = { serviceId :: String, publicPort :: Int, kind :: String, note 
 
 -- | Where the router's plan came from and when — enough for the Chair to say
 -- | "registered <when>, not routed" without a second source.
-type RegistryInfo = { source :: String, plannedAt :: Maybe String, modifiedAt :: Maybe String }
+-- |
+-- | `error` is why the drift check could not be MADE (an unreadable registry, a
+-- | re-plan that threw). When it is present, `drift`/`stale` are the last answer
+-- | rather than a current one — a failed check must not read as agreement.
+type RegistryInfo =
+  { source :: String
+  , plannedAt :: Maybe String
+  , modifiedAt :: Maybe String
+  , error :: Maybe String
+  }
 
 type StateView =
   { routes :: Array RouteStatus

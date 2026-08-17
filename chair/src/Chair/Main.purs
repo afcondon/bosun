@@ -840,19 +840,31 @@ cockpitBody busy names v =
 -- | ABOVE the three verdict tables, because a row shown nowhere below is the one
 -- | thing those tables cannot tell you about. Every entry has the same single
 -- | remedy, so the reload lives here rather than per row.
+-- |
+-- | It also shows when the check FAILED. A drift check that could not be made
+-- | reports an empty `drift`, which is indistinguishable from agreement — so the
+-- | panel opens on `registry.error` too, and says the answer below is the last
+-- | one rather than a current one.
 driftPanel :: forall m. Boolean -> Map String String -> StateView -> H.ComponentHTML Action () m
-driftPanel busy names v = case driftEntries v of
-  [] -> HH.text ""
-  ds ->
+driftPanel busy names v = case driftEntries v, registryError v of
+  [], Nothing -> HH.text ""
+  ds, err ->
     HH.div [ cls "drift" ]
       [ HH.div [ cls "drift-head" ]
-          [ HH.span [ cls "drift-title" ]
-              [ HH.text (show (Array.length ds) <> " port(s) the router has not read — registered, not routed") ]
+          [ HH.span [ cls "drift-title" ] [ HH.text (driftTitle ds err) ]
           , HH.button [ cls "btn sm", HE.onClick \_ -> Reload, HP.disabled busy ] [ HH.text "⟳ reload" ]
           ]
-      , HH.table_ [ HH.tbody_ (map (driftRow names) ds) ]
+      , if Array.null ds then HH.text "" else HH.table_ [ HH.tbody_ (map (driftRow names) ds) ]
       , HH.div [ cls "muted" ] [ HH.text (registryLine v) ]
       ]
+
+driftTitle :: Array DriftInfo -> Maybe String -> String
+driftTitle ds = case _ of
+  Just e -> "the registry could not be checked — " <> e <> " (the list below, if any, is the last answer)"
+  Nothing -> show (Array.length ds) <> " port(s) the router has not read — registered, not routed"
+
+registryError :: StateView -> Maybe String
+registryError v = v.registry >>= _.error
 
 driftRow :: forall m. Map String String -> DriftInfo -> H.ComponentHTML Action () m
 driftRow names d = HH.tr_ [ td (show d.publicPort), td (serviceLabel names d.serviceId), td d.note ]
@@ -872,11 +884,50 @@ routeRow names r =
   HH.tr_
     [ td (show r.publicPort)
     , td (serviceLabel names r.serviceId)
-    , HH.td_ [ HH.span [ cls (if r.up then "dot up" else "dot down") ] [ HH.text (if r.up then "up" else "down") ] ]
+    , HH.td_ [ HH.span [ cls ("dot " <> stateClass st) ] [ HH.text (stateLabel st) ] ]
     , td (show r.internalPort)
     , td (maybe "—" show r.pid)
-    , HH.td_ [ HH.button [ cls "btn sm", HE.onClick \_ -> (if r.up then Stop else Spawn) r.publicPort ] [ HH.text (if r.up then "stop" else "spawn") ] ]
+    , HH.td_
+        -- external and unbound routes have no backend of ours to start or stop;
+        -- serve answers 409, so don't offer the button that earns it.
+        [ if st == External || st == Unbound then HH.text ""
+          else HH.button [ cls "btn sm", HE.onClick \_ -> (if r.up then Stop else Spawn) r.publicPort ]
+                 [ HH.text (if r.up then "stop" else "spawn") ]
+        ]
     ]
+  where
+  st = routeState r
+
+-- | What a route actually IS, as opposed to what `up` alone says. `External` and
+-- | `Unbound` both used to render as a plain up/down dot, which is how a route
+-- | with nothing listening on it at all could sit in the ADMITTED table looking
+-- | merely idle.
+data RouteState = Up | Down | External | Unbound
+
+derive instance Eq RouteState
+
+routeState :: RouteStatus -> RouteState
+routeState r
+  | fromMaybe false r.external = External
+  -- `bound` absent = an older router that does not report it; assume bound
+  -- rather than inventing a fault.
+  | not (fromMaybe true r.bound) = Unbound
+  | r.up = Up
+  | otherwise = Down
+
+stateLabel :: RouteState -> String
+stateLabel = case _ of
+  Up -> "up"
+  Down -> "down"
+  External -> "external"
+  Unbound -> "unbound"
+
+stateClass :: RouteState -> String
+stateClass = case _ of
+  Up -> "up"
+  Down -> "down"
+  External -> "redirect"
+  Unbound -> "down"
 
 redirectRow :: forall m. Map String String -> RedirectInfo -> H.ComponentHTML Action () m
 redirectRow names r = HH.tr_ [ td (show r.publicPort), td (serviceLabel names r.serviceId), td r.host, td r.target ]

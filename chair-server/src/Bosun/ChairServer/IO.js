@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, renameSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, copyFileSync, existsSync, mkdirSync, openSync, fsyncSync, closeSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { execSync } from "node:child_process";
 import yaml from "js-yaml";
@@ -17,8 +17,11 @@ export const readJsonImpl = (path) => JSON.parse(expandBosunRoot(readFileSync(pa
 
 // Fetch + parse a JSON URL synchronously (the no-Aff seam — straight-line curl).
 // Lets the Chair point at the live Marginalia registry (/api/ports).
+// `-f`: a 4xx/5xx whose body happens to be JSON parses perfectly well, so
+// without it an outage is ingested as a registry — an empty one, reported as a
+// registry with nothing in it. Fail loudly instead. (Twin of cli/…/IO.js.)
 export const readJsonUrlImpl = (url) =>
-  JSON.parse(execSync(`curl -s --max-time 10 ${url}`, { maxBuffer: 64 * 1024 * 1024 }).toString());
+  JSON.parse(execSync(`curl -sS -f --max-time 10 ${url}`, { maxBuffer: 64 * 1024 * 1024 }).toString());
 
 // Effect Int: BOSUN_CHAIR_SERVER_PORT or the default 3022.
 export const resolvePort = () => {
@@ -41,11 +44,16 @@ export const fleetPath = () => process.env.BOSUN_FLEET_PATH || DEFAULT_FLEET_PAT
 
 export const readFleetImpl = () => JSON.parse(readFileSync(fleetPath(), "utf8"));
 
-// Atomic write: serialise to a tmp file, fsync via writeFileSync semantics,
-// then rename. Mirror the existing backup-on-edit convention by writing a
-// rolling .bak alongside the live file (single slot — the git history is the
-// long-tail audit). The temp + rename pattern guarantees readers never see a
-// half-written fleet.json.
+// Atomic write: serialise to a tmp file, fsync it, then rename. Mirror the
+// existing backup-on-edit convention by writing a rolling .bak alongside the
+// live file (single slot — the git history is the long-tail audit). The temp +
+// rename pattern guarantees readers never see a half-written fleet.json.
+//
+// The fsync is real now. The comment used to say "fsync via writeFileSync
+// semantics", which writeFileSync does not do: the rename made the write atomic
+// for READERS while the durability the sentence claimed was never performed —
+// a belief with nothing to contradict it, in a file whose whole job is being
+// the source of truth.
 export const writeFleetImpl = (json) => {
   const path = fleetPath();
   const tmp = path + ".tmp";
@@ -54,6 +62,8 @@ export const writeFleetImpl = (json) => {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   if (existsSync(path)) copyFileSync(path, bak);
   writeFileSync(tmp, JSON.stringify(json, null, 2) + "\n");
+  const fd = openSync(tmp, "r+");
+  try { fsyncSync(fd); } finally { closeSync(fd); }
   renameSync(tmp, path);
 };
 
@@ -84,9 +94,14 @@ export const reloadBosunServeImpl = () => {
 // EffectFn1(Int → Json): fetch a Marginalia project record. Called at POST
 // /api/projects/:id/servers time only, to denormalise projectName + projectSlug
 // into the fleet.json row. Reads stay independent.
+// `-f` so a 404 (no such project) THROWS. Without it, Marginalia's error body
+// parsed cleanly, the row was denormalised with null projectName/projectSlug,
+// and the registration answered success — a permanently mis-linked row created
+// by a lookup that had in fact failed.
 export const fetchMarginaliaProjectImpl = (id) =>
   JSON.parse(
-    execSync(`curl -sS --max-time 8 ${MARGINALIA_BASE}/api/projects/${id}`, {
+    execSync(`curl -sS -f --max-time 8 ${MARGINALIA_BASE}/api/projects/${id}`, {
       maxBuffer: 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
     }).toString()
   );

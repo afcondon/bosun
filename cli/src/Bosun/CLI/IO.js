@@ -22,8 +22,12 @@ export const readJsonImpl = (path) => JSON.parse(expandBosunRoot(readFileSync(pa
 
 // Fetch + parse a JSON URL synchronously (the no-Aff seam — straight-line curl,
 // no callbacks). Used by `bosun serve` to read the live Marginalia registry.
+// `-f`: without it, a 5xx whose body is `{"error":…}` parses, ingests to zero
+// services, and `bosun serve` prints "nothing to bind … Exiting." — a registry
+// outage rendered as an empty registry. A source we REQUIRE should fail loudly;
+// `getJsonUrl` below is the non-throwing form, for sources we merely ask.
 export const readJsonUrlImpl = (url) =>
-  JSON.parse(execSync(`curl -s --max-time 10 ${url}`, { maxBuffer: 64 * 1024 * 1024 }).toString());
+  JSON.parse(execSync(`curl -sS -f --max-time 10 ${url}`, { maxBuffer: 64 * 1024 * 1024 }).toString());
 
 // Talk to a local daemon's control surface without throwing: an unreachable
 // router is an OUTCOME (`bosun reload` must report it), not a crash. Same

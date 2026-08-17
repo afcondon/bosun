@@ -7,7 +7,8 @@ Work is split across two Claude sessions; they meet at the serve HTTP contract.
 ## The seam (already exists)
 
 - `GET  :3997/state` → `StateView { routes[], redirects[], rejected[], drift[], stale, registry }`
-  where `RouteStatus = { serviceId, publicPort, internalPort, up, pid }`
+  where `RouteStatus = { serviceId, publicPort, internalPort, up, pid, external,
+  externalCheckedAt, bound, bindError }`
   (decoded in `chair/src/Chair/State.purs`).
 - `POST :3997/control/spawn?port=N` · `/control/stop?port=N` · `/control/reload`
   (already called by the Cockpit; restart = stop then spawn).
@@ -251,3 +252,87 @@ in the other direction. And the write path already reloads, so a watcher would
 only ever cover hand edits — precisely the case where the operator is sitting
 there and can type `bosun reload`. So: **detect and report staleness, make the
 remedy one action away, never act unbidden.**
+
+## `serve` liveness: `up` must not outlive its evidence (2026-08-17, later)
+
+The drift work above closed *registry vs router*. The same day turned up the
+same shape one layer in — **router vs the world** — and the fix is the same
+principle: re-derive the claim, don't remember it.
+
+### Adoption was sticky, and a reload could not clear it
+
+When a route's public port is already held, the router **adopts**: `/state`
+showed `external: true, up: true, pid: null` and it bound nothing. That is right
+for "I'm running this one myself". It was wrong the moment the external process
+exited: the router went on reporting `up: true` for a port with **nothing
+listening on it at all**, and because it still believed the port externally
+owned, it never bound it, so lazy-spawn could never fire again. Unreachable, and
+the router saying it was fine. Seen on `:3028` (itajara).
+
+`POST /control/reload` did not help, and could not: **`applyReload` diffs
+configuration.** The row on disk had not changed, so `serveDiff` never revisited
+the route and the reload honestly reported `{boundRoutes:[], unbound:[]}`. Only
+a full router restart re-planned it.
+
+The fix — `recheckAdopted` in `cli/src/Bosun/CLI/Serve.js` — probes every
+adopted route's public port and, when the holder has gone, drops the claim and
+`listen`s again. It is called from **three** places, and all three earn it:
+
+| caller | why |
+|---|---|
+| a 5s watch timer | the guarantee. A router nobody is polling must still reclaim a dead route, or recovery depends on someone looking. |
+| `/state` | so `up` for an adopted route is a value just checked, not one remembered. `externalCheckedAt` says when. |
+| `applyReload` | a reload is the operator's explicit "make it match reality" act. Leaving it a pure config diff means the one command reached for when something looks wrong is the one command that cannot fix this. |
+
+Neither the timer nor the reload alone was enough: the timer alone leaves
+`reload` still reporting a no-op against exactly this failure; the reload alone
+needs an operator, and `up: true` stays a lie until one arrives.
+
+`RouteStatus` also gained **`bound`** and **`bindError`**. A non-`EADDRINUSE`
+bind failure used to leave the route in the ADMITTED table looking merely idle,
+when in fact no request could ever arrive on it. `bound: false` + `external:
+false` ⇒ nothing is listening. The Chair renders `external` and `unbound` as
+distinct row states and hides the spawn/stop buttons for them (serve answers
+`409` — there is no backend of ours to start or stop).
+
+### A backend must not outlive its router
+
+Backends are spawned `detached`, which they must be — their own process group is
+what lets the whole subtree be signalled. That also means they do **not** die
+with the router. One that was started via `/control/spawn` survived a router
+restart and then raced the router's new child for the internal port; the loser
+did not exit, so two daemons ended up holding one audio interface.
+
+Two halves, because neither covers the other:
+
+- **`process.on("exit"|"SIGTERM"|"SIGINT")` → SIGTERM every live backend.**
+  Covers every ordinary end, including how `supervise` stops the router.
+- **`reapOrphanBackends` at startup.** Covers the end no hook can: SIGKILL, or
+  the machine going down. One `lsof`, and anything listening on one of *our
+  routes'* internal ports is signalled by process group before a single port is
+  bound. The claim that makes it safe is that the internal port is Bosun's by
+  construction — `public + internalOffset`, chosen by the planner, never by a
+  service — and the router was about to fight that process for the port anyway.
+
+Related, and the cause of the race: `/control/stop` used to null the child handle
+and answer immediately, so a Chair "reboot" (stop then spawn) could put the new
+backend on the internal port before the old one had let go. `stopBackend` now
+resolves only when the process has actually exited (SIGTERM, SIGKILL at 3s), and
+`ensureBackend` waits on any stop in flight. The response carries `wasRunning`
+and answers `ok: false` if the backend would not die.
+
+### The gate
+
+`scripts/serve-liveness.sh` — a scratch router over a throwaway registry on its
+own control port (`BOSUN_SERVE_STATUS_PORT`, which exists only so a test router
+can stand beside the live one). It adopts a real external holder, kills it, and
+asserts the route recovers **without a restart**; then spawns a backend, kills
+the router politely (no orphan), SIGKILLs it (orphan, as it must be), and
+asserts the next router sweeps it before binding. Both defects are below the
+pure plan, so the spec suite cannot reach them.
+
+This is **option (C)** of `BRUNEL-DURABLE-FIXES.md` §3a ("a periodic re-probe"),
+in the direction that was live. Option (A) — pre-bind probing, so adoption does
+not depend on `EADDRINUSE` at all — is still open, and is still the one that
+retires the `startCommand: null` stopgap; the probe it needs (`probePort`) now
+exists.

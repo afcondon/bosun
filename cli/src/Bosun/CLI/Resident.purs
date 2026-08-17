@@ -21,6 +21,9 @@
 -- | to name — so it is named here, once, and reused.
 module Bosun.CLI.Resident
   ( Resident
+  , ControlResult
+  , accepted
+  , refused
   , runResident
   , nowMs
   ) where
@@ -30,9 +33,31 @@ import Prelude
 import Effect (Effect)
 import Effect.Uncurried (EffectFn1, EffectFn2, runEffectFn1)
 
+-- | What a `/control/<verb>` POST did. `ok` is the SUBSTRATE'S OWN verdict, not
+-- | "the callback returned without throwing" — a verb it does not know, a
+-- | service it cannot find, a reload it rejected are all refusals, and the shim
+-- | answers 4xx for them.
+-- |
+-- | It used to be a bare `String`, and the shim wrapped every non-throwing
+-- | return as `200 {ok:true}`. So `"unknown control verb: xyz"` and
+-- | `"reload: rejected — …"` reached the caller as successes — and chair-server
+-- | reads exactly this `ok` to decide whether a registration was routed, so the
+-- | daemon's own "no" was being converted into a "yes" one layer up.
+type ControlResult = { ok :: Boolean, message :: String }
+
+-- | The verb was understood and enacted.
+accepted :: String -> Effect ControlResult
+accepted message = pure { ok: true, message }
+
+-- | The verb was understood and NOT enacted (or not understood at all). The
+-- | message is the reason, and it reaches the caller instead of being logged
+-- | where only the daemon can see it.
+refused :: String -> Effect ControlResult
+refused message = pure { ok: false, message }
+
 -- | A resident substrate adapter. `tick` runs every `intervalMs`; `stateBody`
 -- | renders the current `/state` JSON; `control` handles a
--- | `/control/<verb>?service=<arg>` POST and returns a status message. Bringing
+-- | `/control/<verb>?service=<arg>` POST and reports what it did. Bringing
 -- | the deployment to its initial state (process: bring-up; docker: first
 -- | observe) is the substrate's own job, done before `runResident` is called.
 type Resident =
@@ -40,7 +65,7 @@ type Resident =
   , intervalMs :: Int
   , tick :: Effect Unit
   , stateBody :: Effect String
-  , control :: EffectFn2 String String String
+  , control :: EffectFn2 String String ControlResult
   }
 
 foreign import residentImpl :: EffectFn1 Resident Unit

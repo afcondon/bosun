@@ -193,7 +193,17 @@ router :: Request Route -> ResponseM
 router { route: r, method, body } = case method of
   Options -> ok' corsHeaders ""
   _ -> case r of
-    Health -> ok' corsHeaders "ok"
+    -- Not a bare "ok". The registry-edit half of this server is unusable if
+    -- fleet.json cannot be read, and every other endpoint 400s in that case
+    -- while /health cheerfully said the service was fine — a health check that
+    -- checks nothing it serves. Read the file it owns and report what it found.
+    Health -> do
+      fleet <- attempt (liftEffect readFleet)
+      case fleet of
+        Left e -> response' Status.serviceUnavailable jsonCors
+          (stringify (healthJson false ("registry unreadable: " <> message e)))
+        Right f -> ok' jsonCors
+          (stringify (healthJson true (show (A.length (serverList f)) <> " server rows")))
     Analyze -> do
       bodyStr <- toString body
       case parseBody analyzeRequestCodec bodyStr of
@@ -403,6 +413,15 @@ routingJson routed reloaded note outcome = J.fromObject
     , Tuple "routed" (J.fromBoolean routed)
     , Tuple "note" (J.fromString note)
     , Tuple "reload" (if outcome.ok then outcome.body else jsonNull)
+    ])
+
+-- | `GET /health` — what this server can actually do right now, not that its
+-- | process is running (the caller can see that from the connection).
+healthJson :: Boolean -> String -> Json
+healthJson ok note = J.fromObject
+  (FO.fromFoldable
+    [ Tuple "ok" (J.fromBoolean ok)
+    , Tuple "registry" (J.fromString note)
     ])
 
 -- | Splice a computed field into a response object. The value is response-only —

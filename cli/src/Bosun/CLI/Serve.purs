@@ -98,9 +98,17 @@ type ServeConfig =
 foreign import serveImpl :: EffectFn1 ServeConfig Unit
 
 -- | The read-only JSON status endpoint, off the public-port range and clear of
--- | SDI's own :3998.
+-- | SDI's own :3998. A constant, not an option: it is the address the Chair,
+-- | chair-server and `bosun reload` all know without being told.
 statusPort :: Int
 statusPort = 3997
+
+-- | `statusPort`, unless `BOSUN_SERVE_STATUS_PORT` says otherwise. The override
+-- | exists so a SCRATCH router can be stood up beside the live one — a router
+-- | whose whole job is holding ports is otherwise untestable without taking the
+-- | real one down. Both the resident loop and `bosun reload` read it, so a test
+-- | reloads the router it started.
+foreign import resolveStatusPort :: Effect Int
 
 -- | The live Marginalia registry endpoint — the same `/api/ports` SDI reads.
 registryUrl :: String
@@ -137,6 +145,7 @@ planOf json = servePlan (reconcile Map.empty (ingestRegistry json)).deployment
 serveFrom :: String -> String -> Maybe String -> Effect Json -> Effect Unit
 serveFrom label source sourceFile reread = do
   plan <- planOf <$> reread
+  status <- resolveStatusPort
   log ("bosun " <> version <> " — " <> label)
   log ""
   log (renderServePlan plan)
@@ -147,7 +156,7 @@ serveFrom label source sourceFile reread = do
     log
       ( "serve: binding " <> show (A.length plan.routes) <> " proxy + "
           <> show (A.length plan.redirects) <> " redirect port(s); /state on :"
-          <> show statusPort <> ". SIGHUP (or `bosun reload`) to reload. Lazy-spawn on first request. Ctrl-C to stop."
+          <> show status <> ". SIGHUP (or `bosun reload`) to reload. Lazy-spawn on first request. Ctrl-C to stop."
       )
     log ""
     ref <- Ref.new plan
@@ -174,7 +183,7 @@ serveFrom label source sourceFile reread = do
       { routes: plan.routes
       , redirects: plan.redirects
       , rejected: rejectInfo plan
-      , statusPort
+      , statusPort: status
       , source
       , sourceFile: toNullable sourceFile
       , reload
@@ -216,8 +225,9 @@ driftTag = case _ of
 -- | do about it.
 runReload :: Maybe Int -> Effect Unit
 runReload mport = do
+  fallback <- resolveStatusPort
   let
-    port = fromMaybe statusPort mport
+    port = fromMaybe fallback mport
     base = "http://localhost:" <> show port
   log ("bosun " <> version <> " — reload " <> base)
   res <- postJsonUrl (base <> "/control/reload")
@@ -239,11 +249,14 @@ runReload mport = do
     -- router can make it.
     st <- getJsonUrl (base <> "/state")
     if not st.ok then log ("  ? could not read /state back — " <> st.error)
-    else case driftOf st.body of
-      [] -> log "  ✓ the registry and the router agree."
-      ds -> do
-        log ""
-        log (renderDrift ds)
+    else case registryErrorOf st.body of
+      -- a check that could not be MADE is not agreement, and must never print as it
+      Just e -> log ("  ! the router could not check the registry — " <> e)
+      Nothing -> case driftOf st.body of
+        [] -> log "  ✓ the registry and the router agree."
+        ds -> do
+          log ""
+          log (renderDrift ds)
 
 -- ── minimal /state + /control/reload response reading ───────────────────────
 -- The router's control surface is hand-rolled JSON in the foreign shim (it has
@@ -262,6 +275,13 @@ intsAt k j = A.mapMaybe asInt (fromMaybe [] (J.toObject j >>= FO.lookup k >>= J.
 
 asInt :: Json -> Maybe Int
 asInt j = J.toNumber j >>= Int.fromNumber
+
+-- `/state`'s `registry.error`: why the router could not check the registry at
+-- all. It reports an EMPTY `drift` in that case, which is exactly what agreement
+-- looks like, so the reason has to be read separately or the tool repeats the
+-- bug it exists to close.
+registryErrorOf :: Json -> Maybe String
+registryErrorOf j = J.toObject j >>= FO.lookup "registry" >>= J.toObject >>= FO.lookup "error" >>= J.toString
 
 -- The inverse of `driftTag` — the boundary decode, so the CLI can print the
 -- same operator sentences (`renderDrift`) the Chair shows.

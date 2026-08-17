@@ -184,6 +184,15 @@ the exact drift D-G1 exists to prevent.
   from `rejected` (*seen and unusable*). If `stale` is true, the router is behind
   the file: `bosun reload`. If a row is in `rejected`, a reload will not help —
   read the reason and fix the row.
+- **`external: true` means the port is served by something serve did not start.**
+  Benign — it steps aside rather than shadowing. Since 2026-08-17 it is also
+  *recoverable*: the router re-probes the holder every 5s and takes the port back
+  when it exits, so the route becomes lazy-spawnable again with no restart.
+  `externalCheckedAt` says when the claim was last tested; `/control/spawn|stop`
+  answer `409` while it stands (there is no backend of ours to act on).
+- **`bound: false` with `external: false` means nothing is listening on that
+  public port at all** — the router failed to bind it (`bindError`), so no
+  request can arrive and lazy-spawn can never fire. Distinct from an idle route.
 - **A rejection is not a routing failure to chase.** Ten-odd fleet rows exist for
   documentation / port-collision-avoidance only (null or prose `startCommand`)
   and land in `rejected` by design. They are accounted for, which is the point:

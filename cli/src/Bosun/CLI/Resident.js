@@ -42,11 +42,20 @@ export const residentImpl = (cfg) => {
     if (req.method === "POST" && u.pathname.startsWith("/control/")) {
       const verb = u.pathname.slice("/control/".length);
       const arg = u.searchParams.get("service") || u.searchParams.get("group") || "";
-      let msg;
-      try { msg = cfg.control(verb, arg); }
-      catch (e) { res.writeHead(500, CORS); res.end(String(e && e.message)); return; }
-      res.writeHead(200, { "content-type": "application/json", ...CORS });
-      res.end(JSON.stringify({ ok: true, message: msg }));
+      let out;
+      try { out = cfg.control(verb, arg); }
+      catch (e) {
+        res.writeHead(500, { "content-type": "application/json", ...CORS });
+        res.end(JSON.stringify({ ok: false, message: String((e && e.message) || e) }));
+        return;
+      }
+      // The SUBSTRATE's verdict decides the status. This used to answer
+      // `200 {ok:true}` for every non-throwing return, so "unknown control verb"
+      // and "reload: rejected — …" arrived as successes; chair-server reads this
+      // `ok` to decide whether a registration was routed, so the refusal was
+      // being laundered into a confirmation one layer up.
+      res.writeHead(out.ok ? 200 : 400, { "content-type": "application/json", ...CORS });
+      res.end(JSON.stringify({ ok: !!out.ok, message: out.message }));
       return;
     }
 

@@ -133,6 +133,15 @@ shadowing it — i.e. the stopgap is no longer load-bearing.
 *after* serve bound is adopted on the next tick rather than serve owning the port
 forever. Incident (ii) is the argument for it: serve started first at boot.
 
+> **Option C landed 2026-08-17, in the OTHER direction** (`recheckAdopted`,
+> `Serve.js`; see `CONTROL-SURFACE.md`, "serve liveness"). A 5s watch re-probes
+> every **adopted** route and reclaims the port when the incumbent has gone —
+> the failure that was live on `:3028`, where the router reported `up: true`
+> forever for a port with nothing listening. The direction this note asks for
+> (an incumbent appearing *after* serve bound) is **not** covered: serve holds
+> the port, so there is nothing to probe. That still wants option (A), and the
+> connect-with-timeout probe it needs now exists as `probePort`.
+
 ### 3b. Health must be observed, not inferred *(detects the whole class)*
 
 **Defect, restated per §2 above.** Two present forms:

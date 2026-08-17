@@ -29,7 +29,7 @@ import Bosun.Atoms (ServiceId, mkServiceId, unServiceId)
 import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeSupSnapshot)
-import Bosun.CLI.Resident (Resident, nowMs, runResident)
+import Bosun.CLI.Resident (Resident, accepted, nowMs, refused, runResident)
 import Bosun.Plan (Change(..), Plan, Status(..), plan, planSteps)
 import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderCommand, renderReport)
@@ -205,13 +205,13 @@ superviseResident targets mPort startHeld reloadSource dep0 vd0 = do
       "up" -> do
         Ref.write true desiredUp
         bringUp
-        pure "up: desired=up, bringing up"
+        accepted "up: desired=up, bringing up"
       "down" -> do
         Ref.write false desiredUp
         bringDown
         -- forget launch memory so stopped services read Down, not Failed
         Ref.write emptySupState supRef
-        pure "down: desired=down, auto-restart suspended"
+        accepted "down: desired=down, auto-restart suspended"
       "restart" -> do
         now <- nowMs
         dep <- Ref.read depRef
@@ -219,10 +219,17 @@ superviseResident targets mPort startHeld reloadSource dep0 vd0 = do
         prev <- Ref.read supRef
         let
           refined = refine cfg now prev obs
-          forced = Map.insert (mkServiceId arg) Failed refined.snapshot
+          sid = mkServiceId arg
         Ref.write refined.state supRef
-        enactPlan ("restart " <> arg) now forced
-        pure ("restart: " <> arg)
+        -- A name that is not in the group cannot be restarted, and saying
+        -- "restart: <typo>" as though it had been is how a control surface
+        -- teaches you to trust it wrongly. (`arg` is "" when the query
+        -- parameter is missing, which lands here too.)
+        if not (Map.member sid refined.snapshot) then
+          refused ("restart: no service `" <> arg <> "` in this group")
+        else do
+          enactPlan ("restart " <> arg) now (Map.insert sid Failed refined.snapshot)
+          accepted ("restart: " <> arg)
       -- HOT-RELOAD (note #397): re-read the spec, diff it against what is
       -- running, and stop ONLY the services whose launch spec changed (or were
       -- removed) — the unchanged ones keep running with their launch memory, so
@@ -230,11 +237,11 @@ superviseResident targets mPort startHeld reloadSource dep0 vd0 = do
       -- services come up on the next keep-alive tick (desired=up). A spec that
       -- fails to parse/validate is rejected and the running group is untouched.
       "reload" -> case reloadSource of
-        Nothing -> pure "reload: no reload source configured for this resident"
+        Nothing -> refused "reload: no reload source configured for this resident"
         Just reload -> do
           res <- reload
           case res of
-            Left err -> pure ("reload: rejected — " <> err)
+            Left err -> refused ("reload: rejected — " <> err)
             Right (Tuple dep' vd') -> do
               oldVd <- Ref.read vdRef
               let
@@ -252,8 +259,8 @@ superviseResident targets mPort startHeld reloadSource dep0 vd0 = do
               -- keep their launch memory (the double-launch guard).
               Ref.write dep' depRef
               Ref.write vd' vdRef
-              pure ("reload: " <> reloadSummary d)
-      _ -> pure ("unknown control verb: " <> verb)
+              accepted ("reload: " <> reloadSummary d)
+      _ -> refused ("unknown control verb: " <> verb)
   if startHeld then
     log "supervise: resident, held down (desired=down) — no initial bring-up; raise from the Chair (▲ up all)"
   else do
