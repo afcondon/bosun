@@ -8,6 +8,9 @@ module Bosun.CLI.IO
   ( readYamlFile
   , readJsonFile
   , readJsonUrl
+  , HttpResult
+  , getJsonUrl
+  , postJsonUrl
   , argv
   ) where
 
@@ -18,7 +21,16 @@ import Effect.Uncurried (EffectFn1, runEffectFn1)
 foreign import readYamlImpl :: EffectFn1 String Json
 foreign import readJsonImpl :: EffectFn1 String Json
 foreign import readJsonUrlImpl :: EffectFn1 String Json
+foreign import getJsonUrlImpl :: EffectFn1 String HttpResult
+foreign import postJsonUrlImpl :: EffectFn1 String HttpResult
 foreign import argv :: Effect (Array String)
+
+-- | A talk-to-a-local-daemon result that does NOT throw. `readJsonUrl` is fine
+-- | for a source we require (a failure there should abort), but `bosun reload`
+-- | has to be able to SAY "the router isn't running" rather than die with a
+-- | stack trace — an unreachable router is a legitimate, reportable outcome.
+-- | `body` is `null` when `ok` is false.
+type HttpResult = { ok :: Boolean, body :: Json, error :: String }
 
 readYamlFile :: String -> Effect Json
 readYamlFile = runEffectFn1 readYamlImpl
@@ -28,3 +40,9 @@ readJsonFile = runEffectFn1 readJsonImpl
 
 readJsonUrl :: String -> Effect Json
 readJsonUrl = runEffectFn1 readJsonUrlImpl
+
+getJsonUrl :: String -> Effect HttpResult
+getJsonUrl = runEffectFn1 getJsonUrlImpl
+
+postJsonUrl :: String -> Effect HttpResult
+postJsonUrl = runEffectFn1 postJsonUrlImpl

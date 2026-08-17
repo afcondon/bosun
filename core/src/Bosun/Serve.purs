@@ -29,6 +29,10 @@ module Bosun.Serve
   , servePlan
   , ServeDiff
   , serveDiff
+  , DriftKind(..)
+  , PortDrift
+  , PortClaim
+  , planDrift
   , internalOffset
   , internalPort
   , defaultIdleMs
@@ -103,7 +107,13 @@ derive instance Generic RejectReason _
 -- `Bosun.Report.renderReject`.
 instance Show RejectReason where show = genericShow
 
-type Rejection = { serviceId :: String, reason :: RejectReason }
+-- | A refused service. `publicPort` is the port the row CLAIMED (`Nothing` only
+-- | for `NoHostPort`, which claims none) — carried so a rejection can be
+-- | correlated with the registry row that produced it. Public port is identity
+-- | here as everywhere else in the router, and without it "the registry has a
+-- | row on :3028" and "the router refused :3028" cannot be shown to be the same
+-- | fact (`planDrift`).
+type Rejection = { serviceId :: String, publicPort :: Maybe Int, reason :: RejectReason }
 
 -- | A remote service (P2): the router can't spawn it here, but it CAN bind the
 -- | public port and answer with a `421 Misdirected Request` pointing at where
@@ -151,7 +161,7 @@ arbitrate adms = (foldl step { claimed: Set.empty, out: [] } adms).out
   step st adm = case binderPort adm of
     Just (Tuple sid port)
       | Set.member port st.claimed ->
-          st { out = A.snoc st.out (Reject { serviceId: sid, reason: PortClaimed port }) }
+          st { out = A.snoc st.out (Reject { serviceId: sid, publicPort: Just port, reason: PortClaimed port }) }
       | otherwise ->
           st { claimed = Set.insert port st.claimed, out = A.snoc st.out adm }
     _ -> st { out = A.snoc st.out adm }
@@ -186,15 +196,16 @@ admit s = case classify s.reachability of
                 , launchCommand: rewritePort public (internalPort public) pr.command
                 , idleTimeoutMs: defaultIdleMs
                 }
-          | otherwise -> reject (Sdi PortNotInStartCommand)
+          | otherwise -> rejectAt public (Sdi PortNotInStartCommand)
         -- A `cd`-less registry row parses to `Unmanaged` (StartCommand.purs): it
         -- has no absolute cwd, the SDI footgun. Report it as such.
-        Unmanaged _ -> reject (Sdi NoAbsoluteCwd)
-        _ -> reject NotAProcess
+        Unmanaged _ -> rejectAt public (Sdi NoAbsoluteCwd)
+        _ -> rejectAt public NotAProcess
   _ -> reject NoHostPort
   where
   sid = unServiceId s.id
-  reject r = Reject { serviceId: sid, reason: r }
+  reject r = Reject { serviceId: sid, publicPort: Nothing, reason: r }
+  rejectAt port r = Reject { serviceId: sid, publicPort: Just port, reason: r }
 
 -- | Local (this machine) vs remote: `mbp` and host-less are local; any other
 -- | host is remote, returned by name for the redirect.
@@ -255,6 +266,108 @@ sigMap plan =
     ( map (\r -> Tuple r.publicPort (routeSig r)) plan.routes
         <> map (\d -> Tuple d.publicPort (redirectSig d)) plan.redirects
     )
+
+routeSig :: Route -> String
+routeSig r = "proxy|" <> r.cwd <> "|" <> r.launchCommand <> "|" <> show r.internalPort
+
+redirectSig :: Redirect -> String
+redirectSig d = "redir|" <> d.target
+
+-- A rejection's signature. Not a `Show` — a stable tag for change detection
+-- (the operator-facing text is `Bosun.Report.renderReject`).
+rejectSig :: RejectReason -> String
+rejectSig = case _ of
+  NoHostPort -> "reject|no-host-port"
+  NotAProcess -> "reject|not-a-process"
+  Sdi PortNotInStartCommand -> "reject|sdi-port-not-in-start-command"
+  Sdi NoAbsoluteCwd -> "reject|sdi-no-absolute-cwd"
+  PortClaimed port -> "reject|port-claimed|" <> show port
+
+-- ── registry-vs-router drift ─────────────────────────────────────────────────
+
+-- | Which way a public port disagrees between the registry ON DISK and the plan
+-- | the router currently HOLDS. This is a different question from `rejected`:
+-- | a rejection means *seen and unusable*, drift means *not seen at all* (or no
+-- | longer what was seen). Both must be visible, or a registration that
+-- | persisted without reaching the router looks identical to one that never
+-- | happened — the 2026-08-14 itajara case.
+data DriftKind
+  = Unrouted     -- the fresh plan has a verdict on this port, the router doesn't: reload
+  | Altered      -- both have a verdict, and they differ (the router holds a stale one)
+  | Departed     -- the router holds a verdict for a port nothing claims any more: reload
+  -- The registry still claims this port and NO plan accounts for it. A reload
+  -- cannot help: the row is being dropped before admission — two rows sharing a
+  -- `projectSlug:role` (reconcile keeps one), or a row with no `role` at all.
+  -- Only visible by comparing against the raw rows, which is why `planDrift`
+  -- takes the claims and not just the two plans.
+  | Unaccounted
+derive instance Eq DriftKind
+derive instance Generic DriftKind _
+-- Show for test/REPL diagnostics only (entry 73); operator text is
+-- `Bosun.Report.renderDrift`.
+instance Show DriftKind where show = genericShow
+
+-- | One disagreeing public port. `serviceId` names the fresher side's claimant
+-- | (the registry's, except for `Departed` where only the router has one).
+type PortDrift = { publicPort :: Int, serviceId :: String, kind :: DriftKind }
+
+-- | One registry ROW's claim on a public port, as stated — before reconcile
+-- | merges rows and before admission judges them. Structurally identical to
+-- | `Bosun.Adapters.Registry.RegistryClaim` (records unify by shape, so no
+-- | conversion is needed); declared here because core cannot import adapters.
+type PortClaim = { serviceId :: String, publicPort :: Int }
+
+-- | `planDrift claims held fresh` — every public port on which the registry AS
+-- | IT NOW STANDS and the plan the router HOLDS fail to say the same thing.
+-- | Empty ⇔ the sources of truth agree. One entry per port, so two surfaces
+-- | reporting drift report it identically.
+-- |
+-- | Three inputs, not two, and the third earns its place: `claims` is the raw
+-- | registry rows (`Bosun.Adapters.Registry.registryClaims`). Without it, a row
+-- | that never became a service at all — two rows colliding on one
+-- | `projectSlug:role`, a row with no role — is absent from BOTH plans and so
+-- | looks exactly like agreement. That is the same "registered and invisible"
+-- | failure one level lower down, and it needs a different remedy (`Unaccounted`
+-- | ⇒ fix the row; the others ⇒ reload).
+-- |
+-- | Unlike `serveDiff` this accounts for ALL THREE verdicts, so a row the
+-- | router *refuses* is agreement, not drift: the operator reads the reason in
+-- | `rejected` instead of chasing a reload that would change nothing.
+-- | Total and order-deterministic (sorted by port), so it rides the node≡Go
+-- | conformance like the rest of the plan machinery.
+planDrift :: Array PortClaim -> ServePlan -> ServePlan -> Array PortDrift
+planDrift claims held fresh =
+  A.sortWith _.publicPort (A.mapMaybe delta (A.fromFoldable ports))
   where
-  routeSig r = "proxy|" <> r.cwd <> "|" <> r.launchCommand <> "|" <> show r.internalPort
-  redirectSig d = "redir|" <> d.target
+  heldV = verdictMap held
+  freshV = verdictMap fresh
+  claimed = Map.fromFoldable (map (\c -> Tuple c.publicPort c.serviceId) claims)
+  ports = Set.union (Map.keys claimed) (Set.union (Map.keys heldV) (Map.keys freshV))
+  at port serviceId kind = Just { publicPort: port, serviceId, kind }
+  delta port = case Map.lookup port heldV, Map.lookup port freshV, Map.lookup port claimed of
+    -- the router has never seen a row the fresh plan does account for
+    Nothing, Just f, _ -> at port f.serviceId Unrouted
+    -- both account for it, differently: the router's verdict is stale
+    Just h, Just f, _ | h.sig /= f.sig -> at port f.serviceId Altered
+    Just _, Just _, _ -> Nothing
+    -- no fresh verdict, yet the registry still asks for the port ⇒ the row is
+    -- being swallowed upstream of admission (whether or not we still hold it)
+    _, Nothing, Just sid -> at port sid Unaccounted
+    -- held, and nothing claims it any more
+    Just h, Nothing, Nothing -> at port h.serviceId Departed
+    Nothing, Nothing, Nothing -> Nothing
+
+-- The plan's verdict on every public port it accounted for, rejections
+-- included. `Map.union` is left-biased, so a binder wins over a rejection on
+-- the same port — which is exactly the `PortClaimed` case (one service binds,
+-- the loser is refused on a port that IS served).
+verdictMap :: ServePlan -> Map Int { serviceId :: String, sig :: String }
+verdictMap plan = Map.union (binders plan) (refusals plan)
+  where
+  binders p = Map.fromFoldable
+    ( map (\r -> Tuple r.publicPort { serviceId: r.serviceId, sig: routeSig r }) p.routes
+        <> map (\d -> Tuple d.publicPort { serviceId: d.serviceId, sig: redirectSig d }) p.redirects
+    )
+  refusals p = Map.fromFoldable (A.mapMaybe refusal p.rejected)
+  refusal x = x.publicPort <#> \port ->
+    Tuple port { serviceId: x.serviceId, sig: rejectSig x.reason }

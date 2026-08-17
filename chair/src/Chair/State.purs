@@ -7,17 +7,22 @@ module Chair.State
   ( RouteStatus
   , RedirectInfo
   , RejectInfo
+  , DriftInfo
+  , RegistryInfo
   , StateView
+  , driftEntries
   , decodeStateView
   , SuperviseState
   , SupervisionRow
   , decodeSuperviseState
   ) where
 
+import Prelude ((<<<))
+
 import Data.Argonaut.Core (Json)
 import Data.Argonaut.Decode (JsonDecodeError, decodeJson)
 import Data.Either (Either)
-import Data.Maybe (Maybe)
+import Data.Maybe (Maybe, fromMaybe)
 import Foreign.Object (Object)
 
 type RouteStatus =
@@ -35,13 +40,39 @@ type RedirectInfo =
   , target :: String
   }
 
-type RejectInfo = { serviceId :: String, reason :: String }
+-- | A service the router SAW and cannot use — with the port it claimed, so a
+-- | refusal can be joined to the fleet row that caused it. Contrast `DriftInfo`.
+type RejectInfo = { serviceId :: String, publicPort :: Maybe Int, reason :: String }
+
+-- | A public port where the registry on disk and the router's held plan
+-- | disagree. `kind` is `unrouted` | `altered` | `departed`; `note` is the
+-- | sentence the router already rendered, so the Chair does not re-word it.
+-- |
+-- | This is the one thing /state could not previously say: a row that was
+-- | registered but never reached the router appeared in NO bucket — not even
+-- | `rejected` — so the Chair showed nothing at all and the registration looked
+-- | like it had never happened (itajara @3028, 2026-08-14 → 17).
+type DriftInfo = { serviceId :: String, publicPort :: Int, kind :: String, note :: String }
+
+-- | Where the router's plan came from and when — enough for the Chair to say
+-- | "registered <when>, not routed" without a second source.
+type RegistryInfo = { source :: String, plannedAt :: Maybe String, modifiedAt :: Maybe String }
 
 type StateView =
   { routes :: Array RouteStatus
   , redirects :: Array RedirectInfo
   , rejected :: Array RejectInfo
+  -- additive; `Maybe` so a router binary predating the drift work still decodes
+  -- (the same convention as `supervision` below — and the very drift class this
+  -- field exists to expose applies to Bosun's own parts).
+  , drift :: Maybe (Array DriftInfo)
+  , registry :: Maybe RegistryInfo
   }
+
+-- | The drift list, absent-as-empty. An old router reports no drift because it
+-- | cannot compute any — which is honest, if unhelpful.
+driftEntries :: StateView -> Array DriftInfo
+driftEntries = fromMaybe [] <<< _.drift
 
 -- argonaut-codecs derives the record decoder; `Maybe Int` for `pid` makes it
 -- optional/nullable, matching serve emitting `pid: null` when a backend is down.

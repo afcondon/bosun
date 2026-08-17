@@ -6,7 +6,7 @@ Work is split across two Claude sessions; they meet at the serve HTTP contract.
 
 ## The seam (already exists)
 
-- `GET  :3997/state` → `StateView { routes[], redirects[], rejected[] }`
+- `GET  :3997/state` → `StateView { routes[], redirects[], rejected[], drift[], stale, registry }`
   where `RouteStatus = { serviceId, publicPort, internalPort, up, pid }`
   (decoded in `chair/src/Chair/State.purs`).
 - `POST :3997/control/spawn?port=N` · `/control/stop?port=N` · `/control/reload`
@@ -176,3 +176,78 @@ survives the reload and they are never double-launched. **Corollary requirement:
 a UDP/socket/no-network daemon MUST declare `x-bosun.probe: process` so its
 readiness is read by pgid, not by the TCP fallback (`effProbe` maps `process` →
 `ProcessAlive`; the atlantis fixture already does this for es9-daemon/link-spike).
+
+## `serve` drift + honest registration (2026-08-17)
+
+**The failure this closes.** `registry/fleet.json` was written at 14 Aug 18:57
+with a new row (itajara, server 186, `worker`, `:3028`). The `bosun serve`
+running since 11:49 never learned about it. Three sources of truth disagreed for
+three days — 53 rows on disk, 49 accounted for by the router, and a `chair-server`
+reading the file so `:3022/api/ports` DID list it — and nothing said so. The
+Chair renders the router's live view, so a correctly-registered, correctly-
+persisted service was invisible. `REGISTER-A-SERVICE.md` promised "writes
+fleet.json, reloads `bosun serve`"; the write happened, the reload didn't, and
+nobody could tell.
+
+Two things were wrong, and the second is the sharper one:
+
+1. **The reload nudge was fire-and-forget AND silent.** `reloadBosunServeImpl`
+   ran `curl` with `stdio: "ignore"` inside a `catch {}`. Router down ⇒ HTTP 200
+   "created", no mention of the half that didn't happen.
+2. **`/state.rejected` was captured once, at startup, and never refreshed by a
+   reload.** So a row that arrived (or became unroutable) while the router was
+   resident appeared in **no** bucket of `/state` — worse than refused,
+   *invisible*. Itajara is in fact `PortNotInStartCommand` (its `startCommand`
+   carries no literal `3028`), so even a perfect reload would not route it; but
+   nothing anywhere said that, which is what made three days of confusion
+   possible.
+
+**What `/state` now carries.**
+
+| field | meaning |
+|-------|---------|
+| `rejected[]` | seen and unusable — **refreshed on every reload**, and each entry now carries `publicPort` so a refusal joins to its fleet row |
+| `drift[]` | `{ serviceId, publicPort, kind, note }` — the registry on disk vs the plan the router holds. `kind` is `unrouted` (registered, never seen — THE bug), `altered` (held verdict is stale), `departed` (row gone, router still holding the port) |
+| `stale` | `drift` is non-empty |
+| `registry` | `{ source, plannedAt, modifiedAt }` — which file, when the router planned from it, when it was last written |
+
+`drift` is `Bosun.Serve.planDrift held fresh`, pure and port-keyed, and it is
+**strictly wider than `serveDiff`**: `serveDiff` answers "what would I bind
+differently", which is silent about a row the router *refuses*; `planDrift`
+answers "do these two agree at all". A refused row is therefore **agreement, not
+drift** — the reason in `rejected` is the answer, and a reload would change
+nothing. Both properties are PBT'd (`planDrift covers every port serveDiff would
+rebind`, `planDrift is cleared by re-planning`).
+
+The check is cheap: a file source caches on the registry's mtime+size stamp, so
+it is computed **once per file version** however often `/state` is polled. (It is
+deliberately NOT short-circuited to `[]` when the file is byte-identical to what
+the router planned from: that holds only for the staleness kinds, and
+`unaccounted` is a property of the file itself, so it would be permanently
+invisible — the same bug one level down.) The 5s TTL only governs the live-URL
+source, where there is no stamp and a check costs a curl.
+
+**A live finding on the first run (2026-08-17):** ports **3031, 3032, 3034** —
+three `polyglot-pythia-showcases` rows — are `unaccounted`. Five rows share two
+`projectSlug:role` pairs (`juliet-bravo-juliet-mike:api` ×2,
+`:frontend` ×3), so reconcile keeps one of each and the other three are dropped
+with no diagnostic anywhere. They hold ports in the registry and are served by
+nothing. Fixing them means giving each row a distinct `role`.
+
+**`POST /control/reload`** now also returns `routes[]`, `redirects[]`,
+`rejected[]` and `drift[]` — the post-reload verdict on *every* port, not just
+the deltas. Necessary because "not in `boundRoutes`" is not "not routed": an
+unchanged row is already bound.
+
+**`bosun reload [--port N]`** (new subcommand) POSTs that endpoint, prints what
+was bound, then reads `/state` back and says whether the two now agree. For the
+two cases the chair-server write path cannot cover: the router was down when the
+row was written, or the file was edited by hand.
+
+**Why no auto-reload on mtime change.** A reload unbinds and rebinds changed
+ports, which kills live backends. Doing that from a file watcher, with no
+operator in the loop, trades a visible-and-fixable problem for an invisible one
+in the other direction. And the write path already reloads, so a watcher would
+only ever cover hand edits — precisely the case where the operator is sitting
+there and can type `bosun reload`. So: **detect and report staleness, make the
+remedy one action away, never act unbidden.**

@@ -15,6 +15,13 @@
 -- |     proxy on first request, idle-reap. Prints the admission report (what it
 -- |     will and won't route, with typed reasons) then stays resident.
 -- |
+-- |   bosun reload [--port <n>]
+-- |     ask a RUNNING `bosun serve` (default :3997) to re-read its registry and
+-- |     re-admit — the same `POST /control/reload` the chair-server fires on
+-- |     every registry write, for the two cases it can't cover: the router was
+-- |     down when the row was written, or the file was edited by hand. Reports
+-- |     what it bound and whether the two now agree.
+-- |
 -- |   bosun            (no args) — the built-in §7 fixture demo.
 module Bosun.CLI.Main where
 
@@ -30,7 +37,7 @@ import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (argv, readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeSnapshot)
 import Bosun.CLI.Audit (runAudit)
-import Bosun.CLI.Serve (runServe, runServeLive, runServePlan)
+import Bosun.CLI.Serve (runReload, runServe, runServeLive, runServePlan)
 import Bosun.CLI.Supervise (runSupervise)
 import Bosun.CLI.Docker (runDocker)
 import Bosun.Edge (Gate(..), Requirement(..))
@@ -86,6 +93,9 @@ main = do
     [ "serve", "--audit", registryPath ] -> runAudit (Just registryPath)
     [ "serve" ] -> runServeLive
     [ "serve", registryPath ] -> runServe registryPath
+    -- `--port` is the same global flag `supervise` uses, so one router per port
+    -- is addressable without new flag machinery.
+    [ "reload" ] -> runReload supPort
     [ "apply", "--dry-run", composePath, registryPath ] -> runApplyDryRun targets composePath registryPath Nothing
     [ "apply", "--dry-run", composePath, registryPath, snapshotPath ] -> runApplyDryRun targets composePath registryPath (Just snapshotPath)
     [ "apply", composePath, registryPath ] -> runApply targets composePath registryPath Nothing

@@ -20,7 +20,7 @@ import Affjax.Web as AX
 import Bosun.View (AliasEntry, AliasOverride(..), AnalyzeRequest, AnalyzeResult, ConflictView, DeployErrorView, DivergenceView, RouteBacking, ServiceInstanceView, SvcView, TopologyEntry, ValidationView(..), analyzeRequestCodec, analyzeResultCodec)
 import Chair.Graph (Channel, GroupMode(..), NodeLive(..), allChannels, graphView, layoutPositions, nextMode)
 import Chair.Routes (Route(..), routeCodec)
-import Chair.State (RedirectInfo, RejectInfo, RouteStatus, StateView, SuperviseState, decodeStateView, decodeSuperviseState)
+import Chair.State (DriftInfo, RedirectInfo, RejectInfo, RouteStatus, StateView, SuperviseState, decodeStateView, decodeSuperviseState, driftEntries)
 import Chair.Topo (fetchTopology, fetchFleetNames)
 import Data.Argonaut.Decode.Error (printJsonDecodeError)
 import Data.Array as Array
@@ -817,21 +817,55 @@ renderCockpit s =
     , maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text ("serve unreachable — " <> e) ]) s.cockErr
     , case s.cockpit of
         Nothing -> HH.p [ cls "muted" ] [ HH.text "waiting for serve…" ]
-        Just v -> cockpitBody s.fleetNames v
+        Just v -> cockpitBody s.busy s.fleetNames v
     ]
 
-cockpitBody :: forall m. Map String String -> StateView -> H.ComponentHTML Action () m
-cockpitBody names v =
+cockpitBody :: forall m. Boolean -> Map String String -> StateView -> H.ComponentHTML Action () m
+cockpitBody busy names v =
   HH.div_
     [ HH.div [ cls "stats" ]
         [ stat "admitted" (show (Array.length (Array.filter _.up v.routes)) <> " / " <> show (Array.length v.routes) <> " up")
         , stat "redirect" (show (Array.length v.redirects))
         , stat "rejected" (show (Array.length v.rejected))
+        , stat "drift" (show (Array.length (driftEntries v)))
         ]
+    , driftPanel busy names v
     , sectionTable "ADMITTED" (Array.length v.routes) [ "port", "service", "state", "backend", "pid", "" ] (map (routeRow names) v.routes)
     , sectionTable "REDIRECT (421)" (Array.length v.redirects) [ "port", "service", "host", "→ target" ] (map (redirectRow names) v.redirects)
-    , sectionTable "REJECTED" (Array.length v.rejected) [ "service", "reason" ] (map (rejectRow names) v.rejected)
+    , sectionTable "REJECTED" (Array.length v.rejected) [ "port", "service", "reason" ] (map (rejectRow names) v.rejected)
     ]
+
+-- | The third source of truth, made visible. Silent when the registry and the
+-- | router agree (the overwhelmingly common case) — and when they don't, it sits
+-- | ABOVE the three verdict tables, because a row shown nowhere below is the one
+-- | thing those tables cannot tell you about. Every entry has the same single
+-- | remedy, so the reload lives here rather than per row.
+driftPanel :: forall m. Boolean -> Map String String -> StateView -> H.ComponentHTML Action () m
+driftPanel busy names v = case driftEntries v of
+  [] -> HH.text ""
+  ds ->
+    HH.div [ cls "drift" ]
+      [ HH.div [ cls "drift-head" ]
+          [ HH.span [ cls "drift-title" ]
+              [ HH.text (show (Array.length ds) <> " port(s) the router has not read — registered, not routed") ]
+          , HH.button [ cls "btn sm", HE.onClick \_ -> Reload, HP.disabled busy ] [ HH.text "⟳ reload" ]
+          ]
+      , HH.table_ [ HH.tbody_ (map (driftRow names) ds) ]
+      , HH.div [ cls "muted" ] [ HH.text (registryLine v) ]
+      ]
+
+driftRow :: forall m. Map String String -> DriftInfo -> H.ComponentHTML Action () m
+driftRow names d = HH.tr_ [ td (show d.publicPort), td (serviceLabel names d.serviceId), td d.note ]
+
+-- | Provenance for the drift panel: which registry, and when it was last
+-- | written vs when the router last planned from it.
+registryLine :: StateView -> String
+registryLine v = case v.registry of
+  Nothing -> ""
+  Just r ->
+    r.source
+      <> maybe "" (\m -> " · written " <> m) r.modifiedAt
+      <> maybe "" (\p -> " · router planned " <> p) r.plannedAt
 
 routeRow :: forall m. Map String String -> RouteStatus -> H.ComponentHTML Action () m
 routeRow names r =
@@ -848,7 +882,8 @@ redirectRow :: forall m. Map String String -> RedirectInfo -> H.ComponentHTML Ac
 redirectRow names r = HH.tr_ [ td (show r.publicPort), td (serviceLabel names r.serviceId), td r.host, td r.target ]
 
 rejectRow :: forall m. Map String String -> RejectInfo -> H.ComponentHTML Action () m
-rejectRow names r = HH.tr_ [ td (serviceLabel names r.serviceId), td r.reason ]
+rejectRow names r =
+  HH.tr_ [ td (maybe "—" show r.publicPort), td (serviceLabel names r.serviceId), td r.reason ]
 
 -- ── ingestion view (the MISU ladder) ─────────────────────────────────────────
 

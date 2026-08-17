@@ -57,6 +57,16 @@
       border-left: 3px solid var(--reject); color: var(--reject); font-size: 14px;
     }
     .muted { color: var(--muted); font-size: 14px; }
+    /* registry ⇄ router drift: rows the router has never read. Amber, not red —
+       nothing is broken, something is merely unapplied, and it is one click away. */
+    .drift {
+      margin: 24px 0 0; padding: 12px 16px 4px; background: #fff8ec;
+      border-left: 3px solid var(--redirect);
+    }
+    .drift-head { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+    .drift-title { flex: 1 1 auto; color: var(--redirect); font-size: 14px; font-weight: 600; }
+    .drift td { border-bottom-color: #f0e3cc; }
+    .drift .muted { font-size: 12px; padding: 8px 0 4px; }
     .stats { display: flex; gap: 16px; margin: 32px 0 8px; }
     .stat {
       flex: 1; background: var(--panel); border: 1px solid var(--line); padding: 16px 18px;

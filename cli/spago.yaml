@@ -11,10 +11,14 @@ package:
     - arrays
     - argonaut-core
     - either
+    - foldable-traversable
     - foreign-object
+    - integers
     - maybe
+    - nullable
     - ordered-collections
     - partial
+    - refs
     - strings
     - tuples
     - validation

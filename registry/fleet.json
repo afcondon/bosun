@@ -16,21 +16,6 @@
       "tailscaleName": "andrews-mac-mini"
     },
     {
-      "id": 25,
-      "projectId": 144,
-      "projectName": "Producing With Your Feet",
-      "projectSlug": "alpha-victor-echo-kilo",
-      "role": "frontend",
-      "port": 3006,
-      "url": "http://localhost:3006",
-      "startCommand": "cd /Users/afc/work/afc-work/music/producing-with-your-feet && spago bundle -p explorer-ps --outfile static/index.js && npx http-server static -p 3006 -c-1 --cors",
-      "description": "PureScript/Halogen SPA for the MC6 pedal controller. Bundles to static/index.js and serves static/index.html.",
-      "environment": "mbp-native",
-      "prerequisites": "Requires hylograph-graph, hylograph-selection, hylograph-transitions libs checked out as siblings (see spago.yaml extraPackages).",
-      "host": "mbp",
-      "tailscaleName": "andrews-macbook-pro"
-    },
-    {
       "id": 106,
       "projectId": 179,
       "projectName": "Specimen",
@@ -726,8 +711,66 @@
       "projectSlug": "india-uniform-hotel-alpha",
       "projectName": "hosta-atlas",
       "projectId": 152
+    },
+    {
+      "role": "frontend",
+      "port": 3006,
+      "url": "http://localhost:3006",
+      "startCommand": "cd /Users/afc/work/afc-work/music/producing-with-your-feet && spago bundle -p producing-with-your-feet --outfile static/index.js && npx http-server static -p 3006 -c-1 --cors",
+      "description": "PureScript/Halogen SPA for the MC6 pedal controller. Bundles to static/index.js and serves static/index.html.",
+      "prerequisites": "None beyond spago. hylograph-graph/selection/transitions now resolve from the registry (extraPackages pins 0.3.0 / 0.5.3 / 0.1.0) — sibling checkouts are no longer required.",
+      "environment": "mbp-native",
+      "host": "mbp",
+      "tailscaleName": "andrews-macbook-pro",
+      "id": 183,
+      "projectSlug": "alpha-victor-echo-kilo",
+      "projectName": "Producing With Your Feet",
+      "projectId": 144
+    },
+    {
+      "role": "api",
+      "port": 3002,
+      "url": "http://localhost:3002",
+      "startCommand": "cd /Users/afc/work/afc-work/music/producing-with-your-feet && spago bundle -p pwyf-store --platform node --module Server.Main --outfile dist/main.js && PORT=3002 node server/dist/main.js",
+      "description": "pwyf-store — JSON document store for pedal presets, patches (board presets) and MC6 assignments. Replaces per-origin localStorage. GET /api/snapshot is the client's whole-state pull; /health for readiness.",
+      "prerequisites": "Store dir defaults to infovore-larder-db/data/producing-with-your-feet; override with PWYF_STORE_DIR. Seed a fresh store with `python3 server/seed.py`.",
+      "environment": "mbp-native",
+      "host": "mbp",
+      "tailscaleName": "andrews-macbook-pro",
+      "id": 184,
+      "projectSlug": "alpha-victor-echo-kilo",
+      "projectName": "Producing With Your Feet",
+      "projectId": 144
+    },
+    {
+      "role": "frontend",
+      "port": 3003,
+      "url": "http://localhost:3003",
+      "startCommand": "cd /Users/afc/work/afc-work/music/live-coding/selene && PORT=3003 node server.mjs",
+      "description": "Selene — the modular companion. Read-only three-column patch surface (Triggerfish outputs -> interfaces -> modules), served by a zero-dependency static server. The page parses the .module/.device/.patch files client-side with the same parsers the CLI uses, so there is no server-side model and no JSON contract to keep in step. Prebuilt artifact (public/bundle.js via 'make bundle'), port from $PORT, drains on SIGTERM. /health returns JSON. Port suggested by Bosun 2026-08-14.",
+      "host": "mbp",
+      "tailscaleName": "andrews-macbook-pro",
+      "environment": "native",
+      "id": 185,
+      "projectSlug": "quebec-romeo-tango-zulu",
+      "projectName": "Selene",
+      "projectId": 272
+    },
+    {
+      "role": "worker",
+      "port": 3028,
+      "url": "ws://127.0.0.1:3028",
+      "startCommand": "cd /Users/afc/work/afc-work/music/producing-with-your-feet/itajara && ./target/release/itajara loop --device AUDIO4c --in-ch 0 --out-ch 0 --ws-port 3028",
+      "host": "mbp",
+      "tailscaleName": "andrews-macbook-pro",
+      "environment": "native",
+      "description": "Itajara — the looper engine (Epinephelus itajara, the goliath grouper, which booms). Rust/cpal daemon holding the Audio4c directly: record, overdub as layers, undo, two kinds of multiply (dense, and spread/shift/dense for sparse placement), and a 60s pre-roll so the past can be claimed after the fact. Serves a WebSocket the PWYF app connects to (Looper tab) — command strings in, a 30 Hz state snapshot out. Opens NO MIDI port by design: the app is the MIDI hub, so exactly one process talks to the MC6. Needs the Audio4c connected. Residual latency defaults to 252 samples (Ableton quit); recording with Ableton open wants --residual 301, so it is left off the start command deliberately — measure it for the configuration in force.",
+      "id": 186,
+      "projectSlug": "alpha-victor-echo-kilo",
+      "projectName": "Producing With Your Feet",
+      "projectId": 144
     }
   ],
-  "count": 50,
+  "count": 53,
   "collisions": {}
 }

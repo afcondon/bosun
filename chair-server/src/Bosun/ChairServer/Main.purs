@@ -22,12 +22,19 @@
 -- | Writes synchronously fetch the Marginalia project record for projectName +
 -- | projectSlug denormalisation, and POST `:3997/control/reload` so bosun-serve
 -- | re-admits the new row immediately.
+-- |
+-- | A write has TWO halves and they can part company: fleet.json is durable and
+-- | is never rolled back, while the routing half depends on a router that may be
+-- | down, or may refuse the row. Since 2026-08-17 the response says which
+-- | happened (`routing`), and a write that persisted without being routed
+-- | answers **202 Accepted**, not 200 — the failure mode that hid itajara @3028
+-- | for three days was precisely a 200 with the routing half silently dropped.
 module Bosun.ChairServer.Main where
 
 import Prelude hiding ((/))
 
 import Bosun.Analyze (AnalyzeInput, analyze)
-import Bosun.ChairServer.IO (fetchMarginaliaProject, readFleet, readJsonFile, readJsonUrl, readYamlFile, reloadBosunServe, resolvePort, writeFleet)
+import Bosun.ChairServer.IO (ReloadOutcome, fetchMarginaliaProject, readFleet, readJsonFile, readJsonUrl, readYamlFile, reloadBosunServe, resolvePort, writeFleet)
 import Bosun.View (AnalyzeRequest, ServiceInstanceView, TopologyEntry, analyzeRequestCodec, analyzeResultCodec, topologyCodec)
 import Data.Argonaut.Core (Json, jsonNull, stringify)
 import Data.Argonaut.Core as J
@@ -48,8 +55,9 @@ import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Effect.Exception (message)
 import Foreign.Object as FO
-import HTTPurple (Method(..), Request, ResponseM, ServerM, badRequest', notFound', ok', serve, toString)
+import HTTPurple (Method(..), Request, ResponseM, ServerM, badRequest', notFound', ok', response', serve, toString)
 import HTTPurple.Headers (ResponseHeaders, headers)
+import HTTPurple.Status as Status
 import Routing.Duplex (RouteDuplex', int, root, segment)
 import Routing.Duplex.Generic (noArgs, sum)
 import Routing.Duplex.Generic.Syntax ((/))
@@ -249,7 +257,9 @@ handleProjectServers pid = do
 
 -- | POST /api/projects/:id/servers — body shape mirrors Marginalia.
 -- | Look up project name/slug from Marginalia (the only write-time runtime
--- | link), assign a fresh id, atomic-write fleet.json, nudge bosun-serve.
+-- | link), assign a fresh id, atomic-write fleet.json, then ask bosun-serve to
+-- | re-admit and REPORT what it said. 200 when the row is routed; 202 when it
+-- | persisted but is not routed (with the reason in `routing.note`).
 handleCreateServer :: Int -> String -> ResponseM
 handleCreateServer pid bodyStr = case jsonParser bodyStr of
   Left err -> badRequest' jsonCors ("invalid JSON: " <> err)
@@ -269,10 +279,18 @@ handleCreateServer pid bodyStr = case jsonParser bodyStr of
           case writeResult of
             Left e -> badRequest' jsonCors ("fleet.json write failed: " <> message e)
             Right _ -> do
-              _ <- liftEffect reloadBosunServe
-              ok' jsonCors (stringify row)
+              outcome <- liftEffect reloadBosunServe
+              let
+                report = createReport (serverPort row) outcome
+                answer = withField "routing" report.json row
+              -- 200 only when BOTH halves landed. Persisting is durable and is
+              -- never undone, so this is an honest partial success, not an error.
+              if report.routed then ok' jsonCors (stringify answer)
+              else response' Status.accepted jsonCors (stringify answer)
 
 -- | DELETE /api/servers/:id — atomic remove + reload. 404 if id not present.
+-- | 202 when the removal persisted but the router was not told (it will still be
+-- | holding the port until someone reloads it).
 handleDeleteServer :: Int -> ResponseM
 handleDeleteServer sid = do
   fleetResult <- attempt (liftEffect readFleet)
@@ -281,19 +299,116 @@ handleDeleteServer sid = do
     Right fleet ->
       let
         servers = serverList fleet
-        present = A.any (\s -> serverId s == Just sid) servers
+        doomed = A.find (\s -> serverId s == Just sid) servers
       in
-        if not present
-          then notFound' jsonCors
-          else
+        case doomed of
+          Nothing -> notFound' jsonCors
+          Just row ->
             let fleet' = setServers (A.filter (\s -> serverId s /= Just sid) servers) fleet
             in do
               writeResult <- attempt (liftEffect (writeFleet fleet'))
               case writeResult of
                 Left e -> badRequest' jsonCors ("fleet.json write failed: " <> message e)
                 Right _ -> do
-                  _ <- liftEffect reloadBosunServe
-                  ok' jsonCors (stringify (J.fromObject (FO.singleton "deleted" (J.fromNumber (Int.toNumber sid)))))
+                  outcome <- liftEffect reloadBosunServe
+                  let
+                    report = deleteReport (serverPort row) outcome
+                    answer = withField "routing" report.json
+                      (J.fromObject (FO.singleton "deleted" (J.fromNumber (Int.toNumber sid))))
+                  if report.routed then ok' jsonCors (stringify answer)
+                  else response' Status.accepted jsonCors (stringify answer)
+
+----------------------------------------------------------------------
+-- The routing half of a write, reported honestly
+----------------------------------------------------------------------
+
+-- | The router's post-reload verdict on ONE public port. Closed alternatives, so
+-- | an ADT (§10) — and the distinction that matters is `Refused` vs `Absent`:
+-- | refused means the router looked at the row and can't use it (fix the row),
+-- | absent means it never saw it (reload, or the router is stale).
+data PortVerdict
+  = Routed
+  | Redirected
+  | Refused String
+  | Absent
+  | NoPortDeclared
+
+-- | Did the write end up routed, and what do we tell the caller? `routed` gates
+-- | the 200-vs-202; `json` is the `routing` object spliced into the response.
+type WriteReport = { routed :: Boolean, json :: Json }
+
+createReport :: Maybe Int -> ReloadOutcome -> WriteReport
+createReport mport outcome = case reloadFailure outcome of
+  Just why -> unrouted false
+    ( "persisted but NOT routed — the reload failed: " <> why
+        <> ". fleet.json IS written; run `bosun reload` (or start the router) to route it."
+    )
+  Nothing -> case verdictFor mport outcome.body of
+    Routed -> report true "routed — the router is bound to this port and will lazy-spawn it on first request."
+    Redirected -> report true "routed — bound as a 421 redirect (the row's host is not this machine)."
+    Refused why -> unrouted true
+      ( "persisted, and the router reloaded — but it will NOT route this row: " <> why
+          <> ". Fix the row (see docs/REGISTER-A-SERVICE.md) and re-register; the reload cannot help."
+      )
+    NoPortDeclared -> unrouted true
+      "persisted; the row declares no port, so there is nothing for the router to bind."
+    Absent -> unrouted true
+      "persisted, and the router reloaded — but this port is in none of its routes, redirects or refusals. Check the router's /state."
+  where
+  report routed note = { routed, json: routingJson routed true note outcome }
+  unrouted reloaded note = { routed: false, json: routingJson false reloaded note outcome }
+
+deleteReport :: Maybe Int -> ReloadOutcome -> WriteReport
+deleteReport mport outcome = case reloadFailure outcome of
+  Just why ->
+    { routed: false
+    , json: routingJson false false
+        ( "removed from fleet.json but the router was NOT told — the reload failed: " <> why
+            <> ". It is still holding this port; run `bosun reload`."
+        )
+        outcome
+    }
+  Nothing -> case verdictFor mport outcome.body of
+    Routed -> { routed: false, json: routingJson false true "removed from fleet.json, but the router STILL routes this port — check for another row on it." outcome }
+    Redirected -> { routed: false, json: routingJson false true "removed from fleet.json, but the router still 421s this port — check for another row on it." outcome }
+    _ -> { routed: true, json: routingJson false true "removed, and the router has released the port." outcome }
+
+-- | `Nothing` ⇒ the router answered and accepted the reload. `Just why` ⇒ it
+-- | didn't (unreachable, or it answered `{ok:false}`).
+reloadFailure :: ReloadOutcome -> Maybe String
+reloadFailure outcome
+  | not outcome.ok = Just outcome.error
+  | jsonBool "ok" outcome.body = Nothing
+  | otherwise = Just (fromMaybe "the router refused the reload" (jsonString "error" outcome.body))
+
+verdictFor :: Maybe Int -> Json -> PortVerdict
+verdictFor mport body = case mport of
+  Nothing -> NoPortDeclared
+  Just port
+    | A.elem port (jsonInts "routes" body) -> Routed
+    | A.elem port (jsonInts "redirects" body) -> Redirected
+    | Just why <- refusalFor port body -> Refused why
+    | otherwise -> Absent
+
+refusalFor :: Int -> Json -> Maybe String
+refusalFor port body = do
+  entry <- A.find (\r -> serverInt "publicPort" r == Just port) (jsonArray "rejected" body)
+  serverField "reason" entry >>= J.toString
+
+routingJson :: Boolean -> Boolean -> String -> ReloadOutcome -> Json
+routingJson routed reloaded note outcome = J.fromObject
+  (FO.fromFoldable
+    [ Tuple "persisted" (J.fromBoolean true)
+    , Tuple "reloaded" (J.fromBoolean reloaded)
+    , Tuple "routed" (J.fromBoolean routed)
+    , Tuple "note" (J.fromString note)
+    , Tuple "reload" (if outcome.ok then outcome.body else jsonNull)
+    ])
+
+-- | Splice a computed field into a response object. The value is response-only —
+-- | `routing` describes what happened, so it is never part of the persisted row.
+withField :: String -> Json -> Json -> Json
+withField k v j = J.fromObject (FO.insert k v (fromMaybe FO.empty (J.toObject j)))
 
 ----------------------------------------------------------------------
 -- fleet.json helpers (Json-shaped — no typed model)
@@ -315,6 +430,22 @@ appendServer row fleet = setServers (A.snoc (serverList fleet) row) fleet
 
 serverField :: String -> Json -> Maybe Json
 serverField k j = J.toObject j >>= FO.lookup k
+
+-- Reading the router's control-surface answer. It is hand-rolled JSON in the
+-- serve shim (no shared codec to thread through), so these are total with
+-- absent-means-nothing defaults: the handler that exists to REPORT a failure
+-- must not itself fail on a shape surprise.
+jsonBool :: String -> Json -> Boolean
+jsonBool k j = fromMaybe false (serverField k j >>= J.toBoolean)
+
+jsonString :: String -> Json -> Maybe String
+jsonString k j = serverField k j >>= J.toString
+
+jsonArray :: String -> Json -> Array Json
+jsonArray k j = fromMaybe [] (serverField k j >>= J.toArray)
+
+jsonInts :: String -> Json -> Array Int
+jsonInts k j = A.mapMaybe (\x -> J.toNumber x >>= Int.fromNumber) (jsonArray k j)
 
 serverInt :: String -> Json -> Maybe Int
 serverInt k j = serverField k j >>= J.toNumber >>= Int.fromNumber

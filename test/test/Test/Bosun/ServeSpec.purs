@@ -13,11 +13,12 @@ import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkHost, mkPort)
 import Bosun.Error (SdiViolation(..))
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Reachability (hostPort)
-import Bosun.Serve (RejectReason(..), serveDiff, servePlan)
+import Bosun.Serve (DriftKind(..), RejectReason(..), planDrift, serveDiff, servePlan)
 import Bosun.Service (LooseService, mkDeployment)
 import Data.Array (head)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..), fromJust)
+import Data.Tuple (Tuple(..), fst, snd)
 import Partial.Unsafe (unsafePartial)
 import Test.Bosun.ValidateSpec (leaf)
 import Test.Spec (Spec, describe, it)
@@ -56,6 +57,9 @@ spec = describe "Bosun.Serve.servePlan" do
     let p = servePlan (mkDeployment [ procSvc "web" 3050 "mbp" "/srv/web" "npx serve" ])
     p.routes `shouldEqual` []
     map _.reason p.rejected `shouldEqual` [ Sdi PortNotInStartCommand ]
+    -- the port the row CLAIMED travels with the refusal, so /state can join it to
+    -- the registry row (itajara @3028: the real 2026-08-14 case)
+    map _.publicPort p.rejected `shouldEqual` [ Just 3050 ]
 
   it "rejects a cd-less (Unmanaged) row as the SDI no-absolute-cwd footgun" do
     let
@@ -88,6 +92,8 @@ spec = describe "Bosun.Serve.servePlan" do
       p = servePlan (mkDeployment [ svc ])
     p.routes `shouldEqual` []
     map _.reason p.rejected `shouldEqual` [ NoHostPort ]
+    -- the ONE refusal that claims no port, so it cannot key by one
+    map _.publicPort p.rejected `shouldEqual` [ Nothing ]
 
   it "rejects a container — P1 spawns local processes only" do
     let
@@ -155,3 +161,65 @@ spec = describe "Bosun.Serve.servePlan" do
         d = serveDiff old new
       d.unbind `shouldEqual` [ 3051 ]
       map _.publicPort d.bindRoutes `shouldEqual` [ 3051 ]
+
+  -- The registry⇄router disagreement `serveDiff` cannot express: it answers
+  -- "what would I bind differently", which is silent about a row the router
+  -- refuses. `planDrift` answers "do these two agree at all", which is what
+  -- "registered but never routed" needs.
+  describe "planDrift (registry on disk vs the plan the router holds)" do
+    let
+      planOf = servePlan <<< mkDeployment
+      -- the raw registry claims matching a set of services (what
+      -- `registryClaims` would return for the rows behind them)
+      claims = map (\s -> { serviceId: fst s, publicPort: snd s })
+
+    it "a plan against itself: no drift" do
+      let p = planOf [ procSvc "a" 3050 "mbp" "/srv/a" "run -p 3050" ]
+      planDrift (claims [ Tuple "a" 3050 ]) p p `shouldEqual` []
+
+    it "a row registered since the router planned is Unrouted (THE itajara case)" do
+      let
+        held = planOf [ procSvc "a" 3050 "mbp" "/srv/a" "run -p 3050" ]
+        fresh = planOf
+          [ procSvc "a" 3050 "mbp" "/srv/a" "run -p 3050"
+          , procSvc "itajara" 3028 "mbp" "/srv/i" "run -p 3028"
+          ]
+      planDrift (claims [ Tuple "a" 3050, Tuple "itajara" 3028 ]) held fresh `shouldEqual`
+        [ { publicPort: 3028, serviceId: "itajara", kind: Unrouted } ]
+
+    it "a row the router REFUSED is agreement, not drift — the reason is the answer" do
+      let
+        -- no literal port in the command ⇒ refused, and refusal counts as SEEN
+        fresh = planOf [ procSvc "web" 3050 "mbp" "/srv/web" "npx serve" ]
+      map _.reason fresh.rejected `shouldEqual` [ Sdi PortNotInStartCommand ]
+      planDrift (claims [ Tuple "web" 3050 ]) fresh fresh `shouldEqual` []
+
+    it "a row that BECAME unroutable while resident drifts as Altered" do
+      let
+        held = planOf [ procSvc "web" 3050 "mbp" "/srv/web" "npx serve -p 3050" ]
+        fresh = planOf [ procSvc "web" 3050 "mbp" "/srv/web" "npx serve" ]
+      planDrift (claims [ Tuple "web" 3050 ]) held fresh `shouldEqual`
+        [ { publicPort: 3050, serviceId: "web", kind: Altered } ]
+
+    it "a row deleted from the registry drifts as Departed (the router still holds the port)" do
+      let held = planOf [ procSvc "a" 3050 "mbp" "/srv/a" "run -p 3050" ]
+      planDrift [] held (planOf []) `shouldEqual`
+        [ { publicPort: 3050, serviceId: "a", kind: Departed } ]
+
+    -- The claims argument earns its place here: BOTH plans agree (neither has a
+    -- verdict on :3033), so a two-plan comparison would call this agreement. Only
+    -- the raw rows reveal that the registry asked for a port nothing serves.
+    it "a claimed port no plan accounts for is Unaccounted — reload cannot fix it" do
+      let p = planOf [ procSvc "a" 3050 "mbp" "/srv/a" "run -p 3050" ]
+      planDrift (claims [ Tuple "a" 3050, Tuple "swallowed" 3033 ]) p p `shouldEqual`
+        [ { publicPort: 3033, serviceId: "swallowed", kind: Unaccounted } ]
+
+    it "sorted by port, so two surfaces reporting drift report it identically" do
+      let
+        fresh = planOf
+          [ procSvc "c" 3052 "mbp" "/srv/c" "run -p 3052"
+          , procSvc "a" 3050 "mbp" "/srv/a" "run -p 3050"
+          , procSvc "b" 3051 "mbp" "/srv/b" "run -p 3051"
+          ]
+        cs = claims [ Tuple "a" 3050, Tuple "b" 3051, Tuple "c" 3052 ]
+      map _.publicPort (planDrift cs (planOf []) fresh) `shouldEqual` [ 3050, 3051, 3052 ]

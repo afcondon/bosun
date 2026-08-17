@@ -20,12 +20,24 @@ const INTERNAL_HOST = "127.0.0.1";
 const WAIT_TIMEOUT_MS = 30000; // how long to wait for a spawned backend to listen
 const WAIT_POLL_MS = 100;
 const PROXY_TIMEOUT_MS = 8000; // a bound-but-hung backend → 504, not a wedge
+// The Chair polls /state every 1.5s and a drift check re-reads + re-plans the
+// registry, so it is cached. A FILE source caches on its mtime+size stamp
+// (exact: one computation per file version), so this TTL only governs the
+// live-URL source, where there is no stamp and a check costs a curl.
+const DRIFT_TTL_MS = 5000;
 
 // EffectFn1: uncurried — the effect runs on serveImpl(config).
 export const serveImpl = (config) => {
   const states = [];            // proxy-route states, for /state
   const redirects = new Map();  // publicPort -> { serviceId, host, target }, for /state
   const listeners = new Map();  // publicPort -> { server, state? }
+  // Mutable because a reload refreshes them: rejections are NOT static (a row
+  // can stop being routable while we're resident) and the plan's provenance
+  // moves with each re-read.
+  let rejected = config.rejected;
+  let plannedAt = new Date().toISOString();
+  // keyed by source stamp (a file version) — `undefined` forces the first compute
+  let driftCache = { stamp: undefined, at: 0, entries: [] };
 
   const bindRoute = (route) => {
     const state = { route, child: null, ready: null, idleTimer: null };
@@ -87,32 +99,88 @@ export const serveImpl = (config) => {
   for (const route of config.routes) bindRoute(route);
   for (const rd of config.redirects) bindRedirect(rd);
 
-  const stateBody = () => ({
-    routes: states.map((s) => ({
-      serviceId: s.route.serviceId,
-      publicPort: s.route.publicPort,
-      internalPort: s.route.internalPort,
-      // an adopted route is up (served externally), just not by serve; `external`
-      // flags that serve neither spawned nor proxies it.
-      up: s.external ? true : !!s.child,
-      external: !!s.external,
-      pid: s.child ? s.child.pid : null,
-    })),
-    redirects: [...redirects.entries()].map(([publicPort, r]) => ({ publicPort, ...r })),
-    rejected: config.rejected,
-  });
+  // The registry file's identity, cheap: mtime+size. `null` when the source is a
+  // live URL (nothing to stat) or unreadable.
+  const sourceInfo = () => {
+    if (!config.sourceFile) return { stamp: null, modifiedAt: null };
+    try {
+      const st = fs.statSync(config.sourceFile);
+      return { stamp: `${st.mtimeMs}:${st.size}`, modifiedAt: st.mtime.toISOString() };
+    } catch (_) {
+      return { stamp: null, modifiedAt: null };
+    }
+  };
 
-  // Re-read+re-plan in PureScript (config.reload → a typed ServeDiff), then apply
-  // it: unbind removed/changed ports (awaiting release) before (re)binding. Shared
-  // by SIGHUP and POST /control/reload.
+  // What the registry ON DISK says that this router hasn't admitted (and the
+  // reverse). The third source of truth made visible: a registration can
+  // persist and never reach the router, and until this existed the two states
+  // were indistinguishable from the router's own /state.
+  //
+  // We do NOT auto-reload on a stamp change — a reload unbinds and rebinds
+  // changed ports, killing live backends, and that is not a thing to do with no
+  // operator in the loop. Report it; let `bosun reload` (or the Chair's button)
+  // be the act.
+  const driftNow = () => {
+    const { stamp } = sourceInfo();
+    const now = Date.now();
+    // A file source: the stamp (mtime+size) identifies the CONTENT, so one
+    // computation per file version is both cheap and exact — cache indefinitely
+    // while the stamp holds. Note we do NOT short-circuit "the file is what we
+    // planned from ⇒ no drift": that is true only of the staleness kinds, and
+    // `unaccounted` is a property of the file itself (a row nothing serves),
+    // which would then be permanently invisible — the very bug, one level down.
+    if (stamp !== null && driftCache.stamp === stamp) return driftCache.entries;
+    // A URL source has no stamp to key on, so bound it by time instead.
+    if (stamp === null && driftCache.stamp === null && now - driftCache.at < DRIFT_TTL_MS) {
+      return driftCache.entries;
+    }
+    let entries = [];
+    try { entries = config.drift(); }
+    catch (e) { console.error(`  ✗ drift check failed: ${e && e.message ? e.message : e}`); }
+    driftCache = { stamp, at: now, entries };
+    return entries;
+  };
+
+  const stateBody = () => {
+    const drift = driftNow();
+    const { modifiedAt } = sourceInfo();
+    return {
+      routes: states.map((s) => ({
+        serviceId: s.route.serviceId,
+        publicPort: s.route.publicPort,
+        internalPort: s.route.internalPort,
+        // an adopted route is up (served externally), just not by serve; `external`
+        // flags that serve neither spawned nor proxies it.
+        up: s.external ? true : !!s.child,
+        external: !!s.external,
+        pid: s.child ? s.child.pid : null,
+      })),
+      redirects: [...redirects.entries()].map(([publicPort, r]) => ({ publicPort, ...r })),
+      rejected,
+      // registered-but-never-seen (and its two siblings). Distinct from
+      // `rejected`, which means seen and unusable.
+      drift,
+      stale: drift.length > 0,
+      registry: { source: config.source, plannedAt, modifiedAt },
+    };
+  };
+
+  // Re-read+re-plan in PureScript (config.reload → a typed diff + the refreshed
+  // refusals), then apply it: unbind removed/changed ports (awaiting release)
+  // before (re)binding. Shared by SIGHUP and POST /control/reload.
   const applyReload = () => {
     const diff = config.reload();
     return Promise.all(diff.unbind.map(unbindPort)).then(() => {
       diff.bindRoutes.forEach(bindRoute);
       diff.bindRedirects.forEach(bindRedirect);
+      rejected = diff.rejected;
+      plannedAt = new Date().toISOString();
+      // force a recompute: the held plan just moved
+      driftCache = { stamp: undefined, at: 0, entries: [] };
       console.log(
         `  ↻ reload applied: -${diff.unbind.length} unbound, ` +
-        `+${diff.bindRoutes.length} proxy, +${diff.bindRedirects.length} redirect`);
+        `+${diff.bindRoutes.length} proxy, +${diff.bindRedirects.length} redirect, ` +
+        `${diff.rejected.length} refused`);
       return diff;
     });
   };
@@ -156,14 +224,23 @@ function controlRouter(req, res, ctx) {
   }
 
   if (req.method === "POST" && u.pathname === "/control/reload") {
-    Promise.resolve().then(ctx.applyReload).then((diff) =>
+    Promise.resolve().then(ctx.applyReload).then((diff) => {
+      // The caller (chair-server, `bosun reload`, the Chair) needs to know what
+      // happened to a SPECIFIC row, and "not in boundRoutes" is not the same as
+      // "not routed" — an unchanged row is already bound. So answer with the
+      // post-reload verdict for every port, not just the deltas.
+      const after = ctx.stateBody();
       sendJSON(res, 200, {
         ok: true,
         unbound: diff.unbind,
         boundRoutes: diff.bindRoutes.map((r) => r.publicPort),
         boundRedirects: diff.bindRedirects.map((r) => r.publicPort),
-      })
-    ).catch((e) => sendJSON(res, 500, { ok: false, error: String((e && e.message) || e) }));
+        routes: after.routes.map((r) => r.publicPort),
+        redirects: after.redirects.map((r) => r.publicPort),
+        rejected: after.rejected,
+        drift: after.drift,
+      });
+    }).catch((e) => sendJSON(res, 500, { ok: false, error: String((e && e.message) || e) }));
     return;
   }
 
@@ -265,6 +342,21 @@ function proxy(state, req, res) {
 // the upgrade request line + headers.
 function bridgeUpgrade(state, req, socket, head) {
   bumpIdle(state);
+  // An upgraded connection is LIVE for as long as it is open, and no further
+  // request ever arrives to bump the idle timer — so a WebSocket service was
+  // SIGTERMed mid-session at the 10-minute mark (found 2026-08-17 while deciding
+  // whether the itajara looper, a WS daemon holding an audio interface, could
+  // safely be router-managed: it could not). Count open upgrades and let `reap`
+  // decline while any are live; the timer resumes when the last one closes.
+  state.upgrades = (state.upgrades || 0) + 1;
+  let counted = true;
+  const released = () => {
+    if (!counted) return;
+    counted = false;
+    state.upgrades -= 1;
+    if (state.upgrades === 0) bumpIdle(state);   // idle clock restarts now, not before
+  };
+  socket.on("close", released);
   ensureBackend(state).then(() => {
     const up = net.connect(state.route.internalPort, INTERNAL_HOST, () => {
       up.write(`${req.method} ${req.url} HTTP/1.1\r\n`);
@@ -277,9 +369,10 @@ function bridgeUpgrade(state, req, socket, head) {
       up.pipe(socket);
     });
     const kill = () => { try { up.destroy(); } catch (_) {} try { socket.destroy(); } catch (_) {} };
+    up.on("close", released);
     up.on("error", kill);
     socket.on("error", kill);
-  }).catch(() => { try { socket.destroy(); } catch (_) {} });
+  }).catch(() => { released(); try { socket.destroy(); } catch (_) {} });
 }
 
 function killBackend(state) {
@@ -302,6 +395,8 @@ function clearIdle(state) {
 }
 
 function reap(state) {
+  // never reap a backend with a live upgraded (WebSocket) connection through it
+  if (state.upgrades > 0) return;
   if (state.child) {
     console.log(`  ⏏ ${state.route.serviceId} idle ${Math.round(state.route.idleTimeoutMs / 1000)}s — SIGTERM`);
     try { process.kill(-state.child.pid, "SIGTERM"); }

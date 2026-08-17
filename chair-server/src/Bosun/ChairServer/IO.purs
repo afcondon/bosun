@@ -17,6 +17,7 @@ module Bosun.ChairServer.IO
   , fleetPath
   , readFleet
   , writeFleet
+  , ReloadOutcome
   , reloadBosunServe
   , fetchMarginaliaProject
   ) where
@@ -27,6 +28,13 @@ import Data.Argonaut.Core (Json)
 import Effect (Effect)
 import Effect.Uncurried (EffectFn1, runEffectFn1)
 
+-- | What asking the router to reload actually did. `ok` is "the router answered
+-- | at all"; the answer itself (`body.ok`, and which ports it now routes) is the
+-- | caller's to read. Non-throwing on purpose: a down router must be a
+-- | *reportable* outcome, since the registry write has already happened and is
+-- | not being undone.
+type ReloadOutcome = { ok :: Boolean, body :: Json, error :: String }
+
 foreign import readYamlImpl :: EffectFn1 String Json
 foreign import readJsonImpl :: EffectFn1 String Json
 foreign import readJsonUrlImpl :: EffectFn1 String Json
@@ -35,7 +43,7 @@ foreign import resolvePort :: Effect Int
 foreign import fleetPath :: Effect String
 foreign import readFleetImpl :: Effect Json
 foreign import writeFleetImpl :: EffectFn1 Json Unit
-foreign import reloadBosunServeImpl :: Effect Unit
+foreign import reloadBosunServeImpl :: Effect ReloadOutcome
 foreign import fetchMarginaliaProjectImpl :: EffectFn1 Int Json
 
 readYamlFile :: String -> Effect Json
@@ -53,7 +61,7 @@ readFleet = readFleetImpl
 writeFleet :: Json -> Effect Unit
 writeFleet = runEffectFn1 writeFleetImpl
 
-reloadBosunServe :: Effect Unit
+reloadBosunServe :: Effect ReloadOutcome
 reloadBosunServe = reloadBosunServeImpl
 
 -- | Fetch a Marginalia project by id; returns the raw JSON record (or throws

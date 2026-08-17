@@ -9,8 +9,18 @@ model behind it is `MARGINALIA-SEAM.md`, the router itself is `BOSUN-SERVE.md`.
 
 To add a service to the running `bosun serve` router, **POST one request to the
 chair-server on `:3022`**. It assigns the id, denormalises the project
-name/slug from Marginalia, atomically writes `registry/fleet.json`, and nudges
-the router to re-admit the new route immediately.
+name/slug from Marginalia, atomically writes `registry/fleet.json`, asks the
+router to re-admit the new route immediately — and **tells you whether that
+worked**.
+
+> **Read the `routing` field of the response, and the status code.** A
+> registration has two halves and they can part company: fleet.json is durable,
+> the routing half depends on a router that may be down or may refuse the row.
+> **`200` = persisted AND routed. `202 Accepted` = persisted, NOT routed** — and
+> `routing.note` says which of the three reasons it was. This is new as of
+> 2026-08-17; before that a write whose reload silently failed returned a
+> confident `200` and the service was invisible in the Chair for three days
+> (see CONTROL-SURFACE.md, "serve drift + honest registration").
 
 Do **not**, as a first resort:
 - hand-edit `registry/fleet.json` (chair-server owns it),
@@ -19,6 +29,9 @@ Do **not**, as a first resort:
 - `kill -HUP` the router by hand (the POST does the reload for you).
 
 All three still *work*, but they bypass the owner and let the registries drift.
+If you have already done one of them — or the router was down when you wrote —
+**`bosun reload`** brings the router into line, and the Chair's Cockpit shows the
+drift with a reload button until you do.
 
 ## Why `:3022` and not Marginalia `:3100`
 
@@ -45,7 +58,9 @@ GET    /api/ports                    every server row + live collisions
 GET    /api/ports/suggest            next free port from 3000 (over fleet.json)
 GET    /api/projects/:id/servers     servers for one project
 POST   /api/projects/:id/servers     create a row — assigns id, writes fleet.json, reloads serve
+                                     200 routed · 202 persisted-but-not-routed
 DELETE /api/servers/:id              remove a row, writes fleet.json, reloads serve
+                                     200 removed+unrouted · 202 removed, router not told
 ```
 
 The `POST` body mirrors the old Marginalia server shape:
@@ -85,12 +100,28 @@ don't send them.
           "description":"...","host":"mbp",
           "tailscaleName":"andrews-macbook-pro","environment":"native"}'
    ```
-   The response is the created row (with its assigned `id`). The router has
-   already been reloaded.
+   The response is the created row (with its assigned `id`) plus a **`routing`**
+   object — the router's answer about THIS row:
+
+   ```json
+   "routing": { "persisted": true, "reloaded": true, "routed": true,
+                "note": "routed — the router is bound to this port and will lazy-spawn it on first request.",
+                "reload": { … the full /control/reload response … } }
+   ```
+
+   Three ways it can be `"routed": false` (all answered **202**, all persisted):
+
+   | `note` says | what to do |
+   |---|---|
+   | `the reload failed: …` | the router wasn't reachable. Start it, or `bosun reload`. |
+   | `it will NOT route this row: <reason>` | the row itself is unroutable — usually the literal port missing from `startCommand` (step 3). A reload cannot help; fix the row and re-register. |
+   | `the row declares no port` | documentation-only row; nothing to bind. Expected. |
+
 6. **Verify:**
    ```sh
    curl -s :3997/state | jq '.routes[] | select(.publicPort==<port>)'
-   curl -sI http://localhost:<port>/            # lazy-spawns the backend, expect 200
+   curl -s :3997/state | jq '{stale, drift}'     # must be {stale:false, drift:[]}
+   curl -sI http://localhost:<port>/             # lazy-spawns the backend, expect 200
    ```
 
 ## Worked example — a static site (liquid-purescript docs, 2026-07-05)
@@ -145,7 +176,18 @@ the exact drift D-G1 exists to prevent.
 - **`bosun serve` `/state` is on `:3997`.** (Older docs say `:3998` — that was
   *SDI's* port, the predecessor. Supervise uses `:3996`, docker `:3997`.)
 - **Reload is `POST :3997/control/reload`** (equivalent to `SIGHUP`), which the
-  chair-server calls for you.
+  chair-server calls for you — or **`bosun reload [--port N]`** from a terminal,
+  which POSTs it, prints what got bound, and reads `/state` back to say whether
+  the registry and the router now agree.
+- **`GET :3997/state` carries `drift` + `stale`.** `drift` is the rows the router
+  has no verdict on — *registered but never routed*, which is a different thing
+  from `rejected` (*seen and unusable*). If `stale` is true, the router is behind
+  the file: `bosun reload`. If a row is in `rejected`, a reload will not help —
+  read the reason and fix the row.
+- **A rejection is not a routing failure to chase.** Ten-odd fleet rows exist for
+  documentation / port-collision-avoidance only (null or prose `startCommand`)
+  and land in `rejected` by design. They are accounted for, which is the point:
+  visible, not silently dropped.
 
 ## Known rough edges (2026-07-05)
 

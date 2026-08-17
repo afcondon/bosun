@@ -25,5 +25,28 @@ export const readJsonImpl = (path) => JSON.parse(expandBosunRoot(readFileSync(pa
 export const readJsonUrlImpl = (url) =>
   JSON.parse(execSync(`curl -s --max-time 10 ${url}`, { maxBuffer: 64 * 1024 * 1024 }).toString());
 
+// Talk to a local daemon's control surface without throwing: an unreachable
+// router is an OUTCOME (`bosun reload` must report it), not a crash. Same
+// straight-line curl as readJsonUrlImpl; returns { ok, body, error }. A non-2xx
+// with a JSON body still parses (no `-f`), so the daemon's own `{ok:false,…}`
+// reaches the caller intact.
+const jsonCurl = (args) => (url) => {
+  try {
+    // stdio pipes stderr rather than letting execSync forward it to ours: we
+    // REPORT the failure, so curl must not also print it.
+    const out = execSync(`curl -sS --max-time 8 ${args} ${url}`, {
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).toString();
+    return { ok: true, body: out.trim() === "" ? null : JSON.parse(out), error: "" };
+  } catch (e) {
+    const stderr = e && e.stderr ? e.stderr.toString().trim() : "";
+    return { ok: false, body: null, error: stderr || String((e && e.message) || e) };
+  }
+};
+
+export const getJsonUrlImpl = jsonCurl("");
+export const postJsonUrlImpl = jsonCurl("-X POST");
+
 // Effect (thunk): the user-supplied args after `node run.js` / `spago run`.
 export const argv = () => process.argv.slice(2);

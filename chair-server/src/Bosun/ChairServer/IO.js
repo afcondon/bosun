@@ -57,17 +57,27 @@ export const writeFleetImpl = (json) => {
   renameSync(tmp, path);
 };
 
-// Best-effort POST :3997/control/reload — bosun-serve re-reads fleet.json and
-// re-plans. Swallow failures; the disk write is the source of truth, and a
-// crashed/down router will pick up the change on its next start.
+// POST :3997/control/reload — bosun-serve re-reads fleet.json and re-plans.
+//
+// This used to be best-effort AND SILENT: `stdio: "ignore"` threw the router's
+// answer away and the catch swallowed the failure, so a write that persisted
+// without ever reaching the router was indistinguishable from a complete
+// success. That is exactly how itajara @3028 sat registered-but-unrouted for
+// three days (2026-08-14 → 17). It is still non-fatal — persisting is the
+// durable half and is never rolled back — but the outcome now comes BACK, so
+// the handler can put the split result in its own response.
 export const reloadBosunServeImpl = () => {
   try {
-    execSync(`curl -sS -X POST --max-time 5 ${BOSUN_SERVE_URL}/control/reload`, {
-      maxBuffer: 64 * 1024,
-      stdio: ["ignore", "ignore", "ignore"],
-    });
-  } catch (_e) {
-    // intentional no-op — see comment above
+    // capture stderr rather than letting execSync forward it to ours — the
+    // whole point is that the failure comes back in the RESPONSE.
+    const out = execSync(`curl -sS -X POST --max-time 8 ${BOSUN_SERVE_URL}/control/reload`, {
+      maxBuffer: 8 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).toString();
+    return { ok: true, body: out.trim() === "" ? null : JSON.parse(out), error: "" };
+  } catch (e) {
+    const stderr = e && e.stderr ? e.stderr.toString().trim() : "";
+    return { ok: false, body: null, error: stderr || String((e && e.message) || e) };
   }
 };
 

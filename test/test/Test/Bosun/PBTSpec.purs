@@ -13,16 +13,17 @@ module Test.Bosun.PBTSpec where
 
 import Prelude
 
-import Bosun.Atoms (AbsPath, ServiceId, mkAbsPath, mkHost)
+import Bosun.Atoms (AbsPath, ServiceId, mkAbsPath, mkHost, unPort, unServiceId)
 import Bosun.Edge (Requirement(..), Gate(..))
 import Bosun.Error (DeployError)
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
-import Bosun.Reachability (hostPort, noNetwork)
+import Bosun.Exposure (Exposure(..))
+import Bosun.Reachability (classify, hostPort, noNetwork)
 import Bosun.Health (Probe(..))
-import Bosun.Serve (internalOffset, serveDiff, servePlan)
+import Bosun.Serve (PortClaim, internalOffset, planDrift, serveDiff, servePlan)
 import Bosun.Service (Deployment, LooseDep, LooseService, deploymentServices, mkDeployment, unBootOrder, unServiceRef, unValidatedDeployment)
 import Bosun.Validate (validate)
-import Data.Array (all, filter, length, mapWithIndex, modifyAt, range, zip)
+import Data.Array (all, filter, length, mapMaybe, mapWithIndex, modifyAt, range, zip)
 import Data.Array.NonEmpty as NEA
 import Data.Either (Either(..))
 import Data.Foldable (any)
@@ -233,6 +234,42 @@ prop_diffComplete = do
   where
   boundPorts p = Set.fromFoldable (map _.publicPort p.routes <> map _.publicPort p.redirects)
 
+-- The property that makes the drift indicator trustworthy: a reload FIXES it.
+-- Whatever two plans you compare, the router that has re-planned from the fresh
+-- registry is in agreement with it — so "drift" can never be a state the
+-- offered remedy fails to clear.
+prop_driftClearedByReplan :: Gen Result
+prop_driftClearedByReplan = do
+  dep <- genServeRegistry
+  let fresh = servePlan dep
+  -- a reload replaces the held plan with `fresh`; agreement is then reflexivity.
+  -- The claims are the generator's own services, so every claimed port has a
+  -- verdict and nothing shows as Unaccounted either.
+  pure ((length (planDrift (claimsOf dep) fresh fresh) == 0)
+    <?> "drift survived re-planning from the fresh registry")
+
+-- Drift is strictly WIDER than serveDiff: every port serveDiff would touch is a
+-- drifting port. (Not the converse — a row whose refusal reason changed drifts
+-- without any bind changing, which is the case serveDiff is blind to.)
+prop_driftCoversDiff :: Gen Result
+prop_driftCoversDiff = do
+  oldP <- servePlan <$> genServeRegistry
+  newP <- servePlan <$> genServeRegistry
+  let
+    d = serveDiff oldP newP
+    touched = Set.fromFoldable (d.unbind <> map _.publicPort d.bindRoutes <> map _.publicPort d.bindRedirects)
+    drifting = Set.fromFoldable (map _.publicPort (planDrift [] oldP newP))
+  pure (Set.subset touched drifting <?> "a port serveDiff would rebind was not reported as drift")
+
+-- The claims `registryClaims` would return for a generated deployment: every
+-- service's canonical id and the port it asks for.
+claimsOf :: Deployment -> Array PortClaim
+claimsOf dep = mapMaybe claim (deploymentServices dep)
+  where
+  claim s = case classify s.reachability of
+    HostPort p -> Just { serviceId: unServiceId s.id, publicPort: unPort p }
+    _ -> Nothing
+
 -- ── the suite ─────────────────────────────────────────────────────────────────
 
 spec :: Spec Unit
@@ -261,3 +298,7 @@ spec = do
       quickCheck prop_diffReflexive
     it "applying serveDiff old→new reproduces the new port-set (completeness)" $
       quickCheck prop_diffComplete
+    it "planDrift is cleared by re-planning (the offered remedy always works)" $
+      quickCheck prop_driftClearedByReplan
+    it "planDrift covers every port serveDiff would rebind (and more)" $
+      quickCheck prop_driftCoversDiff

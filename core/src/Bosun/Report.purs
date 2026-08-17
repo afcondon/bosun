@@ -21,6 +21,8 @@ module Bosun.Report
   , renderCommand
   , renderServePlan
   , renderReject
+  , renderDrift
+  , renderDriftKind
   ) where
 
 import Prelude
@@ -34,7 +36,7 @@ import Bosun.Artifact (artifactLabel)
 import Bosun.Plan (Change(..), Plan, Reason(..), Status(..), planSteps)
 import Bosun.Reconcile (ArtifactDrift(..), Divergence(..), FacetKey, TopologyDrift(..))
 import Bosun.Selector (Selector)
-import Bosun.Serve (RejectReason(..), Redirect, Rejection, Route, ServePlan)
+import Bosun.Serve (DriftKind(..), PortDrift, RejectReason(..), Redirect, Rejection, Route, ServePlan)
 import Bosun.Service (unServiceRef)
 import Data.Array (filter, groupBy, length, mapWithIndex, null, sortWith)
 import Data.Array.NonEmpty as NEA
@@ -274,6 +276,32 @@ renderReject = case _ of
   NotAProcess -> "not a Process launch (serve spawns local processes only)"
   Sdi why -> "SDI contract — " <> sdiLabel why
   PortClaimed port -> "public port " <> show port <> " is already claimed by another service (collision)"
+
+-- ── registry-vs-router drift ─────────────────────────────────────────────────
+
+-- | Render a `planDrift` — the registry rows the running router has no verdict
+-- | on (and vice versa). One line per port, plus the standing instruction,
+-- | because every drift entry has the same single remedy. Empty ⇒ "" so callers
+-- | can splice it unconditionally.
+renderDrift :: Array PortDrift -> String
+renderDrift = case _ of
+  [] -> ""
+  ds -> "DRIFT — " <> show (length ds) <> " port(s) where the registry and the router disagree:\n"
+          <> intercalate "\n" (map (("  ! " <> _) <<< renderOne) (sortWith _.publicPort ds))
+          <> "\n  → `bosun reload` (or POST /control/reload) brings the router in line"
+          <> "\n    (except `Unaccounted`, which needs the ROW fixed — a reload cannot help)."
+  where
+  renderOne d = show d.publicPort <> " → " <> d.serviceId <> ": " <> renderDriftKind d.kind
+
+renderDriftKind :: DriftKind -> String
+renderDriftKind = case _ of
+  Unrouted -> "registered, not routed — the router has never seen this row"
+  Altered -> "changed since the router planned it — it holds a stale verdict"
+  Departed -> "no longer in the registry — the router is still holding this port"
+  Unaccounted ->
+    "declared by the registry but accounted for by NO plan verdict — the row is dropped \
+    \before admission (another row shares its projectSlug:role, or it has no role). \
+    \A reload will not help; fix the row."
 
 -- ── small label helpers (display, not Show) ──────────────────────────────────
 
