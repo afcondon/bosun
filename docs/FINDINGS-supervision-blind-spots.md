@@ -86,3 +86,53 @@ scsynth`), so a child-existence probe is available without new machinery.
 Two SuperCollider processes in normal operation are `sclang` + `scsynth`, which
 is how it runs; `fleet.json`'s es9-daemon row already documents 57120 as
 "SuperDirt's sclang+scsynth". Do not chase that one.
+
+---
+
+# Two more, from putting a performance rig through it (2026-08-19)
+
+Found while moving `producing-with-your-feet` further into Atlantis. Same
+character as the three above: the signal is fine, what it *measures* is not
+quite the thing that matters.
+
+## 4. `serve` and `supervise` disagree about how to name a service
+
+The router's control verbs take a **public port**; a supervise group's take a
+**service name**. So the natural first move on a misbehaving daemon —
+
+```
+POST :3994/control/restart?service=itajara
+```
+
+— answers `no service `itajara` in this group`. Which is true, and reads as
+"that daemon is not running". It is running; it is simply lazy-spawned by
+`serve` and therefore in no group at all. The router's own
+`stop|spawn?port=3028` is the answer, and `?service=<id>` there is rejected in
+turn with `no proxy route on :0` even though `/state` prints that very id.
+
+Two addressing schemes and two rejection messages, neither of which says "you
+are asking the wrong component". Cheap fix: have each refusal name the other —
+*"not in this group; :3028 is served by the router, try `:3997/control`"*.
+
+## 5. A performance daemon should not be lazy-spawned
+
+Itajara sat in `serve` because that is where a dev service goes. But
+lazy-spawn has no keep-alive: if it dies during a set, nothing restarts it and
+**the first symptom is silence**. For a rig that is played rather than
+developed against, that is the wrong default, and no amount of probing fixes it
+— the probe is not the problem, the absence of a supervisor is.
+
+`supervise --held` is the shape that fits: resident, restarted when it crashes,
+and booted *down* so it is raised deliberately. The `--held` part matters more
+here than elsewhere, because **Itajara holds the Audio4c exclusively**. Which
+raises the question this rig will keep asking:
+
+**A probe cannot currently distinguish "running" from "running and holding the
+converter".** A daemon that lost its device stays `running` and makes no sound —
+the exact case `audioAlive` was added to Itajara's own snapshot for, after it
+cost an afternoon. Supervision has no equivalent. An exclusive-device service
+wants a readiness check that asks the service whether it has the thing, not
+whether it has a pid.
+
+That generalises past this rig: es9-daemon, continuo and SuperDirt all hold
+audio devices, and all three would report `running` after losing one.
