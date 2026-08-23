@@ -123,7 +123,9 @@ plan doc's status section disagrees with it, the README wins.
 | [`docs/PRIOR-ART.md`](docs/PRIOR-ART.md) | type-design lessons (Propellor, Dhall, CUE, systemd, NixOS, Pulumi, Terraform, Build-à-la-Carte) | evergreen |
 | [`docs/SCENARIOS.md`](docs/SCENARIOS.md) | 29 type-stress scenarios + the open-questions agenda | **partly superseded** — many open questions are now resolved in `DECISIONS.md` |
 | [`docs/BUILD-PLAN.md`](docs/BUILD-PLAN.md) | the phased build roadmap | **status section STALE** — stops at Phase 6B-pending; Phases 5/6/7 + Chair all shipped since. Use this README for state. |
-| [`docs/BOSUN-SERVE.md`](docs/BOSUN-SERVE.md) | the resident-router design (admission, proxy, hot-reload, the SDI contract) | current |
+| [`docs/BOSUN-SERVE.md`](docs/BOSUN-SERVE.md) | the resident-router design (admission, proxy, **broker**, hot-reload, the SDI contract) | current |
+| [`docs/ENSURE-AND-LOCATE.md`](docs/ENSURE-AND-LOCATE.md) | the `/where` reference — the operation, the wire contract, opting a service into `serveMode: broker` | current (**authoritative** for the contract) |
+| [`docs/RELAY-STALL-AND-BROKER-MODE.md`](docs/RELAY-STALL-AND-BROKER-MODE.md) | incident + design note: a proxied WebSocket went deaf one way (**not diagnosed** — read §2 before re-investigating), and the broker mode that answers it | current |
 | [`docs/STRESS-TEST-PLAN.md`](docs/STRESS-TEST-PLAN.md) | the four stress dimensions | current (all four done) |
 | [`docs/PHASE-6C-GO.md`](docs/PHASE-6C-GO.md) | completed-phase note: the Go binary deploys a rig | **historical** (kept for provenance) |
 | [`docs/PHASE-7-GO.md`](docs/PHASE-7-GO.md) | completed-phase note: `serve` on the Go column | **historical** |

@@ -16,26 +16,33 @@ module Bosun.CLI.Serve
   , runServeLive
   , runServePlan
   , runReload
+  , runWhere
   , statusPort
   , registryUrl
   ) where
 
 import Prelude
 
-import Bosun.Adapters.Registry (ingestRegistry, registryClaims)
+import Bosun.Adapters.Registry (ingestRegistry, registryClaims, registryHints)
 import Bosun.CLI.IO (getJsonUrl, postJsonUrl, readJsonFile, readJsonUrl)
 import Bosun.Reconcile (reconcile)
 import Bosun.Report (renderDrift, renderDriftKind, renderReject, renderServePlan)
-import Bosun.Serve (DriftKind(..), PortDrift, Redirect, Route, ServePlan, planDrift, serveDiff, servePlan)
+import Bosun.Health (Probe(..))
+import Bosun.Protocol (Locator, whereResultCodec)
+import Bosun.Serve (Broker, DriftKind(..), PortDrift, Redirect, Route, ServePlan, planDrift, serveDiff, servePlanWith)
 import Bosun.Version (version)
+import Bosun.Atoms (unAbsPath, unPort)
 import Data.Argonaut.Core (Json)
 import Data.Argonaut.Core as J
+import Data.Codec.Argonaut as CA
 import Data.Array as A
 import Data.Foldable (for_)
 import Data.Int as Int
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
-import Data.Nullable (Nullable, toNullable)
+import Data.Either (Either(..))
+import Data.Function.Uncurried (Fn1, mkFn1)
+import Data.Nullable (Nullable, toMaybe, toNullable)
 import Effect (Effect)
 import Effect.Console (log)
 import Effect.Ref as Ref
@@ -66,17 +73,67 @@ type RejectInfo = { serviceId :: String, publicPort :: Nullable Int, reason :: S
 -- | and there is no codec to thread through it.
 type DriftInfo = { serviceId :: String, publicPort :: Int, kind :: String, note :: String }
 
+-- | A BROKERED service, flattened for the shim. `Nullable`, not `Maybe`, for the
+-- | same reason as `RejectInfo`: the shim reads these fields directly and puts
+-- | several of them into JSON it stringifies itself.
+-- |
+-- | The `probe*` trio is `Bosun.Health.Probe` flattened to a tag plus its one
+-- | argument — the shim must not carry a sum type, but it must know WHICH check
+-- | to make, because `probe: "none"` is a real answer (nothing was checked) and
+-- | not a failed one.
+type BrokerInfo =
+  { serviceId :: String
+  , publicPort :: Nullable Int
+  , cwd :: String
+  , launchCommand :: String
+  , transport :: String
+  , host :: Nullable String
+  , port :: Nullable Int
+  , path :: Nullable String
+  , url :: Nullable String
+  , probe :: String
+  , probePort :: Nullable Int
+  , probePath :: Nullable String
+  }
+
+-- | The `/where` answer, flattened the same way. The shim fills in the three
+-- | fields only it can know (`ready`, `started`, `detail`) and hands the record
+-- | back through `whereJson` to be encoded — so the JSON on the wire is produced
+-- | by `Bosun.Protocol.whereResultCodec` and not by a second, drifting,
+-- | hand-rolled object literal in the shim.
+type WhereInfo =
+  { service :: String
+  , mediation :: String
+  , ready :: Boolean
+  , started :: Boolean
+  , probe :: String
+  , detail :: String
+  , transport :: String
+  , host :: Nullable String
+  , port :: Nullable Int
+  , path :: Nullable String
+  , url :: Nullable String
+  }
+
 -- | What a reload did, plus the refreshed refusal list (a reload can turn a
 -- | route into a refusal, and /state must say so).
+-- |
+-- | `brokers` is the WHOLE brokered list, not a delta. A brokered service with
+-- | no public port owns no listener, so there is nothing for a port-keyed diff
+-- | to say about it (`Bosun.Serve.ServeDiff`); the shim replaces its table
+-- | wholesale and only the `bindBrokers` subset is actually re-listened.
 type ReloadResult =
   { unbind :: Array Int
   , bindRoutes :: Array Route
+  , bindBrokers :: Array BrokerInfo
+  , brokers :: Array BrokerInfo
   , bindRedirects :: Array Redirect
   , rejected :: Array RejectInfo
   }
 
 type ServeConfig =
   { routes :: Array Route
+  , brokers :: Array BrokerInfo
   , redirects :: Array Redirect
   , rejected :: Array RejectInfo
   , statusPort :: Int
@@ -88,6 +145,10 @@ type ServeConfig =
   -- a DRY re-read + re-plan + compare against the held plan: what a reload
   -- WOULD change, without changing anything. The shim calls it for /state.
   , drift :: Effect (Array DriftInfo)
+  -- the `/where` encoder, passed IN rather than hand-rolled in the shim: the
+  -- wire shape is a codec value in `Bosun.Protocol`, shared with every consumer
+  -- that decodes it, and this is how the shim reaches it.
+  , whereJson :: Fn1 WhereInfo Json
   }
 
 -- The resident loop. Binds every public port and, on first request to a proxy
@@ -133,8 +194,13 @@ runServePlan src = do
   json <- maybe (readJsonUrl registryUrl) readJsonFile src
   log (renderServePlan (planOf json))
 
+-- The registry is read TWICE on purpose: once through the IR (`ingestRegistry`
+-- → reconcile → the deployment `servePlanWith` judges) and once raw, for the
+-- per-row router hints (`registryHints`) that are instructions to the router
+-- rather than facts about the service. Same shape, and the same reason, as
+-- `registryClaims` in the drift check.
 planOf :: Json -> ServePlan
-planOf json = servePlan (reconcile Map.empty (ingestRegistry json)).deployment
+planOf json = servePlanWith (registryHints json) (reconcile Map.empty (ingestRegistry json)).deployment
 
 -- | ingest → reconcile → admission control (`servePlan`) → print the report →
 -- | hand the plan to the resident shim. `reread` is the (repeatable) source read,
@@ -155,7 +221,8 @@ serveFrom label source sourceFile reread = do
   else do
     log
       ( "serve: binding " <> show (A.length plan.routes) <> " proxy + "
-          <> show (A.length plan.redirects) <> " redirect port(s); /state on :"
+          <> show (A.length plan.brokered) <> " broker + "
+          <> show (A.length plan.redirects) <> " redirect port(s); /state + /where on :"
           <> show status <> ". SIGHUP (or `bosun reload`) to reload. Lazy-spawn on first request. Ctrl-C to stop."
       )
     log ""
@@ -170,6 +237,8 @@ serveFrom label source sourceFile reread = do
         pure
           { unbind: d.unbind
           , bindRoutes: d.bindRoutes
+          , bindBrokers: map brokerInfo d.bindBrokers
+          , brokers: map brokerInfo fresh.brokered
           , bindRedirects: d.bindRedirects
           , rejected: rejectInfo fresh
           }
@@ -181,6 +250,7 @@ serveFrom label source sourceFile reread = do
         pure (map driftInfo (planDrift (registryClaims json) held (planOf json)))
     runEffectFn1 serveImpl
       { routes: plan.routes
+      , brokers: map brokerInfo plan.brokered
       , redirects: plan.redirects
       , rejected: rejectInfo plan
       , statusPort: status
@@ -188,11 +258,71 @@ serveFrom label source sourceFile reread = do
       , sourceFile: toNullable sourceFile
       , reload
       , drift
+      , whereJson: mkFn1 encodeWhere
       }
 
 rejectInfo :: ServePlan -> Array RejectInfo
 rejectInfo plan = plan.rejected <#> \r ->
   { serviceId: r.serviceId, publicPort: toNullable r.publicPort, reason: renderReject r.reason }
+
+-- | Flatten a `Broker` for the shim: `Maybe` → `Nullable`, and the readiness
+-- | `Probe` → a tag plus its argument. The shim decides nothing here; it is
+-- | handed the check to make, not the information to choose one from.
+brokerInfo :: Broker -> BrokerInfo
+brokerInfo b =
+  { serviceId: b.serviceId
+  , publicPort: toNullable b.publicPort
+  , cwd: b.cwd
+  , launchCommand: b.launchCommand
+  , transport: b.at.transport
+  , host: toNullable b.at.host
+  , port: toNullable b.at.port
+  , path: toNullable b.at.path
+  , url: toNullable b.at.url
+  , probe: probeTag b.probe
+  , probePort: toNullable (probeTcpPort b.probe)
+  , probePath: toNullable (probeSocketPath b.probe)
+  }
+
+-- The wire tags for the probes `serve` can actually make. Everything else
+-- (`HttpGet`, `ExecCmd`, `ProcessAlive`) is a probe the router has no machinery
+-- for, and reporting it as `none` — "not checked" — is the honest reading, not
+-- a silent downgrade to "down". Same rule as `Bosun.CLI.Observe`.
+probeTag :: Probe -> String
+probeTag = case _ of
+  TcpConnect _ -> "tcp"
+  SocketReady _ -> "socket"
+  _ -> "none"
+
+probeTcpPort :: Probe -> Maybe Int
+probeTcpPort = case _ of
+  TcpConnect p -> Just (unPort p)
+  _ -> Nothing
+
+probeSocketPath :: Probe -> Maybe String
+probeSocketPath = case _ of
+  SocketReady p -> Just (unAbsPath p)
+  _ -> Nothing
+
+-- | The `/where` encoder the shim calls. The point is that there is exactly ONE
+-- | definition of this JSON — `Bosun.Protocol.whereResultCodec` — and both the
+-- | producer (here, through the shim) and every decoder read it.
+encodeWhere :: WhereInfo -> Json
+encodeWhere w = CA.encode whereResultCodec
+  { service: w.service
+  , mediation: w.mediation
+  , ready: w.ready
+  , started: w.started
+  , probe: w.probe
+  , detail: w.detail
+  , at:
+      { transport: w.transport
+      , host: toMaybe w.host
+      , port: toMaybe w.port
+      , path: toMaybe w.path
+      , url: toMaybe w.url
+      }
+  }
 
 driftInfo :: PortDrift -> DriftInfo
 driftInfo d =
@@ -257,6 +387,60 @@ runReload mport = do
         ds -> do
           log ""
           log (renderDrift ds)
+
+-- ── bosun where <service|port> ──────────────────────────────────────────────
+
+-- | ENSURE-AND-LOCATE from the command line: make sure a service is running,
+-- | and say where it actually is.
+-- |
+-- | The operation itself lives in the resident router (`ensureAndLocate` in the
+-- | shim) because only the router can spawn and probe; this is a thin client
+-- | over `GET /where`, exactly as `runReload` is a thin client over
+-- | `POST /control/reload`. DeepStar's pre-flight is the same client written in
+-- | Go — which is why the answer is flat JSON with no client library in it.
+-- |
+-- | The argument is a service id (`slug:role`) or a public port; ports are
+-- | identity everywhere else in the router, so they are identity here too.
+runWhere :: Maybe Int -> String -> Effect Unit
+runWhere mport key = do
+  fallback <- resolveStatusPort
+  let
+    port = fromMaybe fallback mport
+    query = case Int.fromString key of
+      Just p -> "/where?port=" <> show p
+      Nothing -> "/where/" <> key
+  res <- getJsonUrl ("http://localhost:" <> show port <> query)
+  if not res.ok then do
+    log ("  ✗ the router on :" <> show port <> " did not answer — " <> res.error)
+    log "    Nothing was started and nothing was located. (Check `bosun serve` is up.)"
+  -- A non-`WhereResult` body is the router's 404/502 shape (`{ok,error}`), not a
+  -- broken contract — report what it SAID. Leading with a decode error would
+  -- blame the wire for an answer that was perfectly clear.
+  else case CA.decode whereResultCodec res.body of
+    Left err -> case J.toObject res.body >>= FO.lookup "error" >>= J.toString of
+      Just e -> log ("  ✗ " <> e)
+      Nothing -> log ("  ✗ the router answered something this build cannot read — " <> CA.printJsonDecodeError err)
+    Right w -> do
+      log ("  " <> w.service <> " — " <> w.mediation
+             <> (if w.mediation == "broker" then " (bosun is NOT in the data path)" else " (bosun relays this)"))
+      log ("  at " <> locatorLine w.at)
+      -- three states, not two: ready, not-ready, and NOT CHECKED. Collapsing the
+      -- third into the second is the coercion PRINCIPLES.md forbids everywhere
+      -- else an observation is reported.
+      log
+        ( (if w.probe == "none" then "  ? readiness not checked (this service publishes no signal serve can probe)"
+           else if w.ready then "  ✓ ready by probe `" <> w.probe <> "`"
+           else "  ✗ NOT ready — probe `" <> w.probe <> "` did not pass")
+            <> (if w.started then "; started by this call" else "; already running")
+        )
+      log ("  " <> w.detail)
+
+locatorLine :: Locator -> String
+locatorLine l = case l.transport of
+  "unix" -> "unix " <> fromMaybe "?" l.path
+  "none" -> "(no dialable address)"
+  t -> t <> " " <> fromMaybe "?" l.host <> ":" <> maybe "?" show l.port
+         <> maybe "" (\u -> "   " <> u) l.url
 
 -- ── minimal /state + /control/reload response reading ───────────────────────
 -- The router's control surface is hand-rolled JSON in the foreign shim (it has

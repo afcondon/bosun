@@ -35,13 +35,14 @@ import Bosun.Health (Probe(..))
 import Bosun.Artifact (artifactLabel)
 import Bosun.Plan (Change(..), Plan, Reason(..), Status(..), planSteps)
 import Bosun.Reconcile (ArtifactDrift(..), Divergence(..), FacetKey, TopologyDrift(..))
+import Bosun.Protocol (Locator)
 import Bosun.Selector (Selector)
-import Bosun.Serve (DriftKind(..), PortDrift, RejectReason(..), Redirect, Rejection, Route, ServePlan)
+import Bosun.Serve (Broker, DriftKind(..), PortDrift, RejectReason(..), Redirect, Rejection, Route, ServePlan)
 import Bosun.Service (unServiceRef)
 import Data.Array (filter, groupBy, length, mapWithIndex, null, sortWith)
 import Data.Array.NonEmpty as NEA
 import Data.Foldable (intercalate)
-import Data.Maybe (Maybe, maybe)
+import Data.Maybe (Maybe, fromMaybe, maybe)
 import Data.Tuple (Tuple(..))
 
 renderError :: DeployError -> String
@@ -240,12 +241,17 @@ renderCommand = case _ of
 -- | Display, not `Show` (entry 73).
 renderServePlan :: ServePlan -> String
 renderServePlan plan =
-  intercalate "\n\n" (filter (_ /= "") [ admitted, redirected, refused ])
+  intercalate "\n\n" (filter (_ /= "") [ admitted, brokered, redirected, refused ])
   where
   admitted = case plan.routes of
     [] -> "ADMITTED: none — no routable services in this registry."
     rs -> "ADMITTED — " <> show (length rs) <> " routable service(s):\n"
             <> intercalate "\n" (map (("  - " <> _) <<< renderRoute) rs)
+
+  brokered = case plan.brokered of
+    [] -> ""
+    bs -> "BROKERED — " <> show (length bs) <> " service(s) Bosun starts but does NOT proxy:\n"
+            <> intercalate "\n" (map (("  - " <> _) <<< renderBroker) bs)
 
   redirected = case plan.redirects of
     [] -> ""
@@ -261,6 +267,21 @@ renderRoute :: Route -> String
 renderRoute r =
   show r.publicPort <> " → " <> r.serviceId
     <> " (backend on " <> show r.internalPort <> ")"
+
+-- A broker line says the two things a proxy line cannot: where the caller
+-- should actually go, and whether the router holds the registered port at all.
+-- Reading "binds nothing" is the operator's cue that `/where` is the only door.
+renderBroker :: Broker -> String
+renderBroker b =
+  b.serviceId <> " at " <> locatorLabel b.at
+    <> " — " <> maybe "binds nothing" (\p -> show p <> " → 307") b.publicPort
+    <> ", ready by " <> probeShortLabel b.probe
+
+locatorLabel :: Locator -> String
+locatorLabel l = case l.transport of
+  "unix" -> "unix " <> fromMaybe "?" l.path
+  "none" -> "no dialable address"
+  t -> t <> " " <> fromMaybe "?" l.host <> ":" <> maybe "?" show l.port
 
 renderRedirect :: Redirect -> String
 renderRedirect r =

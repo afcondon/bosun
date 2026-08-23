@@ -23,10 +23,16 @@
 module Bosun.Serve
   ( Route
   , Redirect
+  , Mediation(..)
+  , mediationTag
+  , readMediation
+  , ServeHint
+  , Broker
   , RejectReason(..)
   , Rejection
   , ServePlan
   , servePlan
+  , servePlanWith
   , ServeDiff
   , serveDiff
   , DriftKind(..)
@@ -40,10 +46,12 @@ module Bosun.Serve
 
 import Prelude
 
-import Bosun.Atoms (Host, mkHost, unAbsPath, unHost, unPort, unServiceId)
+import Bosun.Atoms (Host, Port, mkHost, mkPort, unAbsPath, unHost, unPort, unServiceId)
 import Bosun.Error (SdiViolation(..))
 import Bosun.Executor (Executor(..))
 import Bosun.Exposure (Exposure(..))
+import Bosun.Health (Probe(..))
+import Bosun.Protocol (Locator)
 import Bosun.Reachability (classify)
 import Bosun.Service (Deployment, LooseService, deploymentServices)
 import Bosun.Target (defaultTargets, networkAddr)
@@ -53,7 +61,7 @@ import Data.Foldable (foldl, foldr)
 import Data.Generic.Rep (class Generic)
 import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..))
+import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Set as Set
 import Data.Show.Generic (genericShow)
 import Data.String (Pattern(..), Replacement(..))
@@ -93,6 +101,97 @@ type Route =
   , idleTimeoutMs :: Int
   }
 
+-- | **Does Bosun belong in the data path for this service at all?**
+-- |
+-- | That is the whole question, and it is deliberately NOT "does it speak HTTP".
+-- | The registry field is called `serveMode` and its two values are `proxy` and
+-- | `broker`, because the distinction an operator is making is about the ROUTER,
+-- | not about the protocol:
+-- |
+-- | * `Proxy` (the default, and what every existing row means) — the router owns
+-- |   the public port and relays the bytes. Right for an ordinary dev server:
+-- |   you type the registered port and it works, spawn included.
+-- | * `Broker` — the router ensures the service is running and says WHERE it is,
+-- |   then has nothing to do with the traffic. Right for anything that (a) owns
+-- |   a hardware resource, (b) is long-lived and started deliberately rather
+-- |   than per-request, or (c) carries timing-critical traffic.
+-- |
+-- | For a whole class of this rig's daemons `Broker` is not an optimisation but
+-- | the only thing that can work: es9-daemon and the fh2 daemon are reached over
+-- | UNIX DOMAIN SOCKETS and link-spike over UDP MULTICAST, and none of those can
+-- | be relayed through a TCP reverse proxy in any meaningful sense. itajara —
+-- | a 30 Hz WebSocket over an audio interface — merely *shouldn't* be.
+-- |
+-- | The default is `Proxy` so that a registry row which says nothing keeps its
+-- | current behaviour exactly: broker mode is opt-in, per service, and no
+-- | existing entry changes by being re-read.
+data Mediation = Proxy | Broker
+derive instance Eq Mediation
+derive instance Generic Mediation _
+instance Show Mediation where show = genericShow
+
+-- | The wire token, as it appears in the registry's `serveMode`.
+mediationTag :: Mediation -> String
+mediationTag = case _ of
+  Proxy -> "proxy"
+  Broker -> "broker"
+
+-- | Read the registry's `serveMode`. Lenient, like the rest of the registry
+-- | decode: an absent or unrecognised value is `Proxy`, so a typo degrades to
+-- | today's behaviour rather than un-routing a service. The refusal to guess is
+-- | somebody else's job — this is an ingest, and the safe reading is the status
+-- | quo.
+readMediation :: String -> Mediation
+readMediation = case _ of
+  "broker" -> Broker
+  _ -> Proxy
+
+-- | The serve-specific hints one registry ROW carries, read straight from the
+-- | raw JSON (`Bosun.Adapters.Registry.registryHints`) rather than through the
+-- | IR — the same shape and the same reason as `PortClaim` below: these are
+-- | facts about how the ROUTER should treat the row, not facts about the
+-- | service, and threading them through reconcile would put a deployment
+-- | concern into the deployment IR.
+-- |
+-- | `scheme` is the scheme of the row's `url` (`ws`, `http`, `udp`, …). It earns
+-- | its place twice: it is how a brokered answer can hand back a dialable URL
+-- | (`ws://127.0.0.1:23028`, which is what the client actually needs), and it is
+-- | the only place the registry says a listener is UDP — `Reachability` has no
+-- | transport axis, and inventing one for a single bit would be a much larger
+-- | change than reading a scheme that is already written down.
+type ServeHint = { serviceId :: String, mediation :: Mediation, scheme :: Maybe String }
+
+-- | A BROKERED service: everything the resident front needs to ensure it is
+-- | running and then say where it is. Note what is NOT here — there is no idle
+-- | timeout. A brokered service is by definition one that was started
+-- | deliberately and holds something (a device, a multicast group, a socket
+-- | file); reaping it because no request arrived for ten minutes is precisely
+-- | the failure that made WebSocket services unsafe to router-manage in the
+-- | first place (2026-08-17). The router starts these and leaves them alone.
+-- |
+-- | `publicPort` is `Just` only when the router can hold the registered port on
+-- | the service's behalf — which needs the same public→internal rewrite the
+-- | proxy path needs, so that the service is not fighting the router for it.
+-- | When it can, the router binds that port and answers `307` there, so typing
+-- | the registered port in a browser still lands on the service; when it
+-- | cannot, the service simply keeps its own address and `/where` is the only
+-- | way in. Both are legitimate; the difference is only whether Bosun can also
+-- | catch a caller who dialled the old address.
+type Broker =
+  { serviceId     :: String
+  , publicPort    :: Maybe Int
+  , cwd           :: String
+  , launchCommand :: String
+  -- where the service actually is, once running — the payload of `/where`
+  , at            :: Locator
+  -- how to tell that it IS running. Not a new concept: this is
+  -- `Bosun.Health.Probe`, chosen by the same rule `Bosun.CLI.Observe`'s
+  -- `effectiveProbe` uses (a service with no declared probe but a listening
+  -- address is observable by that address), extended to the socket case that
+  -- `observe` already implements as `SocketReady`.
+  , probe         :: Probe
+  }
+
 -- | Why a service is not routable (closed alternatives ⇒ ADT, §10). The first
 -- | two are P1-scope limits; the `Sdi` cases are genuine contract violations
 -- | that SDI would silently skip.
@@ -127,23 +226,38 @@ type Redirect =
   }
 
 -- | The admission decision over a whole deployment: routes to bind+lazy-spawn,
--- | redirects to bind+421, and rejections (each with its typed reason). All
--- | three are reported, so nothing is silently dropped.
+-- | brokered services to ensure-and-locate, redirects to bind+421, and
+-- | rejections (each with its typed reason). All four are reported, so nothing
+-- | is silently dropped.
 type ServePlan =
   { routes    :: Array Route
+  , brokered  :: Array Broker
   , redirects :: Array Redirect
   , rejected  :: Array Rejection
   }
 
 -- | The per-service verdict (internal; partitioned into the `ServePlan`).
-data Admission = Admit Route | Redir Redirect | Reject Rejection
+data Admission = Admit Route | Broke Broker | Redir Redirect | Reject Rejection
 
+-- | The unhinted plan: every service proxied, which is what the whole registry
+-- | meant before broker mode existed. Kept as the plain arity so the corpus,
+-- | the conformance Main and every existing caller are untouched — the default
+-- | is not a value buried in a decoder, it is the absence of a hint.
 servePlan :: Deployment -> ServePlan
-servePlan dep =
-  foldr classify { routes: [], redirects: [], rejected: [] } (arbitrate (map admit (deploymentServices dep)))
+servePlan = servePlanWith []
+
+-- | The plan given the registry's per-row serve hints. A service with no hint
+-- | (or a hint that says `proxy`) travels the identical path it did before.
+servePlanWith :: Array ServeHint -> Deployment -> ServePlan
+servePlanWith hints dep =
+  foldr classify { routes: [], brokered: [], redirects: [], rejected: [] }
+    (arbitrate (map (admit hintFor) (deploymentServices dep)))
   where
+  hintMap = Map.fromFoldable (map (\h -> Tuple h.serviceId h) hints)
+  hintFor sid = Map.lookup sid hintMap
   classify adm acc = case adm of
     Admit r -> acc { routes = A.cons r acc.routes }
+    Broke b -> acc { brokered = A.cons b acc.brokered }
     Redir d -> acc { redirects = A.cons d acc.redirects }
     Reject x -> acc { rejected = A.cons x acc.rejected }
 
@@ -171,41 +285,175 @@ arbitrate adms = (foldl step { claimed: Set.empty, out: [] } adms).out
 binderPort :: Admission -> Maybe (Tuple String Int)
 binderPort = case _ of
   Admit r -> Just (Tuple r.serviceId r.publicPort)
+  -- a broker binds its public port too — only to answer `307` on it, but a
+  -- listener is a listener and two of them still collide.
+  Broke b -> map (Tuple b.serviceId) b.publicPort
   Redir d -> Just (Tuple d.serviceId d.publicPort)
   Reject _ -> Nothing
 
--- | Classify one service. A `HostPort` on a remote host becomes a `Redirect`;
--- | on this machine it must be a launchable `Process` with the literal port in
--- | its command (so the public→internal rewrite lands). Everything else is a
--- | typed `Rejection`.
-admit :: LooseService -> Admission
-admit s = case classify s.reachability of
-  HostPort p ->
-    let public = unPort p in
-    case classifyHost s.host of
-      Left host ->
-        Redir { serviceId: sid, publicPort: public, host, target: redirectTarget host public }
-      Right _ -> case s.launch.executor of
-        Process pr
-          | String.contains (Pattern (show public)) pr.command ->
-              Admit
-                { serviceId: sid
-                , publicPort: public
-                , internalPort: internalPort public
-                , cwd: unAbsPath pr.cwd
-                , launchCommand: rewritePort public (internalPort public) pr.command
-                , idleTimeoutMs: defaultIdleMs
-                }
-          | otherwise -> rejectAt public (Sdi PortNotInStartCommand)
-        -- A `cd`-less registry row parses to `Unmanaged` (StartCommand.purs): it
-        -- has no absolute cwd, the SDI footgun. Report it as such.
-        Unmanaged _ -> rejectAt public (Sdi NoAbsoluteCwd)
-        _ -> rejectAt public NotAProcess
-  _ -> reject NoHostPort
+-- | Classify one service, given its registry hint (if any).
+-- |
+-- | PROXY (the default) is unchanged: a `HostPort` on a remote host becomes a
+-- | `Redirect`; on this machine it must be a launchable `Process` with the
+-- | literal port in its command (so the public→internal rewrite lands).
+-- | Everything else is a typed `Rejection`.
+-- |
+-- | BROKER relaxes two of those requirements, and it is worth saying why each
+-- | one existed. The literal-port rule exists ONLY so the router can move the
+-- | backend off the public port and own it; a broker that cannot rewrite simply
+-- | leaves the service on its own port and binds nothing. The host-port rule
+-- | exists only because a proxy has nothing to relay without one; a broker
+-- | reaching a unix socket — or nothing at all — is still worth ensuring and
+-- | still has an address (or honestly hasn't). What broker does NOT relax is
+-- | the absolute-`cd` rule: it still has to spawn the thing.
+admit :: (String -> Maybe ServeHint) -> LooseService -> Admission
+admit hintFor s = case mediationOf of
+  Broker -> admitBroker
+  Proxy -> admitProxy
   where
   sid = unServiceId s.id
+  hint = hintFor sid
+  mediationOf = maybe Proxy _.mediation hint
+  scheme = hint >>= _.scheme
   reject r = Reject { serviceId: sid, publicPort: Nothing, reason: r }
   rejectAt port r = Reject { serviceId: sid, publicPort: Just port, reason: r }
+
+  admitProxy = case classify s.reachability of
+    HostPort p ->
+      let public = unPort p in
+      case classifyHost s.host of
+        Left host ->
+          Redir { serviceId: sid, publicPort: public, host, target: redirectTarget host public }
+        Right _ -> case s.launch.executor of
+          Process pr
+            | String.contains (Pattern (show public)) pr.command ->
+                Admit
+                  { serviceId: sid
+                  , publicPort: public
+                  , internalPort: internalPort public
+                  , cwd: unAbsPath pr.cwd
+                  , launchCommand: rewritePort public (internalPort public) pr.command
+                  , idleTimeoutMs: defaultIdleMs
+                  }
+            | otherwise -> rejectAt public (Sdi PortNotInStartCommand)
+          -- A `cd`-less registry row parses to `Unmanaged` (StartCommand.purs): it
+          -- has no absolute cwd, the SDI footgun. Report it as such.
+          Unmanaged _ -> rejectAt public (Sdi NoAbsoluteCwd)
+          _ -> rejectAt public NotAProcess
+    _ -> reject NoHostPort
+
+  -- A brokered service on ANOTHER machine is still a redirect: we cannot spawn
+  -- it here, and the honest answer to "where is it" is already the 421 target.
+  admitBroker = case classifyHost s.host of
+    Left host -> case classify s.reachability of
+      HostPort p ->
+        let public = unPort p
+        in Redir { serviceId: sid, publicPort: public, host, target: redirectTarget host public }
+      _ -> reject NoHostPort
+    Right _ -> case s.launch.executor of
+      Process pr -> brokerFor pr
+      Unmanaged _ -> reject (Sdi NoAbsoluteCwd)
+      _ -> reject NotAProcess
+
+  isUdp = scheme == Just "udp"
+
+  brokerFor pr = case classify s.reachability of
+    -- A DATAGRAM listener is left exactly where it is, always. The rewrite-and-
+    -- hold trick below exists so the router can answer `307` to someone who
+    -- dialled the registered port — and there is no such thing as a 307 over
+    -- UDP. Moving it would only mean nobody could find it.
+    HostPort p | isUdp ->
+      Broke
+        { serviceId: sid
+        , publicPort: Nothing
+        , cwd: unAbsPath pr.cwd
+        , launchCommand: pr.command
+        , at: portLocator scheme (unPort p)
+        , probe: NoProbe
+        }
+    -- A TCP listener we CAN move: rewrite it onto the internal port, hold
+    -- the public one, and answer `307` there. The rewrite is not for relaying —
+    -- it is what lets the router catch a caller who dialled the registered port
+    -- and send them on, and what makes a connection the trigger for a spawn.
+    HostPort p
+      | String.contains (Pattern (show (unPort p))) pr.command ->
+          let public = unPort p
+              actual = internalPort public
+          in Broke
+              { serviceId: sid
+              , publicPort: Just public
+              , cwd: unAbsPath pr.cwd
+              , launchCommand: rewritePort public actual pr.command
+              , at: portLocator scheme actual
+              , probe: portProbe scheme p actual
+              }
+    -- A listener we CANNOT move (no literal port to rewrite): leave it exactly
+    -- where the registry says it is and bind nothing. This is a refusal under
+    -- the proxy rules and a perfectly good broker — which is the point, since
+    -- the daemons that most need broker mode are the ones least likely to have
+    -- a rewritable command.
+    HostPort p ->
+      let public = unPort p
+      in Broke
+          { serviceId: sid
+          , publicPort: Nothing
+          , cwd: unAbsPath pr.cwd
+          , launchCommand: pr.command
+          , at: portLocator scheme public
+          , probe: portProbe scheme p public
+          }
+    -- The case a proxy cannot represent at all. es9-daemon and the fh2 daemon
+    -- live here: reached at `~/.es9/control.sock`, ensurable, locatable, and
+    -- utterly un-relayable through a TCP router.
+    UnixSocket path ->
+      Broke
+        { serviceId: sid
+        , publicPort: Nothing
+        , cwd: unAbsPath pr.cwd
+        , launchCommand: pr.command
+        , at: { transport: "unix", host: Nothing, port: Nothing, path: Just (unAbsPath path), url: Nothing }
+        , probe: SocketReady path
+        }
+    -- Startable, worth ensuring, and with no inbound address anyone can dial —
+    -- a fan-out daemon. `none` is the honest answer; the alternative is to
+    -- invent a port for it, which is how a caller ends up dialling nothing.
+    _ ->
+      Broke
+        { serviceId: sid
+        , publicPort: Nothing
+        , cwd: unAbsPath pr.cwd
+        , launchCommand: pr.command
+        , at: { transport: "none", host: Nothing, port: Nothing, path: Nothing, url: Nothing }
+        , probe: NoProbe
+        }
+
+-- Everything the router brokers on this machine is on loopback: the registry's
+-- host names the MACHINE, and the address we hand back is one a caller on that
+-- machine dials.
+brokerHost :: String
+brokerHost = "127.0.0.1"
+
+-- A dialable address for a port, carrying the row's own scheme through so the
+-- answer is `ws://127.0.0.1:23028` and not something the caller has to assemble.
+portLocator :: Maybe String -> Int -> Locator
+portLocator scheme port =
+  { transport: if scheme == Just "udp" then "udp" else "tcp"
+  , host: Just brokerHost
+  , port: Just port
+  , path: Nothing
+  , url: map (\sch -> sch <> "://" <> brokerHost <> ":" <> show port) scheme
+  }
+
+-- Which readiness check applies to a listening broker. The rule is
+-- `Bosun.CLI.Observe.effectiveProbe`'s — a service with no declared probe but a
+-- listening address is observable by that address — with one honest exception:
+-- a UDP listener does not accept connections, so a TCP connect against it
+-- proves nothing and `NoProbe` (which reports as "not checked", never as
+-- "down") is the truthful verdict.
+portProbe :: Maybe String -> Port -> Int -> Probe
+portProbe scheme declared actual
+  | scheme == Just "udp" = NoProbe
+  | otherwise = TcpConnect (fromMaybe declared (mkPort actual))
 
 -- | Local (this machine) vs remote: `mbp` and host-less are local; any other
 -- | host is remote, returned by name for the redirect.
@@ -238,9 +486,16 @@ rewritePort from to =
 -- | changed). A port whose service flips proxy↔redirect counts as changed, so it
 -- | appears in both `unbind` and the matching bind list. The pure diff the
 -- | resident shim applies — so hot-reload is conformance-testable, not ad hoc.
+-- |
+-- | Brokered services appear here only through the port they hold (`bindBrokers`
+-- | is the ones whose `307` listener must be (re)bound). A brokered service with
+-- | NO public port owns no listener, so there is nothing for a diff to say about
+-- | it: the resident front takes the whole brokered list from the fresh plan
+-- | instead. A diff is about listeners; a broker without one is pure plan data.
 type ServeDiff =
   { unbind        :: Array Int
   , bindRoutes    :: Array Route
+  , bindBrokers   :: Array Broker
   , bindRedirects :: Array Redirect
   }
 
@@ -248,6 +503,7 @@ serveDiff :: ServePlan -> ServePlan -> ServeDiff
 serveDiff old new =
   { unbind: A.filter changed (A.fromFoldable (Map.keys oldSig))
   , bindRoutes: A.filter (changed <<< _.publicPort) new.routes
+  , bindBrokers: A.filter (maybe false changed <<< _.publicPort) new.brokered
   , bindRedirects: A.filter (changed <<< _.publicPort) new.redirects
   }
   where
@@ -264,11 +520,22 @@ sigMap :: ServePlan -> Map Int String
 sigMap plan =
   Map.fromFoldable
     ( map (\r -> Tuple r.publicPort (routeSig r)) plan.routes
+        <> A.mapMaybe (\b -> map (\p -> Tuple p (brokerSig b)) b.publicPort) plan.brokered
         <> map (\d -> Tuple d.publicPort (redirectSig d)) plan.redirects
     )
 
 routeSig :: Route -> String
 routeSig r = "proxy|" <> r.cwd <> "|" <> r.launchCommand <> "|" <> show r.internalPort
+
+-- The tag prefix differs from `routeSig`'s, which is what makes a service
+-- flipping proxy↔broker read as a CHANGE: the listener has to be torn down and
+-- rebuilt, because one of them relays and the other redirects.
+brokerSig :: Broker -> String
+brokerSig b = "broker|" <> b.cwd <> "|" <> b.launchCommand <> "|" <> locatorSig b.at
+
+locatorSig :: Locator -> String
+locatorSig l =
+  l.transport <> "|" <> fromMaybe "" l.host <> "|" <> maybe "" show l.port <> "|" <> fromMaybe "" l.path
 
 redirectSig :: Redirect -> String
 redirectSig d = "redir|" <> d.target
@@ -366,6 +633,9 @@ verdictMap plan = Map.union (binders plan) (refusals plan)
   where
   binders p = Map.fromFoldable
     ( map (\r -> Tuple r.publicPort { serviceId: r.serviceId, sig: routeSig r }) p.routes
+        <> A.mapMaybe
+             (\b -> map (\port -> Tuple port { serviceId: b.serviceId, sig: brokerSig b }) b.publicPort)
+             p.brokered
         <> map (\d -> Tuple d.publicPort { serviceId: d.serviceId, sig: redirectSig d }) p.redirects
     )
   refusals p = Map.fromFoldable (A.mapMaybe refusal p.rejected)

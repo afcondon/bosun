@@ -110,6 +110,87 @@ the backend must accept an inherited socket (flask/julia/`serve` don't, without
 changes), and idle-reap + re-handoff is fiddlier. **Defer to a later phase**, as
 a per-service opt-in for hot paths; the proxy model covers the demos now.
 
+### (c) The BROKER model — ensure-and-locate, added 2026-08-22
+
+The third option, and the one §3b was reaching for without the socket-passing.
+**Bosun does not relay and does not hold the file descriptor. It makes sure the
+service is running, tells the client where it actually is, and gets out of the
+way.** The client then connects *directly*.
+
+```
+GET /where/<serviceId>  on the control port  ─►  probe: already up?
+                                                   no → spawn, wait for the
+                                                        plan's readiness probe
+                                                ─►  { mediation, ready, started,
+                                                      probe, at: {transport,…} }
+client dials `at` itself.  Bosun is now irrelevant to the traffic.
+```
+
+**The distinguishing question is not "HTTP or WebSocket". It is: does Bosun
+belong in the data path at all?** For anything that (a) owns a hardware
+resource, (b) is long-lived and started deliberately rather than per-request,
+or (c) carries timing-critical traffic, the answer is no.
+
+For a good part of this rig, broker mode is not an optimisation — it is the
+only thing that can work:
+
+| service | reached by | proxyable? |
+|---|---|---|
+| es9-daemon | unix socket `~/.es9/control.sock` (+ OSC on UDP :57130) | **no** |
+| fh2 daemon | unix socket `~/.fh2/control.sock` | **no** |
+| link-spike | Ableton Link, UDP **multicast** :20808 | **no** |
+| itajara | 30 Hz WebSocket, holds the Audio4c | technically yes; shouldn't |
+
+You cannot relay a unix domain socket or a multicast group through a TCP
+reverse proxy in any meaningful sense. Before broker mode existed, the first
+three were `NoHostPort` rejections — invisible to the router entirely.
+
+**Opt in per service, in the registry row:**
+
+```json
+{ "role": "worker", "port": 3028, "serveMode": "broker",
+  "url": "ws://127.0.0.1:3028",
+  "startCommand": "cd /abs/path && ./itajara --ws-port 3028" }
+```
+
+`serveMode` defaults to `proxy`. Absent, or unrecognised, means `proxy` — so
+every row written before this existed keeps exactly the behaviour it had.
+The field is named for the ROUTER's role, not the service's protocol,
+because that is the decision being made.
+
+**What broker mode does with the registered port.** It still holds it, when it
+can, and answers **`307 Temporary Redirect`** there — 307 rather than 302 so
+the method and body survive. That preserves the good property of the proxy
+("type the registered port and it works") without the relay. It can only do
+this if the start command contains the literal port, so the service can be
+moved to `public + 20000` and stop fighting for it; when it can't, the service
+keeps its own address, Bosun binds nothing, and `/where` is the only door.
+A WebSocket client will not follow a 307 — it gets one anyway, with the real
+address in the `location` header, because failing loudly with the right answer
+beats being quietly relayed.
+
+**What broker mode never does:** reap. There is no idle timer on a brokered
+service. Reaping a daemon that holds an audio interface because no request
+arrived for ten minutes is the failure that made WebSocket services unsafe to
+router-manage in the first place (found 2026-08-17). Brokered children also do
+**not** die with the router — a proxied backend is useless without the proxy in
+front of it, but a brokered daemon has clients talking to it directly, and
+restarting Bosun must not stop the music. The next ensure probes before it
+spawns, so it finds the survivor and reports `started: false`.
+
+**Readiness** is `Bosun.Health.Probe`, chosen by the plan and made by the shim:
+a listening address ⇒ `TcpConnect` (the same connect the proxy path waits on),
+a unix socket ⇒ `SocketReady` (the socket file exists, which is what
+`Bosun.CLI.Observe` already means by it), a UDP endpoint ⇒ `NoProbe`, because
+connecting to a datagram socket proves nothing. `probe: "none"` on the wire
+means **nothing was checked** — never that a check failed.
+
+Full operator + client documentation: **`docs/ENSURE-AND-LOCATE.md`**. Why this
+exists at all, and the investigation that prompted it — a proxied WebSocket that
+went deaf in one direction and was **never diagnosed** —
+**`docs/RELAY-STALL-AND-BROKER-MODE.md`**. Read its §2 before re-opening that
+stall: it is the list of what has already been excluded, and with what evidence.
+
 ### Why Go specifically
 - **Fast, cheap resident** — the router itself should be negligible overhead;
   a Go binary is a small static process with efficient goroutine-per-request

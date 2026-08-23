@@ -12,8 +12,9 @@ import Prelude
 import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkHost, mkPort)
 import Bosun.Error (SdiViolation(..))
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
-import Bosun.Reachability (hostPort)
-import Bosun.Serve (DriftKind(..), RejectReason(..), planDrift, serveDiff, servePlan)
+import Bosun.Health (Probe(..))
+import Bosun.Reachability (hostPort, unixSocket)
+import Bosun.Serve (DriftKind(..), Mediation(..), RejectReason(..), planDrift, readMediation, serveDiff, servePlan, servePlanWith)
 import Bosun.Service (LooseService, mkDeployment)
 import Data.Array (head)
 import Data.Either (Either(..))
@@ -120,6 +121,133 @@ spec = describe "Bosun.Serve.servePlan" do
     -- partition still covers both services exactly once.
     map _.publicPort p.routes `shouldEqual` [ 3050 ]
     map _.reason p.rejected `shouldEqual` [ PortClaimed 3050 ]
+
+  -- BROKER MODE (BOSUN-SERVE.md §3c). The question the registry's `serveMode`
+  -- answers is "does bosun belong in the data path at all", and these pin the
+  -- two things that follow from answering `broker`: the router stops relaying,
+  -- and the plan starts being able to describe services a proxy cannot reach.
+  describe "broker mode (serveMode: broker)" do
+    let
+      broker sid = { serviceId: sid, mediation: Broker, scheme: Nothing }
+      brokerAs sid sch = { serviceId: sid, mediation: Broker, scheme: Just sch }
+
+    it "an unhinted service is proxied exactly as before — the default is the status quo" do
+      let
+        svc = procSvc "web" 3050 "mbp" "/srv/web" "npx serve -p 3050"
+        p = servePlanWith [] (mkDeployment [ svc ])
+        q = servePlan (mkDeployment [ svc ])
+      map _.serviceId p.brokered `shouldEqual` []
+      map _.publicPort p.routes `shouldEqual` [ 3050 ]
+      -- and `servePlan` IS `servePlanWith []`, so no existing caller moves
+      map _.launchCommand p.routes `shouldEqual` map _.launchCommand q.routes
+
+    it "a hint of `proxy` (or an unrecognised value) is also the status quo" do
+      let
+        svc = procSvc "web" 3050 "mbp" "/srv/web" "npx serve -p 3050"
+        hint m = servePlanWith [ { serviceId: "web", mediation: readMediation m, scheme: Nothing } ] (mkDeployment [ svc ])
+      map _.publicPort (hint "proxy").routes `shouldEqual` [ 3050 ]
+      map _.publicPort (hint "brokerr").routes `shouldEqual` [ 3050 ]
+      (hint "broker").routes `shouldEqual` []
+
+    it "brokers a rewritable listener: holds the public port for a 307, service on the internal one" do
+      let
+        p = servePlanWith [ brokerAs "loop" "ws" ]
+              (mkDeployment [ procSvc "loop" 3028 "mbp" "/srv/loop" "itajara --ws-port 3028" ])
+      p.routes `shouldEqual` []
+      p.rejected `shouldEqual` []
+      case head p.brokered of
+        Nothing -> fail "expected one brokered service"
+        Just b -> do
+          b.publicPort `shouldEqual` Just 3028
+          b.launchCommand `shouldEqual` "itajara --ws-port 23028"
+          b.at.transport `shouldEqual` "tcp"
+          b.at.port `shouldEqual` Just 23028
+          -- the row's own scheme travels through, so the answer is dialable as
+          -- written rather than reassembled by every client
+          b.at.url `shouldEqual` Just "ws://127.0.0.1:23028"
+          (b.probe == TcpConnect (port_ 23028)) `shouldEqual` true
+
+    it "brokers a listener it CANNOT rewrite — a refusal under proxy rules, a fine broker" do
+      let
+        p = servePlanWith [ broker "rig" ]
+              (mkDeployment [ procSvc "rig" 3080 "mbp" "/srv/rig" "./rig --serve" ])
+      -- the literal-port rule exists only so the router can move the backend off
+      -- the public port; a broker that cannot simply leaves it where it is
+      p.rejected `shouldEqual` []
+      case head p.brokered of
+        Nothing -> fail "expected one brokered service"
+        Just b -> do
+          b.publicPort `shouldEqual` Nothing      -- binds nothing
+          b.launchCommand `shouldEqual` "./rig --serve"
+          b.at.port `shouldEqual` Just 3080
+
+    it "brokers a UNIX-SOCKET daemon — a service the proxy model cannot represent at all" do
+      let
+        svc = (leaf "es9")
+          { host = Just (mkHost "mbp")
+          , reachability = unixSocket (absPath "/Users/afc/.es9/control.sock")
+          , launch = { executor: Process { cwd: absPath "/srv/es9", command: "es9-daemon", env: [] }, localName: "es9", artifact: Nothing }
+          }
+        p = servePlanWith [ broker "es9" ] (mkDeployment [ svc ])
+      -- under proxy rules this is NoHostPort, i.e. invisible to the router
+      (servePlan (mkDeployment [ svc ])).rejected `shouldEqual`
+        [ { serviceId: "es9", publicPort: Nothing, reason: NoHostPort } ]
+      case head p.brokered of
+        Nothing -> fail "expected one brokered service"
+        Just b -> do
+          b.at.transport `shouldEqual` "unix"
+          b.at.path `shouldEqual` Just "/Users/afc/.es9/control.sock"
+          (b.probe == SocketReady (absPath "/Users/afc/.es9/control.sock")) `shouldEqual` true
+
+    it "a UDP endpoint is located but NOT probed — a connect proves nothing there" do
+      let
+        p = servePlanWith [ brokerAs "link" "udp" ]
+              (mkDeployment [ procSvc "link" 20808 "mbp" "/srv/link" "link-spike --port 20808" ])
+      case head p.brokered of
+        Nothing -> fail "expected one brokered service"
+        Just b -> do
+          b.at.transport `shouldEqual` "udp"
+          -- `NoProbe` reports as "not checked", never as "down" — the whole
+          -- point of not inventing a TCP probe for a datagram socket
+          (b.probe == NoProbe) `shouldEqual` true
+
+    it "a broker still has to be spawnable: a cd-less row is refused as it always was" do
+      let
+        svc = (leaf "x")
+          { host = Just (mkHost "mbp")
+          , reachability = hostPort (port_ 3060)
+          , launch = { executor: Unmanaged "flask run -p 3060", localName: "x", artifact: Nothing }
+          }
+        p = servePlanWith [ broker "x" ] (mkDeployment [ svc ])
+      map _.serviceId p.brokered `shouldEqual` []
+      map _.reason p.rejected `shouldEqual` [ Sdi NoAbsoluteCwd ]
+
+    it "a brokered service on ANOTHER machine is still a 421 — we cannot spawn it here" do
+      let
+        p = servePlanWith [ broker "web" ]
+              (mkDeployment [ procSvc "web" 3050 "macmini" "/srv/web" "npx serve -p 3050" ])
+      map _.serviceId p.brokered `shouldEqual` []
+      map _.target p.redirects `shouldEqual` [ "http://andrews-mac-mini:3050" ]
+
+    it "a broker's public port is a binder: two claimants still collide" do
+      let
+        p = servePlanWith [ broker "alpha" ]
+              (mkDeployment
+                [ procSvc "alpha" 3050 "mbp" "/srv/a" "run -p 3050"
+                , procSvc "bravo" 3050 "mbp" "/srv/b" "run -p 3050"
+                ])
+      map _.publicPort p.brokered `shouldEqual` [ Just 3050 ]
+      map _.reason p.rejected `shouldEqual` [ PortClaimed 3050 ]
+
+    it "flipping proxy↔broker on one port reads as a CHANGE, so the listener is rebuilt" do
+      let
+        dep = mkDeployment [ procSvc "loop" 3028 "mbp" "/srv/loop" "itajara --ws-port 3028" ]
+        asProxy = servePlanWith [] dep
+        asBroker = servePlanWith [ broker "loop" ] dep
+        d = serveDiff asProxy asBroker
+      d.unbind `shouldEqual` [ 3028 ]
+      d.bindRoutes `shouldEqual` []
+      map _.serviceId d.bindBrokers `shouldEqual` [ "loop" ]
 
   describe "serveDiff (SIGHUP hot-reload)" do
     let planOf = servePlan <<< mkDeployment

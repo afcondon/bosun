@@ -22,6 +22,14 @@
 -- |     down when the row was written, or the file was edited by hand. Reports
 -- |     what it bound and whether the two now agree.
 -- |
+-- |   bosun where <service|port> [--port <n>]
+-- |     ENSURE-AND-LOCATE: make sure a service is running and say where it
+-- |     actually is. `mediation: broker` means bosun is NOT in the data path
+-- |     and the address returned is the service's own — which is the only
+-- |     answer that can work for a unix-socket or UDP daemon. The same
+-- |     operation the router exposes at `GET /where`, for callers that are not
+-- |     PureScript (DeepStar's pre-flight is the Go one).
+-- |
 -- |   bosun            (no args) — the built-in §7 fixture demo.
 module Bosun.CLI.Main where
 
@@ -37,7 +45,7 @@ import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (argv, readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeSnapshot)
 import Bosun.CLI.Audit (runAudit)
-import Bosun.CLI.Serve (runReload, runServe, runServeLive, runServePlan)
+import Bosun.CLI.Serve (runReload, runServe, runServeLive, runServePlan, runWhere)
 import Bosun.CLI.Supervise (runSupervise)
 import Bosun.CLI.Docker (runDocker)
 import Bosun.Edge (Gate(..), Requirement(..))
@@ -96,6 +104,7 @@ main = do
     -- `--port` is the same global flag `supervise` uses, so one router per port
     -- is addressable without new flag machinery.
     [ "reload" ] -> runReload supPort
+    [ "where", key ] -> runWhere supPort key
     [ "apply", "--dry-run", composePath, registryPath ] -> runApplyDryRun targets composePath registryPath Nothing
     [ "apply", "--dry-run", composePath, registryPath, snapshotPath ] -> runApplyDryRun targets composePath registryPath (Just snapshotPath)
     [ "apply", composePath, registryPath ] -> runApply targets composePath registryPath Nothing

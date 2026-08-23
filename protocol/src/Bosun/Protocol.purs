@@ -242,6 +242,87 @@ topologyEntryCodec = CAR.object "TopologyEntry"
 topologyCodec :: CA.JsonCodec (Array TopologyEntry)
 topologyCodec = CA.array topologyEntryCodec
 
+-- ── ensure-and-locate: the `/where` contract ─────────────────────────────────
+--
+-- The wire shape of ENSURE-AND-LOCATE — "make sure this service is running and
+-- tell me where it actually is". It lives here, beside the rest of the wire
+-- contract, because it has more than one consumer by design: the router answers
+-- it, browser clients (PWYF's looper tab) ask it before opening a socket, and
+-- DeepStar's pre-flight asks it from Go. One definition, N consumers.
+--
+-- Deliberately flat and primitive: a Go caller must be able to consume it with
+-- `encoding/json` into a struct and no client library.
+
+-- | Where a service actually is, in a form a caller can DIAL — not a
+-- | description of how Bosun reaches it.
+-- |
+-- | `transport` is the discriminator, and it is a string rather than a sum on
+-- | the wire because the set is open at the edges (an `sctp` or a vsock daemon
+-- | would join it without a Bosun release). Today: `tcp` · `unix` · `udp` ·
+-- | `none`. Which of the optional cells are populated follows from it:
+-- |
+-- |   tcp/udp → host + port          (`url` too, when the scheme is known)
+-- |   unix    → path
+-- |   none    → nothing; the service has no inbound address we can name
+-- |
+-- | `none` is not an error. A daemon can be worth starting and have nothing to
+-- | dial (a UDP fan-out with no listener of its own); saying so is better than
+-- | inventing a port for it.
+type Locator =
+  { transport :: String
+  , host      :: Maybe String
+  , port      :: Maybe Int
+  , path      :: Maybe String
+  , url       :: Maybe String
+  }
+
+-- | The answer to one ensure-and-locate. Three facts the caller cannot get any
+-- | other way, and one it can act on:
+-- |
+-- | * `mediation` — **is Bosun in the data path?** `broker` ⇒ no: `at` is the
+-- |   service's own address and Bosun has nothing more to do with the traffic.
+-- |   `proxy` ⇒ yes: `at` is the router's public port and every byte goes
+-- |   through it. A caller that cares (a 30 Hz socket, a UDP endpoint) should
+-- |   refuse to proceed on `proxy` rather than silently accept a relay.
+-- | * `started` — did THIS call have to launch it? Distinguishes "was already
+-- |   up" from "is up because you asked", which is the difference between a
+-- |   pre-flight that found the rig ready and one that assembled it.
+-- | * `ready` — did the readiness probe pass BEFORE this answer was sent. False
+-- |   with a populated `at` is a real state: launched, not yet answering.
+-- | * `probe` — which check was made (`tcp` · `socket` · `none`), so `ready:
+-- |   false` can be read correctly. `none` means nothing was checked, NOT that
+-- |   the check failed — the distinction PRINCIPLES.md insists on everywhere
+-- |   else an observation is reported.
+type WhereResult =
+  { service   :: String
+  , mediation :: String
+  , ready     :: Boolean
+  , started   :: Boolean
+  , probe     :: String
+  , detail    :: String
+  , at        :: Locator
+  }
+
+locatorCodec :: CA.JsonCodec Locator
+locatorCodec = CAR.object "Locator"
+  { transport: CA.string
+  , host: CAC.maybe CA.string
+  , port: CAC.maybe CA.int
+  , path: CAC.maybe CA.string
+  , url: CAC.maybe CA.string
+  }
+
+whereResultCodec :: CA.JsonCodec WhereResult
+whereResultCodec = CAR.object "WhereResult"
+  { service: CA.string
+  , mediation: CA.string
+  , ready: CA.boolean
+  , started: CA.boolean
+  , probe: CA.string
+  , detail: CA.string
+  , at: locatorCodec
+  }
+
 -- ── the request contract (frontend → chair-server) ───────────────────────────
 
 -- | A user correction to the auto-derived alias map. `Merge` says "these

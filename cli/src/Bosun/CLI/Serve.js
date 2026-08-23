@@ -52,6 +52,12 @@ export const serveImpl = (config) => {
   const states = [];            // proxy-route states, for /state
   const redirects = new Map();  // publicPort -> { serviceId, host, target }, for /state
   const listeners = new Map();  // publicPort -> { server, state? }
+  // BROKERED services, keyed by serviceId — NOT by port, because half of them
+  // have no port to be keyed by (a unix-socket daemon, a UDP fan-out). This is
+  // the table `/where` answers from, and the reason it is a second table rather
+  // than a flag on `states`: a broker has no relay, no idle timer and possibly
+  // no listener, so almost nothing in the proxy state machine applies to it.
+  const brokers = new Map();
   // Mutable because a reload refreshes them: rejections are NOT static (a row
   // can stop being routable while we're resident) and the plan's provenance
   // moves with each re-read.
@@ -146,6 +152,60 @@ export const serveImpl = (config) => {
     )).then(() => {});
   };
 
+  // ── broker mode (BOSUN-SERVE.md §3c) ───────────────────────────────────────
+  //
+  // The router ensures the service is running and says WHERE it is; it never
+  // touches the traffic. Register the entry (this is what `/where` answers
+  // from) and, IF the service has a public port we were able to move it off,
+  // hold that port so a caller who dialled the registered address is told where
+  // to go instead — and so that dialling it is still what triggers the spawn.
+  //
+  // A broker with no public port binds nothing at all. That is not a degraded
+  // case: es9-daemon is reached at `~/.es9/control.sock` and link-spike over UDP
+  // multicast, and for those `/where` is the only door there could be.
+  const registerBroker = (b) => {
+    const existing = brokers.get(b.serviceId);
+    // Carry the live child across a reload that did not change the entry —
+    // re-registering must not orphan a running daemon (which, for these, means
+    // an audio interface held by a process nobody is tracking any more).
+    const state = existing && sameBroker(existing.broker, b)
+      ? Object.assign(existing, { broker: b })
+      : { broker: b, child: null, ready: null, stopping: null, bound: false, bindError: null };
+    brokers.set(b.serviceId, state);
+    return state;
+  };
+
+  const bindBroker = (b) => {
+    const state = registerBroker(b);
+    if (b.publicPort === null || b.publicPort === undefined) return;
+    const server = http.createServer((req, res) => brokerRedirect(state, req, res));
+    // A WebSocket client will not follow a redirect, so there is nothing clever
+    // to do here — but there IS an honest answer, and it is not silence.
+    server.on("upgrade", (req, socket) => brokerRefuseUpgrade(state, req, socket));
+    server.on("clientError", (_e, sock) => { try { sock.end("HTTP/1.1 400 Bad Request\r\n\r\n"); } catch (_) {} });
+    server.on("error", (err) => {
+      // A broker's public port being held externally is the ORDINARY case once
+      // the service has been started by hand: it binds its own registered port
+      // when nothing moved it off. Say so once and step aside, exactly as the
+      // proxy path does.
+      state.bindError = err.code === "EADDRINUSE" ? null : (err.code || err.message);
+      state.bound = false;
+      if (err.code === "EADDRINUSE") {
+        console.log(`  ≈ :${b.publicPort} already held — ${b.serviceId} is brokered, so serve steps aside`);
+      } else {
+        console.error(`  ✗ cannot bind :${b.publicPort} (${state.bindError}) — ${b.serviceId} 307 unavailable`);
+      }
+    });
+    server.on("listening", () => {
+      state.bound = true;
+      state.bindError = null;
+      console.log(`  bound :${b.publicPort} → 307 → ${locatorLabel(b)} (${b.serviceId}, brokered — no relay)`);
+    });
+    server.on("close", () => { state.bound = false; });
+    listeners.set(b.publicPort, { server, brokerState: state });
+    server.listen(b.publicPort, INTERNAL_HOST);
+  };
+
   const bindRedirect = (rd) => {
     const server = http.createServer((req, res) => {
       res.writeHead(421, { "content-type": "text/plain", location: rd.target + (req.url || "") });
@@ -174,6 +234,11 @@ export const serveImpl = (config) => {
       const i = states.indexOf(l.state);
       if (i >= 0) states.splice(i, 1);
     }
+    // A broker's listener going away does NOT stop the service. The listener
+    // only answered "go over there"; the service is on its own address, holding
+    // whatever it holds, and unbinding a 307 is no reason to take an audio
+    // interface away from it. `applyReload` re-registers or drops the entry.
+    if (l.brokerState) l.brokerState.bound = false;
     console.log(`  ⊘ unbound :${port}`);
     const closed = new Promise((resolve) => {
       let done = false;
@@ -268,6 +333,21 @@ export const serveImpl = (config) => {
         bindError: s.bindError,
         pid: s.child ? s.child.pid : null,
       })),
+      // Brokered services are a FOURTH bucket, not a flavour of route: `up` here
+      // is a probed fact (they are frequently started outside bosun), and the
+      // absence of a `publicPort` is normal rather than a fault.
+      brokered: [...brokers.values()].map((s) => ({
+        serviceId: s.broker.serviceId,
+        publicPort: s.broker.publicPort,
+        transport: s.broker.transport,
+        at: locatorLabel(s.broker),
+        url: s.broker.url,
+        probe: s.broker.probe,
+        // did the router start this one, or was it already there
+        pid: s.child ? s.child.pid : null,
+        bound: !!s.bound,
+        bindError: s.bindError,
+      })),
       redirects: [...redirects.entries()].map(([publicPort, r]) => ({ publicPort, ...r })),
       rejected,
       // registered-but-never-seen (and its two siblings). Distinct from
@@ -287,6 +367,16 @@ export const serveImpl = (config) => {
     const diff = config.reload();
     return Promise.all(diff.unbind.map(unbindPort)).then(() => {
       diff.bindRoutes.forEach(bindRoute);
+      // Brokers arrive whole, not as a delta: a portless broker owns no
+      // listener, so a port-keyed diff can say nothing about it (see
+      // `Bosun.Serve.ServeDiff`). Refresh every entry — `registerBroker` keeps a
+      // running child across an unchanged one — then drop entries the fresh plan
+      // no longer has, WITHOUT stopping them: bosun forgetting about a daemon is
+      // not a reason to take its device away.
+      const fresh = new Set(diff.brokers.map((b) => b.serviceId));
+      for (const id of [...brokers.keys()]) if (!fresh.has(id)) brokers.delete(id);
+      diff.brokers.forEach(registerBroker);
+      diff.bindBrokers.forEach(bindBroker);
       diff.bindRedirects.forEach(bindRedirect);
       rejected = diff.rejected;
       plannedAt = new Date().toISOString();
@@ -314,6 +404,13 @@ export const serveImpl = (config) => {
   // alike; the signal handlers exist so SIGTERM (how `supervise` stops us) and
   // Ctrl-C reach it at all. SIGKILL is the one this cannot cover — that is what
   // `reapOrphanBackends` is for, below.
+  //
+  // BROKERED children are deliberately NOT in this sweep. A proxied backend is
+  // useless without the router in front of it, so it dies with us; a brokered
+  // daemon is on its own address holding a device, and every client of it talks
+  // to it directly. Restarting the router must not stop the music. The next
+  // `ensureAndLocate` probes before it spawns, so it finds the survivor and
+  // reports `started: false` — the router re-adopts rather than duplicating.
   let tearingDown = false;
   const teardown = () => {
     if (tearingDown) return;
@@ -342,10 +439,12 @@ export const serveImpl = (config) => {
     console.error(`  ✗ orphan sweep failed: ${msg(e)} — binding anyway`);
   }).then(() => {
     for (const route of config.routes) bindRoute(route);
+    for (const b of config.brokers) bindBroker(b);
     for (const rd of config.redirects) bindRedirect(rd);
 
     if (config.statusPort) {
-      const status = http.createServer((req, res) => controlRouter(req, res, { states, listeners, stateBody, applyReload }));
+      const status = http.createServer((req, res) =>
+        controlRouter(req, res, { states, listeners, brokers, stateBody, applyReload, whereJson: config.whereJson }));
       status.on("error", (err) => console.error(`  ✗ /state :${config.statusPort} (${err.code || err.message})`));
       status.listen(config.statusPort, INTERNAL_HOST, () =>
         console.log(`  /state + /control on :${config.statusPort}`));
@@ -371,9 +470,10 @@ const sendJSON = (res, code, obj) => {
   res.end(JSON.stringify(obj, null, 2) + "\n");
 };
 
-// GET /state · POST /control/reload · POST /control/spawn?port= · POST
-// /control/stop?port=. The control verbs map to machinery serve already owns:
-// reload→applyReload (serveDiff), spawn→ensureBackend, stop→stopBackend.
+// GET /state · GET /where/:service · POST /control/reload · POST
+// /control/spawn?port= · POST /control/stop?port=. The control verbs map to
+// machinery serve already owns: reload→applyReload (serveDiff),
+// spawn→ensureBackend, stop→stopBackend, where→ensureAndLocate.
 function controlRouter(req, res, ctx) {
   const u = new URL(req.url, "http://localhost");
   if (req.method === "OPTIONS") { res.writeHead(204, CORS); res.end(); return; }
@@ -382,6 +482,95 @@ function controlRouter(req, res, ctx) {
     ctx.stateBody()
       .then((body) => sendJSON(res, 200, body))
       .catch((e) => sendJSON(res, 500, { ok: false, error: msg(e) }));
+    return;
+  }
+
+  // GET /where/<serviceId>  ·  GET /where?port=<publicPort>
+  //
+  // The thin HTTP adapter over `ensureAndLocate`. It answers for PROXIED routes
+  // too, and that is deliberate: "where is this service" is a question with an
+  // answer either way, and `mediation` is how the caller learns whether bosun is
+  // in the path. A client that must not be relayed (a 30 Hz socket, a UDP
+  // endpoint) can then refuse to proceed rather than silently accepting a hop.
+  //
+  // 200 ready · 503 a check was made and it FAILED (the address is still
+  // returned, so the caller can retry) · 404 unknown.
+  //
+  // `probe: "none"` answers 200 with `ready: false`, which looks odd until you
+  // read it as the rule the rest of Bosun follows: a probe kind we cannot
+  // observe reports UNKNOWN with a reason, never a silent coercion to down
+  // (PRINCIPLES.md, `Bosun.CLI.Observe`). Answering 503 for a UDP fan-out we
+  // deliberately did not probe would be exactly that coercion, and would fail
+  // every naive `if status != 200` caller against a service that is fine.
+  if (req.method === "GET" && (u.pathname === "/where" || u.pathname.startsWith("/where/"))) {
+    const byPort = Number(u.searchParams.get("port"));
+    const id = u.pathname.startsWith("/where/") ? decodeURIComponent(u.pathname.slice("/where/".length)) : "";
+    const answer = (obj, code) => sendJSON(res, code, ctx.whereJson(obj));
+
+    // Keyed by port, a broker answers to EITHER port it is associated with: the
+    // registered one (which it may hold, for the 307) and the one it actually
+    // listens on. They are usually different — that is the whole point of the
+    // rewrite — and a broker that binds nothing has only the second, so matching
+    // on `publicPort` alone would make `where 8182` miss a service the registry
+    // plainly declares on :8182.
+    const brokerState = id
+      ? ctx.brokers.get(id)
+      : [...ctx.brokers.values()].find((s) => s.broker.publicPort === byPort || s.broker.port === byPort);
+    if (brokerState) {
+      const b = brokerState.broker;
+      ensureAndLocate(brokerState).then((r) => answer({
+        service: b.serviceId,
+        mediation: "broker",
+        ready: r.ready,
+        started: r.started,
+        probe: r.probe,
+        detail: r.detail,
+        transport: b.transport,
+        host: b.host,
+        port: b.port,
+        path: b.path,
+        url: b.url,
+      }, r.ready || r.probe === "none" ? 200 : 503)).catch((e) => sendJSON(res, 502, { ok: false, error: msg(e) }));
+      return;
+    }
+
+    // A proxied route: the honest address is the ROUTER's public port, because
+    // that is where the service is reachable — through us. Ensure it for the
+    // same reason a broker is ensured, so "where is it" and "is it up" are one
+    // question with one answer.
+    const route = id
+      ? ctx.states.find((s) => s.route.serviceId === id)
+      : ctx.states.find((s) => s.route.publicPort === byPort);
+    if (route) {
+      const rt = route.route;
+      const had = !!route.child;
+      const locate = (ready, detail) => answer({
+        service: rt.serviceId,
+        mediation: "proxy",
+        ready,
+        started: ready && !had,
+        probe: "tcp",
+        detail,
+        transport: "tcp",
+        host: INTERNAL_HOST,
+        port: rt.publicPort,
+        path: null,
+        url: `http://${INTERNAL_HOST}:${rt.publicPort}`,
+      }, ready ? 200 : 503);
+      if (route.external) { locate(true, "held by a process bosun serve did not start; it answers on the public port directly"); return; }
+      if (!route.bound) { locate(false, `the router does not hold :${rt.publicPort} (${route.bindError || "not bound"}), so nothing can reach it`); return; }
+      ensureBackend(route)
+        .then(() => locate(true, `bosun relays :${rt.publicPort} to the backend on :${rt.internalPort}` + (had ? "" : "; started by this call")))
+        .catch((e) => locate(false, `backend did not come up: ${msg(e)}`));
+      return;
+    }
+
+    sendJSON(res, 404, {
+      ok: false,
+      error: id
+        ? `no service '${id}' is served here. /state lists what is.`
+        : `no service on :${byPort || "?"}. /state lists what is.`,
+    });
     return;
   }
 
@@ -457,6 +646,181 @@ function controlRouter(req, res, ctx) {
   }
 
   sendJSON(res, 404, { ok: false, error: "not found" });
+}
+
+// ── ENSURE-AND-LOCATE ────────────────────────────────────────────────────────
+//
+// The operation, as an operation — not an HTTP route. `GET /where` is a thin
+// adapter over it, `bosun where` is a thin client over that, and DeepStar's
+// pre-flight ("is Link up? is the ES-9 in Hosted mode?") is the same client
+// written in Go. Anything embedding this shim can call it directly.
+//
+//   ensureAndLocate(brokerState) -> Promise<{ ready, started, probe, detail }>
+//
+// Three questions, answered in an order that matters:
+//
+//   1. Is it ALREADY up? Probe first, always. These services are started
+//      deliberately and often by hand, and a pre-flight that answers "I started
+//      it" when it was already running is worse than useless — it is the wrong
+//      answer to the question the operator asked.
+//   2. If not, start it — once, single-flight, exactly as the proxy path does.
+//   3. Did it become ready? Wait for the probe the PLAN chose (`Bosun.Health.
+//      Probe`, flattened to a tag by the CLI), and report which one was made.
+//      `probe: "none"` means NOTHING WAS CHECKED — never that a check failed.
+//
+// The wait happens BEFORE the answer is sent, which is the whole contract: a
+// caller that follows this answer finds a service that is actually up.
+export function ensureAndLocate(state) {
+  const b = state.broker;
+  return probeBroker(b).then((aliveAlready) => {
+    if (aliveAlready) {
+      return { ready: true, started: false, probe: b.probe, detail: `already running; ${probeSentence(b)} passed` };
+    }
+    if (b.probe === "none" && state.child) {
+      // Started by us, and nothing about it is checkable. Say exactly that.
+      return {
+        ready: false, started: false, probe: "none",
+        detail: `started by bosun (pid ${state.child.pid}); this service publishes no readiness signal serve can check, so "up" is not a claim it can make`,
+      };
+    }
+    return ensureBrokerChild(state).then(() => probeBroker(b)).then((ready) => ({
+      ready,
+      started: true,
+      probe: b.probe,
+      detail: ready
+        ? `started by bosun; ${probeSentence(b)} passed`
+        : (b.probe === "none"
+            ? "started by bosun; no readiness signal to check, so nothing here says it is up"
+            : `started by bosun, but ${probeSentence(b)} has not passed within ${WAIT_TIMEOUT_MS}ms`),
+    }));
+  });
+}
+
+// Single-flight spawn for a broker. Same shape as `ensureBackend`, and
+// deliberately NOT the same function: a broker has no internal-port rewrite to
+// respect, no idle timer to bump, and no relay waiting on it.
+function ensureBrokerChild(state) {
+  if (!state.ready) {
+    const settled = state.stopping || Promise.resolve();
+    state.ready = settled.then(() => spawnBroker(state)).catch((err) => { state.ready = null; throw err; });
+  }
+  return state.ready;
+}
+
+function spawnBroker(state) {
+  const b = state.broker;
+  const logFile = `/tmp/bosun-serve-${sanitize(b.serviceId)}.log`;
+  const out = fs.openSync(logFile, "a");
+  console.log(`  ⟳ ensure ${b.serviceId}: ${b.launchCommand}  (cwd ${b.cwd}, log ${logFile})`);
+  const child = spawn("bash", ["-c", b.launchCommand], { cwd: b.cwd, stdio: ["ignore", out, out], detached: true });
+  state.child = child;
+  child.on("exit", (code, signal) => {
+    console.log(`  ⏹ ${b.serviceId} exited (code ${code}, signal ${signal})`);
+    if (state.child === child) { state.child = null; state.ready = null; }
+  });
+  return waitForBroker(b).then((ok) => {
+    if (ok) console.log(`  ✓ ${b.serviceId} ready at ${locatorLabel(b)}`);
+    return ok;
+  });
+}
+
+// Poll the plan's readiness probe until it passes or the deadline. `none` waits
+// for nothing and claims nothing — there is no check to make, and inventing a
+// grace period would be inventing evidence.
+function waitForBroker(b) {
+  if (b.probe === "none") return Promise.resolve(false);
+  const deadline = Date.now() + WAIT_TIMEOUT_MS;
+  const tick = () => probeBroker(b).then((ok) => {
+    if (ok || Date.now() > deadline) return ok;
+    return new Promise((r) => setTimeout(r, WAIT_POLL_MS)).then(tick);
+  });
+  return tick();
+}
+
+// The readiness probe the PLAN chose, made. `tcp` is `waitForPort`'s one-shot
+// (the same connect the proxy path waits on); `socket` is the socket file's
+// existence, which is what `Bosun.CLI.Observe`'s `SocketReady` already means.
+function probeBroker(b) {
+  if (b.probe === "tcp" && b.probePort !== null && b.probePort !== undefined) return probePort(b.probePort);
+  if (b.probe === "socket" && b.probePath) {
+    try { return Promise.resolve(fs.existsSync(b.probePath)); } catch (_) { return Promise.resolve(false); }
+  }
+  return Promise.resolve(false);
+}
+
+function probeSentence(b) {
+  if (b.probe === "tcp") return `a TCP connect to :${b.probePort}`;
+  if (b.probe === "socket") return `the socket ${b.probePath}`;
+  return "no check";
+}
+
+function locatorLabel(b) {
+  if (b.transport === "unix") return `unix ${b.path}`;
+  if (b.transport === "none") return "(no dialable address)";
+  return b.url || `${b.transport} ${b.host}:${b.port}`;
+}
+
+// Two broker entries are the SAME entry if everything the router acts on is the
+// same. Used on reload to decide whether a running child carries over.
+function sameBroker(a, b) {
+  return a.launchCommand === b.launchCommand && a.cwd === b.cwd
+    && a.transport === b.transport && a.host === b.host && a.port === b.port
+    && a.path === b.path && a.probe === b.probe;
+}
+
+// The HTTP door onto a brokered service: ensure it, then get out of the way.
+// 307 rather than 302/301 because the method and body must survive — a POST
+// that silently became a GET on the way to the real service would be a far
+// nastier bug than not redirecting at all. The Location is built from the
+// transport address, not from the row's `url`: this is an HTTP redirect, and
+// telling an HTTP client to go to `ws://…` helps nobody.
+function brokerRedirect(state, req, res) {
+  const b = state.broker;
+  ensureAndLocate(state).then((r) => {
+    if (b.transport !== "tcp" || b.port === null || b.port === undefined) {
+      res.writeHead(503, { "content-type": "text/plain" });
+      res.end(`bosun serve: ${b.serviceId} is brokered at ${locatorLabel(b)}, which is not an HTTP address.\n`
+        + `Ask GET /where/${b.serviceId} on the control port for the real address.\n`);
+      return;
+    }
+    const target = `http://${b.host}:${b.port}${req.url || ""}`;
+    res.writeHead(307, {
+      location: target,
+      "content-type": "text/plain",
+      // The point of broker mode, stated on every answer: bosun is not carrying
+      // this traffic, and a client that wants to know before it commits can ask.
+      "x-bosun-mediation": "broker",
+      "x-bosun-ready": String(r.ready),
+    });
+    res.end(`bosun serve: ${b.serviceId} is brokered — go direct to ${target}\n${r.detail}\n`);
+  }).catch((err) => {
+    res.writeHead(502, { "content-type": "text/plain" });
+    res.end(`bosun serve: could not ensure ${b.serviceId}: ${msg(err)}\n`);
+  });
+}
+
+// An upgrade on a brokered public port. A browser's WebSocket does not follow
+// redirects, so this connection is going to fail whatever we say — but it fails
+// LOUDLY, with the address it should have used, instead of being quietly
+// relayed by a router that has no business in a 30 Hz stream. Answering the
+// upgrade with a redirect is the closest thing to an honest answer HTTP has.
+function brokerRefuseUpgrade(state, req, socket) {
+  const b = state.broker;
+  ensureAndLocate(state).then(() => {
+    const target = b.url || locatorLabel(b);
+    const body = `bosun serve: ${b.serviceId} is brokered. Connect directly to ${target}.\n`
+      + `Ask GET /where/${b.serviceId} on the control port first; it starts the service if needed.\n`;
+    try {
+      socket.write(
+        "HTTP/1.1 307 Temporary Redirect\r\n" +
+        `location: ${target}\r\n` +
+        "x-bosun-mediation: broker\r\n" +
+        "content-type: text/plain\r\n" +
+        `content-length: ${Buffer.byteLength(body)}\r\n` +
+        "connection: close\r\n\r\n" + body);
+    } catch (_) {}
+    try { socket.end(); } catch (_) {}
+  }).catch(() => { try { socket.destroy(); } catch (_) {} });
 }
 
 function handle(state, req, res) {
@@ -569,7 +933,28 @@ function bridgeUpgrade(state, req, socket, head) {
       up.pipe(socket);
     });
     const kill = () => { try { up.destroy(); } catch (_) {} try { socket.destroy(); } catch (_) {} };
+    // A bridge is two pumps, and it must never outlive either of them. Only
+    // `error` used to tear the pair down, so a leg that CLOSED without erroring
+    // left its partner open with nothing behind it — a socket the client still
+    // believes in, that no byte will ever arrive on again, and that will never
+    // fire `onclose`. `pipe`'s own end-propagation covers the graceful case
+    // (`up` ends ⇒ `socket.end()`), but not a destroy, and not the other
+    // direction at all.
+    //
+    // `end`, not `destroy`: a close can follow the last write by microseconds
+    // and `destroy` discards whatever is still buffered, so tearing down
+    // abruptly would trade a hung socket for a truncated one. `end` flushes,
+    // sends FIN, and lets the peer see a real close.
+    //
+    // NOTE: this is hardening, not a fix for a diagnosed fault. The one-way
+    // stall of 2026-08-22 was NOT reproduced, and is not known to arrive by
+    // this path — it is closed because a half-dead bridge is wrong on its own
+    // terms. docs/RELAY-STALL-AND-BROKER-MODE.md §3 has the reasoning, and its
+    // §2 the exclusion list; read that before spending a day re-excluding.
+    const halfDead = (other) => () => { try { other.end(); } catch (_) {} };
     up.on("close", released);
+    up.on("close", halfDead(socket));
+    socket.on("close", halfDead(up));
     up.on("error", kill);
     socket.on("error", kill);
   }).catch(() => { released(); try { socket.destroy(); } catch (_) {} });
