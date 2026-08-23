@@ -220,7 +220,44 @@ spec = describe "Bosun.Serve.servePlan" do
           }
         p = servePlanWith [ broker "x" ] (mkDeployment [ svc ])
       map _.serviceId p.brokered `shouldEqual` []
-      map _.reason p.rejected `shouldEqual` [ Sdi NoAbsoluteCwd ]
+      -- the WHOLE rejection, not just its reason: the port a refusal claimed is
+      -- what lets it be correlated with the registry row that produced it, and
+      -- asserting `_.reason` alone let a brokered refusal quietly drop it.
+      p.rejected `shouldEqual` [ { serviceId: "x", publicPort: Just 3060, reason: Sdi NoAbsoluteCwd } ]
+
+    -- The three below all fail the same way if a broker's verdict is filed
+    -- under the port it BINDS rather than the port the ROW CLAIMED. A broker
+    -- that binds nothing is the normal case, so keyed by `publicPort` the
+    -- healthiest services in the deployment reported as `Unaccounted` — the one
+    -- drift kind a reload cannot fix, whose remedy is "go and fix the row".
+    it "a broker that binds nothing still ACCOUNTS FOR its registry claim (no drift)" do
+      let
+        p = servePlanWith [ broker "rig" ]
+              (mkDeployment [ procSvc "rig" 3080 "mbp" "/srv/rig" "./rig --serve" ])
+      map _.publicPort p.brokered `shouldEqual` [ Nothing ]
+      map _.declaredPort p.brokered `shouldEqual` [ Just 3080 ]
+      planDrift [ { serviceId: "rig", publicPort: 3080 } ] p p `shouldEqual` []
+
+    it "a UDP broker accounts for its port too — located, unmoved, and not drift" do
+      let
+        p = servePlanWith [ brokerAs "link" "udp" ]
+              (mkDeployment [ procSvc "link" 20808 "mbp" "/srv/link" "link-spike --port 20808" ])
+      -- deliberately left where it is (there is no 307 over UDP), so it binds
+      -- nothing while still being the plan's answer for :20808
+      map _.publicPort p.brokered `shouldEqual` [ Nothing ]
+      planDrift [ { serviceId: "link", publicPort: 20808 } ] p p `shouldEqual` []
+
+    it "a brokered REFUSAL is agreement, not drift — the operator reads the reason" do
+      let
+        svc = (leaf "x")
+          { host = Just (mkHost "mbp")
+          , reachability = hostPort (port_ 3060)
+          , launch = { executor: Unmanaged "flask run -p 3060", localName: "x", artifact: Nothing }
+          }
+        p = servePlanWith [ broker "x" ] (mkDeployment [ svc ])
+      -- a row the router REFUSES is accounted for: `rejected` says why, and
+      -- sending the operator to chase a reload instead would change nothing
+      planDrift [ { serviceId: "x", publicPort: 3060 } ] p p `shouldEqual` []
 
     it "a brokered service on ANOTHER machine is still a 421 — we cannot spawn it here" do
       let

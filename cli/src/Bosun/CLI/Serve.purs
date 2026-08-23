@@ -368,12 +368,19 @@ runReload mport = do
   else if not (boolAt "ok" res.body) then
     log ("  ✗ reload failed: " <> stringAt "error" res.body)
   else do
+    let brokers = stringsAt "brokers" res.body
     log
       ( "  ↻ unbound " <> show (A.length (intsAt "unbound" res.body))
           <> ", bound " <> show (A.length (intsAt "boundRoutes" res.body)) <> " proxy + "
           <> show (A.length (intsAt "boundRedirects" res.body)) <> " redirect"
+          -- Counted separately and by NAME, because a broker usually binds
+          -- nothing: reported through the port lists alone, a reload that
+          -- ensured every daemon on the rig printed as "bound 0" (2026-08-23).
+          <> ", ensuring " <> show (A.length brokers) <> " broker"
+          <> (if A.length brokers == 1 then "" else "s")
       )
     for_ (intsAt "boundRoutes" res.body) \p -> log ("    + :" <> show p <> " now routed")
+    for_ (stringsAt "boundBrokers" res.body) \s -> log ("    + " <> s <> " — 307 port rebound")
     for_ (intsAt "unbound" res.body) \p -> log ("    - :" <> show p <> " unbound")
     -- Read /state back: agreement is the claim worth making, and only the
     -- router can make it.
@@ -456,6 +463,11 @@ stringAt k j = fromMaybe "(no detail)" (J.toObject j >>= FO.lookup k >>= J.toStr
 
 intsAt :: String -> Json -> Array Int
 intsAt k j = A.mapMaybe asInt (fromMaybe [] (J.toObject j >>= FO.lookup k >>= J.toArray))
+
+-- Brokered services are reported by name: most hold no port, so the port-keyed
+-- lists say nothing about them at all.
+stringsAt :: String -> Json -> Array String
+stringsAt k j = A.mapMaybe J.toString (fromMaybe [] (J.toObject j >>= FO.lookup k >>= J.toArray))
 
 asInt :: Json -> Maybe Int
 asInt j = J.toNumber j >>= Int.fromNumber

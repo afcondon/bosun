@@ -80,6 +80,11 @@ export const serveImpl = (config) => {
       // held as settled facts: see `recheckAdopted` and the `listening` handler.
       external: false,
       externalCheckedAt: null,
+      // the INTERNAL port was already listening when we went to spawn: we relay
+      // to a backend we did not start (`spawnBackend`). Re-derived like the
+      // others — there is no child, so no `exit` event to clear it.
+      adoptedBackend: false,
+      adoptedBackendAt: null,
       bound: false,
       bindError: null,
     };
@@ -137,8 +142,22 @@ export const serveImpl = (config) => {
   // diff, and a config diff can never notice that a process died.
   const recheckAdopted = () => {
     const adopted = states.filter((s) => s.external);
-    if (adopted.length === 0) return Promise.resolve();
-    return Promise.all(adopted.map((s) =>
+    // The BACKEND-side claim gets the same treatment for the same reason: an
+    // adopted backend has no child of ours, so no `exit` event fires when it
+    // goes, and nothing else would ever clear `ready` — the route would proxy
+    // to a dead internal port forever and never spawn again.
+    const backends = states.filter((s) => s.adoptedBackend && !s.child);
+    if (adopted.length === 0 && backends.length === 0) return Promise.resolve();
+    const backendChecks = backends.map((s) =>
+      probePort(s.route.internalPort).then((alive) => {
+        if (alive) return;
+        console.log(`  ↺ :${s.route.internalPort} adopted backend is gone — ${s.route.serviceId} respawns on the next request`);
+        s.adoptedBackend = false;
+        s.ready = null;
+        clearIdle(s);
+      })
+    );
+    return Promise.all(backendChecks.concat(adopted.map((s) =>
       probePort(s.route.publicPort).then((alive) => {
         s.externalCheckedAt = new Date().toISOString();
         if (alive) return;
@@ -149,7 +168,7 @@ export const serveImpl = (config) => {
         // error handler above re-adopts (and says so), so losing the race is safe.
         if (l && l.server && !l.server.listening) l.server.listen(s.route.publicPort, INTERNAL_HOST);
       })
-    )).then(() => {});
+    ))).then(() => {});
   };
 
   // ── broker mode (BOSUN-SERVE.md §3c) ───────────────────────────────────────
@@ -321,10 +340,18 @@ export const serveImpl = (config) => {
         // an adopted route is up (served externally), just not by serve. That is
         // now a probed fact, not a remembered one: `recheckAdopted` has just run,
         // and it clears `external` for any holder that has gone.
-        up: s.external ? true : !!s.child,
+        // `adoptedBackend` counts as up for the same reason `external` does: a
+        // backend we relay to is serving whether or not we are its parent. Both
+        // have just been re-probed.
+        up: s.external || !!s.child || !!s.adoptedBackend,
         external: !!s.external,
         // when the adoption claim was last put to the test (null ⇒ never adopted)
         externalCheckedAt: s.externalCheckedAt,
+        // we relay to this route's backend but did not start it, so `pid` is
+        // null and no idle-stop will ever reach it. Said plainly, because a
+        // route that is up with no pid otherwise reads as a bug.
+        adoptedBackend: !!s.adoptedBackend,
+        adoptedBackendAt: s.adoptedBackendAt,
         // does the router actually hold this public port? `bound: false` with
         // `external: false` means NOTHING is listening — no request can arrive,
         // so lazy-spawn can never fire — which otherwise renders as an ordinary
@@ -391,7 +418,7 @@ export const serveImpl = (config) => {
         console.log(
           `  ↻ reload applied: -${diff.unbind.length} unbound, ` +
           `+${diff.bindRoutes.length} proxy, +${diff.bindRedirects.length} redirect, ` +
-          `${diff.rejected.length} refused`);
+          `${diff.brokers.length} brokered, ${diff.rejected.length} refused`);
         return diff;
       });
     });
@@ -585,6 +612,13 @@ function controlRouter(req, res, ctx) {
         unbound: diff.unbind,
         boundRoutes: diff.bindRoutes.map((r) => r.publicPort),
         boundRedirects: diff.bindRedirects.map((r) => r.publicPort),
+        // Brokers are named, not numbered. Most of them hold no public port at
+        // all (es9-daemon on a unix socket, link-spike on multicast), so a
+        // port-keyed answer says nothing about the ones broker mode exists for
+        // — and a reload that ensured four daemons reported as a reload that
+        // did nothing. `boundBrokers` is the subset that also took a 307 port.
+        brokers: diff.brokers.map((b) => b.serviceId),
+        boundBrokers: diff.bindBrokers.map((b) => b.serviceId),
         routes: after.routes.map((r) => r.publicPort),
         redirects: after.redirects.map((r) => r.publicPort),
         rejected: after.rejected,
@@ -614,6 +648,20 @@ function controlRouter(req, res, ctx) {
         error: `:${port} is held by a process bosun serve did not start, so it has no backend to `
           + `${u.pathname === "/control/stop" ? "stop" : "spawn"}. Stop the external holder — the router `
           + `re-probes and reclaims the port within ${Math.round(ADOPTION_WATCH_MS / 1000)}s.`,
+      });
+      return;
+    }
+    // Same refusal one layer down: we relay to this backend but did not start
+    // it, so there is no child to signal. `stopBackend` would drop the claim,
+    // report `wasRunning: false`, and leave a service that is still serving
+    // looking stopped — the wrong answer, not merely an incomplete one.
+    if (u.pathname === "/control/stop" && state.adoptedBackend && !state.child) {
+      sendJSON(res, 409, {
+        ok: false,
+        serviceId,
+        adoptedBackend: true,
+        error: `:${state.route.internalPort} is served by a backend bosun serve did not start, so there `
+          + `is nothing here to stop. Stop that process — the router re-probes and respawns on the next request.`,
       });
       return;
     }
@@ -846,8 +894,40 @@ function ensureBackend(state) {
   return state.ready;
 }
 
+// ADOPT-OR-SPAWN. Before starting a backend, ask whether one is already
+// listening on the internal port — and if so, relay to it rather than starting
+// a second.
+//
+// This is the same move `bindRoute`'s EADDRINUSE handler makes for the PUBLIC
+// port, one layer down, and it closes a hole that only broker mode could open.
+// `unbindPort` deliberately does not stop a brokered child (unbinding a 307 is
+// no reason to take an audio interface away), and `reapOrphanBackends` runs
+// only at router startup — so flipping a service from broker to proxy leaves
+// the daemon we started still holding the internal port, with nothing between
+// that moment and the next restart to notice. The first request then spawned a
+// SECOND copy onto an occupied port: two itajaras on one Audio4c, and `/state`
+// naming the pid of the loser (2026-08-23).
+//
+// Startup keeps the opposite policy on purpose: `reapOrphanBackends` still
+// kills survivors of a previous router before binding, because a fresh router
+// should be running fresh code. Adoption is for the mid-life case, where the
+// alternative is not a stale backend but two live ones.
 function spawnBackend(state) {
   const { route } = state;
+  return probePort(route.internalPort).then((alive) => {
+    if (!alive) return startBackend(state);
+    console.log(
+      `  ≈ :${route.internalPort} already listening — adopting it for ${route.serviceId} ` +
+      `(not started by this router; no duplicate spawned)`);
+    state.adoptedBackend = true;
+    state.adoptedBackendAt = new Date().toISOString();
+    bumpIdle(state);
+  });
+}
+
+function startBackend(state) {
+  const { route } = state;
+  state.adoptedBackend = false;
   const logFile = `/tmp/bosun-serve-${sanitize(route.serviceId)}.log`;
   const out = fs.openSync(logFile, "a");
   console.log(`  ⟳ spawn ${route.serviceId}: ${route.launchCommand}  (cwd ${route.cwd}, log ${logFile})`);
@@ -980,6 +1060,10 @@ function signalGroup(child, sig) {
 function stopBackend(state) {
   clearIdle(state);
   state.ready = null;
+  // Drop any adoption claim: we are no longer relaying to that backend, and the
+  // next request must re-probe rather than trust a stale `true`. Note we do NOT
+  // signal it — an adopted backend is not ours to kill.
+  state.adoptedBackend = false;
   const child = state.child;
   if (!child) {
     // A stop already in flight is the honest answer to a second stop.

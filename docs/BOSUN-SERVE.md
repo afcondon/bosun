@@ -178,6 +178,36 @@ front of it, but a brokered daemon has clients talking to it directly, and
 restarting Bosun must not stop the music. The next ensure probes before it
 spawns, so it finds the survivor and reports `started: false`.
 
+**A broker that binds nothing is still the plan's answer for its port.** The
+registry row claims `:3028` whether or not the router ends up holding it, so a
+`Broker` carries `declaredPort` (what the row asked for) separately from
+`publicPort` (what the router binds). Drift accounting keys off the first.
+Keyed off the second — as it was until 2026-08-23 — every broker Bosun could
+*not* move off its port, which is the normal case for the daemons broker mode
+exists for, reported as `Unaccounted`: the one drift kind a reload cannot fix,
+whose remedy is "go and fix the row". The healthiest services in the deployment
+were the ones being flagged. The same rule applies to a brokered **refusal**: it
+carries the port it claimed, so it reads as a refusal with a reason in
+`rejected` rather than as an unexplained hole.
+
+**Adopt, don't duplicate.** Before spawning a proxy backend the router probes
+the internal port, and relays to whatever is already listening rather than
+starting a second copy — the same move `bindRoute` makes on `EADDRINUSE` for the
+*public* port, one layer down. Broker mode is what made this necessary:
+unbinding a 307 deliberately does not stop the daemon behind it, and
+`reapOrphanBackends` runs only at router startup, so flipping a service from
+`broker` to `proxy` left the daemon we started still holding the internal port
+with nothing in between to notice. The first request spawned a second copy onto
+an occupied port — two itajaras on one Audio4c, and `/state` naming the pid of
+the loser (2026-08-23). An adopted backend reports `up: true` with `pid: null`
+and `adoptedBackend: true`, is never idle-stopped (it isn't ours to signal), and
+refuses `/control/stop` with a 409 saying so. The claim is re-probed on the same
+clock as public-port adoption, so a backend that dies is respawned normally on
+the next request rather than proxied to forever. Startup keeps the opposite
+policy on purpose: a fresh router still reaps survivors of a previous one,
+because it should be running fresh code. Adoption is for the mid-life case,
+where the alternative is not a stale backend but two live ones.
+
 **Readiness** is `Bosun.Health.Probe`, chosen by the plan and made by the shim:
 a listening address ⇒ `TcpConnect` (the same connect the proxy path waits on),
 a unix socket ⇒ `SocketReady` (the socket file exists, which is what

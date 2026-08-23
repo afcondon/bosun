@@ -177,9 +177,18 @@ type ServeHint = { serviceId :: String, mediation :: Mediation, scheme :: Maybe 
 -- | cannot, the service simply keeps its own address and `/where` is the only
 -- | way in. Both are legitimate; the difference is only whether Bosun can also
 -- | catch a caller who dialled the old address.
+-- |
+-- | `declaredPort` is the port the REGISTRY ROW named, whether or not we ended
+-- | up holding it. The two are equal for a broker we could move off its port
+-- | and `Nothing`/`Just` respectively for one we could not — and keeping them
+-- | apart is what stops a healthy portless broker being reported as
+-- | `Unaccounted` drift (2026-08-23). `publicPort` answers "what does the
+-- | router bind"; `declaredPort` answers "which registry claim is this the
+-- | verdict on", and only the second can be correlated with the row.
 type Broker =
   { serviceId     :: String
   , publicPort    :: Maybe Int
+  , declaredPort  :: Maybe Int
   , cwd           :: String
   , launchCommand :: String
   -- where the service actually is, once running — the payload of `/where`
@@ -317,6 +326,15 @@ admit hintFor s = case mediationOf of
   scheme = hint >>= _.scheme
   reject r = Reject { serviceId: sid, publicPort: Nothing, reason: r }
   rejectAt port r = Reject { serviceId: sid, publicPort: Just port, reason: r }
+  -- The port the ROW claimed, if it claimed one — known before we decide
+  -- whether we can honour it, and therefore available to a rejection. A refusal
+  -- that drops the port cannot be correlated with the row that caused it, and
+  -- reappears one layer up as `Unaccounted` drift telling the operator to fix a
+  -- row that is already reported, with a reason, in `rejected`.
+  declared = case classify s.reachability of
+    HostPort p -> Just (unPort p)
+    _ -> Nothing
+  refuse r = Reject { serviceId: sid, publicPort: declared, reason: r }
 
   admitProxy = case classify s.reachability of
     HostPort p ->
@@ -349,11 +367,11 @@ admit hintFor s = case mediationOf of
       HostPort p ->
         let public = unPort p
         in Redir { serviceId: sid, publicPort: public, host, target: redirectTarget host public }
-      _ -> reject NoHostPort
+      _ -> refuse NoHostPort
     Right _ -> case s.launch.executor of
       Process pr -> brokerFor pr
-      Unmanaged _ -> reject (Sdi NoAbsoluteCwd)
-      _ -> reject NotAProcess
+      Unmanaged _ -> refuse (Sdi NoAbsoluteCwd)
+      _ -> refuse NotAProcess
 
   isUdp = scheme == Just "udp"
 
@@ -366,6 +384,7 @@ admit hintFor s = case mediationOf of
       Broke
         { serviceId: sid
         , publicPort: Nothing
+        , declaredPort: Just (unPort p)
         , cwd: unAbsPath pr.cwd
         , launchCommand: pr.command
         , at: portLocator scheme (unPort p)
@@ -382,6 +401,7 @@ admit hintFor s = case mediationOf of
           in Broke
               { serviceId: sid
               , publicPort: Just public
+              , declaredPort: Just public
               , cwd: unAbsPath pr.cwd
               , launchCommand: rewritePort public actual pr.command
               , at: portLocator scheme actual
@@ -397,6 +417,7 @@ admit hintFor s = case mediationOf of
       in Broke
           { serviceId: sid
           , publicPort: Nothing
+          , declaredPort: Just public
           , cwd: unAbsPath pr.cwd
           , launchCommand: pr.command
           , at: portLocator scheme public
@@ -409,6 +430,7 @@ admit hintFor s = case mediationOf of
       Broke
         { serviceId: sid
         , publicPort: Nothing
+        , declaredPort: Nothing
         , cwd: unAbsPath pr.cwd
         , launchCommand: pr.command
         , at: { transport: "unix", host: Nothing, port: Nothing, path: Just (unAbsPath path), url: Nothing }
@@ -421,6 +443,7 @@ admit hintFor s = case mediationOf of
       Broke
         { serviceId: sid
         , publicPort: Nothing
+        , declaredPort: Nothing
         , cwd: unAbsPath pr.cwd
         , launchCommand: pr.command
         , at: { transport: "none", host: Nothing, port: Nothing, path: Nothing, url: Nothing }
@@ -628,13 +651,20 @@ planDrift claims held fresh =
 -- included. `Map.union` is left-biased, so a binder wins over a rejection on
 -- the same port — which is exactly the `PortClaimed` case (one service binds,
 -- the loser is refused on a port that IS served).
+--
+-- Brokers enter by `declaredPort`, NOT `publicPort`: this map answers "does the
+-- plan account for the registry's claim on :N", and a broker the router could
+-- not move off its port accounts for it perfectly well while binding nothing.
+-- Keyed by `publicPort` instead, every such broker looked like a claim no plan
+-- had a verdict on — `Unaccounted`, the drift kind whose remedy is "fix the
+-- row" — for the healthiest service in the deployment (2026-08-23).
 verdictMap :: ServePlan -> Map Int { serviceId :: String, sig :: String }
 verdictMap plan = Map.union (binders plan) (refusals plan)
   where
   binders p = Map.fromFoldable
     ( map (\r -> Tuple r.publicPort { serviceId: r.serviceId, sig: routeSig r }) p.routes
         <> A.mapMaybe
-             (\b -> map (\port -> Tuple port { serviceId: b.serviceId, sig: brokerSig b }) b.publicPort)
+             (\b -> map (\port -> Tuple port { serviceId: b.serviceId, sig: brokerSig b }) b.declaredPort)
              p.brokered
         <> map (\d -> Tuple d.publicPort { serviceId: d.serviceId, sig: redirectSig d }) p.redirects
     )
