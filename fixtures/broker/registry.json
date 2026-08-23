@@ -1,0 +1,63 @@
+{
+  "_comment": "SAFE fixture for BROKER mode (BOSUN-SERVE.md §3c, docs/ENSURE-AND-LOCATE.md). Every row is a harmless `python3 -m http.server` or a `nc -lU` unix socket under /tmp — no real-rig service is touched. Ports 8180-8189 are reserved for this fixture. Stand a scratch router beside the live one with BOSUN_SERVE_STATUS_PORT=3996 so the two do not fight over :3997. Not golden-pinned — edit freely.",
+  "servers": [
+    {
+      "id": 1,
+      "role": "worker",
+      "projectName": "loopdemo",
+      "projectSlug": "loopdemo",
+      "port": 8180,
+      "host": "mbp",
+      "serveMode": "broker",
+      "startCommand": "cd /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/serve/site && python3 -m http.server 8180",
+      "url": "ws://127.0.0.1:8180",
+      "description": "BROKER, rewritable. The itajara shape: the router moves it to :28180, holds :8180 to answer 307, and /where hands back ws://127.0.0.1:28180. Bosun never carries a byte."
+    },
+    {
+      "id": 2,
+      "role": "api",
+      "projectName": "rigdemo",
+      "projectSlug": "rigdemo",
+      "port": 8181,
+      "host": "mbp",
+      "serveMode": "broker",
+      "startCommand": "cd /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/serve/site && python3 -m http.server $((8000+181))",
+      "url": "http://127.0.0.1:8181",
+      "description": "BROKER, NOT rewritable — the literal port is not in the command. A refusal under proxy rules; here the service simply keeps :8181, the router binds nothing, and /where is the only door."
+    },
+    {
+      "id": 3,
+      "role": "worker",
+      "projectName": "sockdemo",
+      "projectSlug": "sockdemo",
+      "host": "mbp",
+      "serveMode": "broker",
+      "startCommand": "cd /tmp && rm -f /tmp/bosun-broker-demo.sock && nc -lU /tmp/bosun-broker-demo.sock",
+      "url": "unix:///tmp/bosun-broker-demo.sock",
+      "description": "BROKER over a UNIX SOCKET — the es9-daemon / fh2-daemon shape. No port at all, so the proxy model cannot see this row (NoHostPort); broker ensures it and reports the socket path, readiness by the socket file existing."
+    },
+    {
+      "id": 4,
+      "role": "worker",
+      "projectName": "udpdemo",
+      "projectSlug": "udpdemo",
+      "port": 8182,
+      "host": "mbp",
+      "serveMode": "broker",
+      "startCommand": "cd /tmp && nc -u -l 8182",
+      "url": "udp://127.0.0.1:8182",
+      "description": "BROKER over UDP — the link-spike shape. Located but deliberately NOT probed: a TCP connect against a datagram socket proves nothing, so `probe` reads `none` (nothing was checked) rather than a fabricated verdict."
+    },
+    {
+      "id": 5,
+      "role": "frontend",
+      "projectName": "plaindemo",
+      "projectSlug": "plaindemo",
+      "port": 8183,
+      "host": "mbp",
+      "startCommand": "cd /Users/afc/work/afc-work/ShapedSteer/bosun/fixtures/serve/site && python3 -m http.server 8183",
+      "url": "http://127.0.0.1:8183",
+      "description": "NO serveMode — the control. Proxied exactly as every row was before broker mode existed: the router holds :8183 and relays to :28183."
+    }
+  ]
+}

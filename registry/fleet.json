@@ -768,7 +768,8 @@
       "id": 186,
       "projectSlug": "alpha-victor-echo-kilo",
       "projectName": "Producing With Your Feet",
-      "projectId": 144
+      "projectId": 144,
+      "serveMode": "broker"
     }
   ],
   "count": 53,

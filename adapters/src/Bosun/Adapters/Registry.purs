@@ -7,20 +7,22 @@
 -- | JSON file/endpoint happens in the CLI, keeping the no-Aff seam. Decoding is
 -- | lenient — the registry shape is known and stable; a row missing its `role`
 -- | is skipped rather than failing the whole ingest.
-module Bosun.Adapters.Registry (ingestRegistry, RegistryClaim, registryClaims) where
+module Bosun.Adapters.Registry (ingestRegistry, RegistryClaim, registryClaims, registryHints) where
 
 import Prelude
 
 import Bosun.Adapters.StartCommand (parseStartCommand)
-import Bosun.Atoms (mkHost, mkPort, mkProjectSlug)
-import Bosun.Reachability (BindScope(..), hostPort, listening, noNetwork)
+import Bosun.Atoms (AbsPath, mkAbsPath, mkHost, mkPort, mkProjectSlug)
+import Bosun.Reachability (BindScope(..), hostPort, listening, noNetwork, unixSocket)
 import Bosun.Health (BaseRestart(..), Probe(..))
+import Bosun.Serve (ServeHint, readMediation)
 import Bosun.Service (ServiceInstance, Source(..), mkRole)
 import Data.Argonaut.Core (Json, toArray, toNumber, toObject, toString)
 import Data.Array as A
 import Data.Int (round)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
+import Data.String as String
 import Foreign.Object (Object)
 import Foreign.Object as FO
 
@@ -42,10 +44,16 @@ decodeRow j = do
     -- interface (`HostIface host`), not all interfaces. Falls back to a bare
     -- host-published port when the row has no host.
     reach = case portM >>= mkPort of
-      Nothing -> noNetwork
       Just p -> case hostM of
         Just h -> listening (HostIface h) p
         Nothing -> hostPort p
+      -- A row with no port can still SAY where it is. `unix:///path/to.sock` is
+      -- how the socket daemons are addressed (es9-daemon, the fh2 daemon), and
+      -- without reading it they ingest as `noNetwork` — startable, but with no
+      -- address anyone could be told, which is the one thing a broker exists to
+      -- provide. `Reachability` has had `Socket` since ADDRESS-TYPE landed; this
+      -- is the registry finally able to reach it.
+      Nothing -> fromMaybe noNetwork (map unixSocket (socketPathOf =<< str o "url"))
   pure
     { source: FromRegistry
     , project: map mkProjectSlug (str o "projectSlug")
@@ -92,6 +100,48 @@ registryClaims json = fromMaybe [] do
     -- the canonical id reconcile will file this row under (see Reconcile);
     -- a slug-less row is keyed by its bare role, as there.
     pure { serviceId: maybe role (\slug -> slug <> ":" <> role) (str o "projectSlug"), publicPort: port }
+
+-- | The router-facing hints one registry ROW carries: whether Bosun should be in
+-- | this service's data path at all (`serveMode`), and the scheme of its `url`.
+-- |
+-- | Read from the RAW rows, beside `registryClaims` and for the same reason: a
+-- | row's `serveMode` is an instruction to the ROUTER, not a property of the
+-- | deployed service, and threading it through `ServiceInstance` → reconcile →
+-- | `LooseService` would put an operational preference into the deployment IR
+-- | (and would have to answer "what does it mean when the compose facet and the
+-- | registry facet disagree", a question nobody is asking).
+-- |
+-- | `serveMode` is absent from every row written before broker mode existed, and
+-- | `readMediation` reads absence as `Proxy` — so re-reading today's fleet.json
+-- | produces exactly today's plan.
+registryHints :: Json -> Array ServeHint
+registryHints json = fromMaybe [] do
+  obj <- toObject json
+  servers <- toArray =<< FO.lookup "servers" obj
+  pure (A.mapMaybe hint servers)
+  where
+  hint j = do
+    o <- toObject j
+    role <- str o "role"
+    pure
+      { serviceId: maybe role (\slug -> slug <> ":" <> role) (str o "projectSlug")
+      , mediation: readMediation (fromMaybe "" (str o "serveMode"))
+      , scheme: str o "url" >>= schemeOf
+      }
+
+-- The scheme of a URL, as written: everything before "://". Not a URL parse —
+-- the registry's `url` is a hand-written field and the only part of it we can
+-- trust is the part before the punctuation that defines it.
+schemeOf :: String -> Maybe String
+schemeOf url = case String.indexOf (String.Pattern "://") url of
+  Just i | i > 0 -> Just (String.take i url)
+  _ -> Nothing
+
+-- The socket path a `unix://` url names. Absolute by construction (`mkAbsPath`
+-- refuses anything else), which is what makes it a usable `Socket` address
+-- rather than a string somebody has to resolve.
+socketPathOf :: String -> Maybe AbsPath
+socketPathOf url = String.stripPrefix (String.Pattern "unix://") url >>= mkAbsPath
 
 str :: Object Json -> String -> Maybe String
 str o k = FO.lookup k o >>= toString

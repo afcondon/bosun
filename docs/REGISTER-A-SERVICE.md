@@ -89,9 +89,19 @@ don't send them.
      process in *its own* cwd and serves the wrong directory;
    - the **literal port number** — `bosun serve` admission rejects a row whose
      `startCommand` doesn't contain its port (`PortNotInStartCommand`).
-4. **Test the command** in a subshell and confirm the port serves, *then* kill
+4. **Decide whether Bosun belongs in this service's data path.** For an ordinary
+   dev server it does — leave `serveMode` out and the router proxies it, exactly
+   as every row has always been served. Add **`"serveMode": "broker"`** when the
+   service (a) owns a hardware resource, (b) is long-lived and started
+   deliberately rather than per-request, or (c) carries timing-critical traffic;
+   the router then starts it and says where it is (`GET /where`) instead of
+   relaying it. A unix-socket or UDP daemon **has** to be `broker` — it cannot
+   be proxied at all, and without this it is not routable in any form. See
+   `ENSURE-AND-LOCATE.md`; the field defaults to `proxy`, so omitting it changes
+   nothing.
+5. **Test the command** in a subshell and confirm the port serves, *then* kill
    it so the router can bind the port.
-5. **Register it:**
+6. **Register it:**
    ```sh
    curl -s -X POST http://localhost:3022/api/projects/<id>/servers \
      -H 'Content-Type: application/json' \
@@ -117,11 +127,18 @@ don't send them.
    | `it will NOT route this row: <reason>` | the row itself is unroutable — usually the literal port missing from `startCommand` (step 3). A reload cannot help; fix the row and re-register. |
    | `the row declares no port` | documentation-only row; nothing to bind. Expected. |
 
-6. **Verify:**
+7. **Verify:**
    ```sh
    curl -s :3997/state | jq '.routes[] | select(.publicPort==<port>)'
    curl -s :3997/state | jq '{stale, drift}'     # must be {stale:false, drift:[]}
    curl -sI http://localhost:<port>/             # lazy-spawns the backend, expect 200
+   ```
+   For a **brokered** row the verification is different — it is in
+   `.brokered`, not `.routes`, and the public port answers `307` rather than
+   the service:
+   ```sh
+   curl -s :3997/state | jq '.brokered[] | select(.serviceId=="<slug>:<role>")'
+   curl -s :3997/where/<slug>:<role> | jq       # starts it, then says where it is
    ```
 
 ## Worked example — a static site (liquid-purescript docs, 2026-07-05)
