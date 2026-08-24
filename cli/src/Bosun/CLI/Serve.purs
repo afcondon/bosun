@@ -29,7 +29,7 @@ import Bosun.Reconcile (reconcile)
 import Bosun.Report (renderDrift, renderDriftKind, renderReject, renderServePlan)
 import Bosun.Health (Probe(..))
 import Bosun.Protocol (Locator, whereResultCodec)
-import Bosun.Serve (Broker, DriftKind(..), PortDrift, Redirect, Route, ServePlan, brokerDoor, brokerStopVerdict, doorTag, planDrift, serveDiff, servePlanWith, stopVerdictTag)
+import Bosun.Serve (Broker, DriftKind(..), PortDrift, Redirect, Route, ServePlan, brokerDoor, brokerStopVerdict, controlPort, doorTag, planDrift, serveDiff, servePlanWith, stopVerdictTag)
 import Bosun.Version (version)
 import Bosun.Atoms (unAbsPath, unPort)
 import Data.Argonaut.Core (Json)
@@ -177,9 +177,11 @@ foreign import serveImpl :: EffectFn1 ServeConfig Unit
 
 -- | The read-only JSON status endpoint, off the public-port range and clear of
 -- | SDI's own :3998. A constant, not an option: it is the address the Chair,
--- | chair-server and `bosun reload` all know without being told.
+-- | chair-server and `bosun reload` all know without being told. Defined in the
+-- | core (`Bosun.Serve.controlPort`) because a supervise group has to name it
+-- | too; kept exported here because this is where every caller already looks.
 statusPort :: Int
-statusPort = 3997
+statusPort = controlPort
 
 -- | `statusPort`, unless `BOSUN_SERVE_STATUS_PORT` says otherwise. The override
 -- | exists so a SCRATCH router can be stood up beside the live one — a router

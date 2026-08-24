@@ -49,6 +49,7 @@ module Bosun.Serve
   , internalOffset
   , internalPort
   , defaultIdleMs
+  , controlPort
   ) where
 
 import Prelude
@@ -85,6 +86,21 @@ internalOffset = 20000
 
 internalPort :: Int -> Int
 internalPort public = public + internalOffset
+
+-- | The router's control surface — `/state`, `/where`, `/control/*`. A
+-- | constant, not an option: it is the address the Chair, chair-server and
+-- | `bosun reload` all know without being told.
+-- |
+-- | It lives in the CORE rather than beside the shim that binds it because a
+-- | `supervise` or `docker` group needs to NAME it when it refuses a request
+-- | addressed the router's way (`Bosun.Report.renderAddressMiss`), and reaching
+-- | `Bosun.CLI.Serve` for a number would drag the resident proxy shim and its
+-- | foreign imports into every group daemon's module graph — including the
+-- | conformance mains the Go column transpiles. A second literal `3997` in the
+-- | message would be worse: the one thing that must not drift is the address an
+-- | operator is sent to.
+controlPort :: Int
+controlPort = 3997
 
 -- | SDI's 10-minute idle timeout (`SDI_IDLE_TIMEOUT_MS`), carried over.
 defaultIdleMs :: Int

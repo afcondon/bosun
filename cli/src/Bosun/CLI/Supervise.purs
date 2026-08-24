@@ -25,16 +25,17 @@ import Prelude
 import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.Adapters.Registry (ingestRegistry)
 import Bosun.Apply (Command(..), applyScript, downScript)
-import Bosun.Atoms (ServiceId, mkServiceId, unServiceId)
+import Bosun.Atoms (ServiceId, unServiceId)
 import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeSupSnapshot)
 import Bosun.CLI.Resident (Resident, accepted, nowMs, refused, runResident)
 import Bosun.Plan (Change(..), Plan, Status(..), plan, planSteps)
 import Bosun.Reconcile (buildAliases, reconcile)
-import Bosun.Report (renderCommand, renderReport)
+import Bosun.Report (renderAddressMiss, renderCommand, renderReport)
+import Bosun.Serve (controlPort)
 import Bosun.Service (Deployment, ValidatedDeployment, unServiceRef, unValidatedDeployment)
-import Bosun.Supervisor (Launch, SuperviseDiff, SupConfig, SupState, SvcState, defaultConfig, emptySupState, forgetLaunches, recordLaunches, refine, superviseDiff)
+import Bosun.Supervisor (Launch, SuperviseDiff, SupConfig, SupState, SvcState, addressService, defaultConfig, emptySupState, forgetLaunches, recordLaunches, refine, superviseDiff)
 import Bosun.Target (TargetMap)
 import Bosun.Validate (validate)
 import Bosun.Version (version)
@@ -217,19 +218,25 @@ superviseResident targets mPort startHeld reloadSource dep0 vd0 = do
         dep <- Ref.read depRef
         obs <- observeSupSnapshot dep
         prev <- Ref.read supRef
-        let
-          refined = refine cfg now prev obs
-          sid = mkServiceId arg
+        let refined = refine cfg now prev obs
         Ref.write refined.state supRef
         -- A name that is not in the group cannot be restarted, and saying
         -- "restart: <typo>" as though it had been is how a control surface
-        -- teaches you to trust it wrongly. (`arg` is "" when the query
-        -- parameter is missing, which lands here too.)
-        if not (Map.member sid refined.snapshot) then
-          refused ("restart: no service `" <> arg <> "` in this group")
-        else do
-          enactPlan ("restart " <> arg) now (Map.insert sid Failed refined.snapshot)
-          accepted ("restart: " <> arg)
+        -- teaches you to trust it wrongly.
+        --
+        -- WHICH mistake it was is the part that used to be missing. `serve`
+        -- keys by PORT and a group keys by ID, so the natural first move on a
+        -- misbehaving daemon — `?service=3028` — answered "no service `3028`
+        -- in this group", which is true and reads as "that daemon is down"
+        -- about a daemon that is up and lazy-spawned by the router
+        -- (FINDINGS-supervision-blind-spots.md §4). The router's half of that
+        -- was fixed in bd28adc; `addressService` is this half, and it splits
+        -- out the empty argument and the near-miss spellings while it is there.
+        case addressService (Set.toUnfoldable (Map.keys refined.snapshot)) arg of
+          Left miss -> refused (renderAddressMiss { verb: "restart", asked: arg, routerPort: controlPort } miss)
+          Right sid -> do
+            enactPlan ("restart " <> arg) now (Map.insert sid Failed refined.snapshot)
+            accepted ("restart: " <> arg)
       -- HOT-RELOAD (note #397): re-read the spec, diff it against what is
       -- running, and stop ONLY the services whose launch spec changed (or were
       -- removed) — the unchanged ones keep running with their launch memory, so

@@ -227,6 +227,36 @@ keys by canonical `serviceId` (`projectSlug:role`), graph nodes key by
 | `POST /control/restart?service=<id>` | force ONE service to restart (mark it `Failed`; the planner does the rest, incl. `binds-to`/`part-of` co-restart) |
 | `POST /control/reload` | **NEW** — re-read compose+registry, diff, restart ONLY what changed |
 
+**Two addressing schemes, and each refusal now names the other (2026-08-24).**
+`serve` keys by **port**; a group keys by **service id**. Ask the wrong one and
+the honest answer used to be `no service `X` in this group` — which reads as
+"that daemon is not down" about a daemon that is up and lazy-spawned by the
+router, and sends an operator looking for a registry problem
+(FINDINGS-supervision-blind-spots.md §4). `Bosun.Supervisor.addressService`
+splits that one sentence five ways, and `supervise` and `docker` share it:
+
+```
+POST :8789/control/restart?service=8790
+  -> restart: `8790` is a port, and a supervise group has no port to match it
+     against — it addresses services by id, and GET /state lists the ids it
+     holds. Ports are the ROUTER's key: if :8790 is a lazy-spawned service it is
+     in no group at all, and POST :3997/control/stop?port=8790 is the command
+     you want.
+
+POST :8789/control/restart?service=itajara
+  -> restart: no service `itajara` in this group, under that spelling or any
+     other. GET /state lists the ids it holds. A service can also be absent
+     because it is LAZY-SPAWNED rather than supervised — those belong to the
+     router on :3997 and are in no group: try GET :3997/state, then
+     POST :3997/control/stop?service=itajara.
+```
+
+Note it points at the router's `stop`, not `restart`: the router has no restart
+verb, and sending an operator to one that would 404 would undo the sentence. The
+other three refusals — no `?service=` at all, one candidate id under a different
+spelling, several candidates under one slug — are in the findings doc's table. A
+near miss is named, never acted on.
+
 **Hot-reload (`/control/reload`).** Before this, the compose was captured once at
 supervisor start; changing any service spec (env, command, cwd, port) meant
 killing and relaunching the supervisor *process*. Now `reload` re-reads both

@@ -35,8 +35,10 @@ import Bosun.CLI.Resident (Resident, accepted, refused, runResident)
 import Bosun.Executor (ExecutorMechanism(..), mechanism)
 import Bosun.Plan (Status(..), plan)
 import Bosun.Reconcile (buildAliases, reconcile)
-import Bosun.Report (renderCommand, renderReport)
+import Bosun.Report (renderAddressMiss, renderCommand, renderReport)
+import Bosun.Serve (controlPort)
 import Bosun.Service (ValidatedDeployment, unValidatedDeployment)
+import Bosun.Supervisor (addressService)
 import Bosun.Target (ExecLoc(..), Target, TargetMap, resolveTarget, unSshDest)
 import Bosun.Validate (validate)
 import Bosun.Version (version)
@@ -46,6 +48,7 @@ import Data.Foldable (foldMap, intercalate, traverse_)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Set as Set
 import Data.Tuple (Tuple(..))
 import Data.Validation.Semigroup (toEither)
 import Effect (Effect)
@@ -155,13 +158,18 @@ dockerResident targets mPort vd = do
             accepted "down: teardown (docker compose stop)"
           "restart" -> do
             snap <- Ref.read snapRef
-            -- as in supervise: a name this group does not contain is a refusal,
-            -- not a restart that happens to have done nothing
-            if not (Map.member (mkServiceId arg) snap) then
-              refused ("restart: no service `" <> arg <> "` in this group")
-            else do
-              restartOne arg
-              accepted ("restart: " <> arg)
+            -- as in supervise, and through the same pure `addressService`: a
+            -- name this group does not contain is a refusal, not a restart that
+            -- happens to have done nothing — and WHICH mistake it was decides
+            -- whether the operator retypes an id or goes to the router, which
+            -- is the whole of FINDINGS-supervision-blind-spots.md §4. A
+            -- container group is if anything likelier to be asked by port,
+            -- since its rows carry published ports in compose.
+            case addressService (Set.toUnfoldable (Map.keys snap)) arg of
+              Left miss -> refused (renderAddressMiss { verb: "restart", asked: arg, routerPort: controlPort } miss)
+              Right _ -> do
+                restartOne arg
+                accepted ("restart: " <> arg)
           _ -> refused ("unknown control verb: " <> verb)
       log "docker: initial observe (read-only)…"
       observe

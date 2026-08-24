@@ -46,19 +46,27 @@ module Bosun.Supervisor
   , SuperviseDiff
   , superviseDiff
   , forgetLaunches
+  , AddressMiss(..)
+  , addressService
   ) where
 
 import Prelude
 
-import Bosun.Atoms (ServiceId)
+import Bosun.Atoms (ServiceId, unServiceId)
 import Bosun.Plan (Snapshot, Status(..))
 import Bosun.Service (Service)
 import Data.Array as A
+import Data.Either (Either(..))
 import Data.Foldable (foldr)
+import Data.Generic.Rep (class Generic)
+import Data.Int as Int
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, isJust)
 import Data.Set as Set
+import Data.Show.Generic (genericShow)
+import Data.String (Pattern(..))
+import Data.String as String
 import Data.Tuple (Tuple(..))
 
 -- | Milliseconds since some fixed epoch — supplied by the caller's clock at the
@@ -306,3 +314,79 @@ superviseDiff old new =
 -- | double-launch guard that `superviseDiff.unchanged` relies on.
 forgetLaunches :: Array ServiceId -> SupState -> SupState
 forgetLaunches ids st = foldr Map.delete st ids
+
+-- ── addressing a service on the control surface ──────────────────────────────
+
+-- | Why a `?service=<name>` on a group's control surface named nothing the
+-- | group holds.
+-- |
+-- | The trap this exists for (FINDINGS-supervision-blind-spots.md §4): `bosun
+-- | serve` addresses routes by PORT and `bosun supervise` addresses services by
+-- | ID, and asking the wrong one answered `no service `X` in this group` — true,
+-- | and it reads as "that daemon is not running" about a daemon that is running
+-- | fine, because it is lazy-spawned by the router and therefore in no group at
+-- | all. The operator goes looking for a registry problem. The router's half of
+-- | this was fixed in bd28adc, where its 404 learned to distinguish nothing-at
+-- | -all from brokered from a 421 to another host; this is the other half.
+-- |
+-- | Five findings were sharing one sentence, and two of them were already known
+-- | to be in there: `LooksLikePort` is the trap itself, and `Unnamed` is the
+-- | missing query parameter the old code commented on as landing in the same
+-- | message. `NearMiss` and `Ambiguous` are the ones nobody had named — ids here
+-- | are usually `slug:role`, so asking for `itajara` is overwhelmingly a
+-- | spelling rather than an absence, and whether the group can tell WHICH
+-- | service was meant is a different answer again.
+-- |
+-- | Note what is deliberately NOT a case: "the router has this one". A group
+-- | cannot know that without asking the router, and putting a synchronous HTTP
+-- | call to another daemon on a control verb's refusal path buys a maybe-answer
+-- | at the cost of a new failure mode (the router being down would make this
+-- | refusal slow, or fail). The remedy is structural instead — say that
+-- | lazy-spawned services live in no group and name where they do live, which
+-- | is true whether or not the router happens to hold this one.
+data AddressMiss
+  = Unnamed                     -- ^ no `?service=` at all
+  | LooksLikePort Int           -- ^ a port: the router's key, never a group's
+  | NearMiss ServiceId          -- ^ exactly one id here could be what was meant
+  | Ambiguous (Array ServiceId) -- ^ several could, and guessing is not this surface's job
+  | NotInGroup                  -- ^ nothing here answers to it under any spelling
+derive instance Eq AddressMiss
+derive instance Generic AddressMiss _
+instance Show AddressMiss where show = genericShow
+
+-- | Read a control verb's `?service=` argument against the ids a group actually
+-- | holds. `Right` ⇒ act on it; `Left` ⇒ refuse, and the constructor says which
+-- | mistake to explain.
+-- |
+-- | A `NearMiss` is REPORTED, never acted on. Restarting `itajara:worker`
+-- | because someone typed `itajara` would be a control surface guessing which
+-- | process to signal, and the whole point of these refusals is that a surface
+-- | which acts on something other than what it was asked teaches you to distrust
+-- | it. Naming the id costs the operator one retry and no ambiguity.
+addressService :: Array ServiceId -> String -> Either AddressMiss ServiceId
+addressService ids asked = case A.find (\sid -> unServiceId sid == asked) ids of
+  Just sid -> Right sid
+  Nothing -> Left miss
+  where
+  miss
+    | asked == "" = Unnamed
+    -- Ports before spellings: a port-shaped string can never BE a service id, so
+    -- no amount of near-miss matching would help, and the answer wanted is about
+    -- the addressing scheme rather than about how the name was typed.
+    | otherwise = case Int.fromString asked of
+        Just p -> LooksLikePort p
+        Nothing -> case near of
+          [ sid ] -> NearMiss sid
+          [] -> NotInGroup
+          several -> Ambiguous several
+
+  -- Case-insensitive, and matching either way across the `slug:role` colon: the
+  -- two spellings an operator actually produces are the bare slug of a
+  -- `slug:role` id, and a `slug:role` for a group whose ids are bare (a
+  -- compose-only group keys by the compose service name).
+  key = String.toLower asked
+  slugOf = String.toLower <<< fromMaybe "" <<< A.head <<< String.split (Pattern ":")
+  near = A.filter candidate ids
+  candidate sid =
+    let full = String.toLower (unServiceId sid)
+    in full == key || slugOf (unServiceId sid) == key || full == slugOf asked
