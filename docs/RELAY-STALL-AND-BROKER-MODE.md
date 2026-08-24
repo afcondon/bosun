@@ -439,16 +439,39 @@ running?") instead of DeepStar doing its own process management.
 
 ## 7. Found and not fixed
 
-Four, each actionable. §7.4 was fixed on 2026-08-24 and is kept
-here with its remedy, because the remedy is the interesting part.
+Four, each actionable. §7.1 and §7.4 were fixed on 2026-08-24 and are kept
+here with their remedies, because the remedy is the interesting part.
 
-1. **Bosun's Chair does not render the brokered bucket.** `/state` gained a
-   `brokered` array; the Chair's `StateView` (`chair/src/Chair/State.purs:86`)
-   does not read it. Safe — argonaut's record decoder ignores unknown keys, and
-   that file documents relying on it — but brokered services appear **nowhere**
-   in the Chair, which is the same "registered and invisible" class the drift
-   work exists to close. Wants a `BROKERED` section beside `ADMITTED`, showing
-   `at`, `probe`, whether the router started it, and a `/where` button.
+1. ~~**Bosun's Chair does not render the brokered bucket.**~~
+   **FIXED 2026-08-24.** `/state` gained a `brokered` array and the Chair's
+   `StateView` did not read it, so brokered services appeared **nowhere** — the
+   same "registered and invisible" class the drift work exists to close, one
+   bucket along.
+
+   There is now a `BROKERED (no relay)` section directly under `ADMITTED` —
+   under, because these ARE served here, they are just not relayed, and filing
+   them below `REJECTED` would put a working service among the refusals. Columns
+   are `port · service · at · 307 door · probe · pid`, and the brokered stat
+   counts `N / M ours` rather than `up`, because for half of these the router
+   holds a pid or a probe or (link-spike over multicast) neither, and the number
+   it can honestly report is how many it started.
+
+   The button is `spawn`/`stop` keyed by `?service=<id>`, not the `/where`
+   button this entry originally asked for: `/where` is a GET that also spawns,
+   and the two verbs bd28adc added are what an operator actually reaches for.
+   `stop` is offered ONLY when the router holds the pid — `routeRow`'s rule,
+   since serve answers 409 for a stop with no child and a surface that offers
+   the button which earns the refusal teaches you to ignore refusals.
+
+   `probe: "none"` renders as **not checked**, never as down. `door: none`
+   renders as **no port** in grey, not as a fault. A router predating the `door`
+   field decodes to `Nothing` and draws `—`, which is a different claim from
+   "no door" and is kept different (`Chair.Main.Door.DoorUnstated`).
+
+   In the graph overlay a brokered service is `LiveUp` only when the router
+   holds its pid, and `LiveUnknown` — no dot — otherwise. Not `LiveDown`: a
+   daemon started by hand, or one whose probe is `none`, is running or not and
+   no evidence in `/state` can say which.
 2. **`Bosun.CLI.Observe.effectiveProbe` leaves `UnixSocket` as `NoProbe`**
    (`cli/src/Bosun/CLI/Observe.purs:103`), even though `observe` implements
    `SocketReady` and `probeSocketImpl` exists. So `bosun observe` and
