@@ -171,7 +171,9 @@ the rich `fixtures/macmini` YAML compose is byte-identical node-vs-Go** — so t
 whole ingest→decode→plan→script path is conformance-proven across columns, not
 just the hardcoded Detect fixture. Reproduce: `scripts/go-apply-cli.sh`. The
 known key-order caveat (Go map iteration vs JS insertion order) is documented in
-`foreign_object_foreign.go`; it does not bite boot-ordered apply scripts.
+`backend-go/foreign/Foreign.Object.go` (it lived in Bosun's `conformance/go/`
+until 2026-08-24, when the registry-package FFI moved upstream where it
+belongs); it does not bite boot-ordered apply scripts.
 
 Remaining for Stage 1: delta #2 (macmini live-fire) and delta #3 (Funnel front)
 — the genuinely-new acts; everything local is now proven, **on both the node and
