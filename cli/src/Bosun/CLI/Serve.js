@@ -500,6 +500,16 @@ const sendJSON = (res, code, obj) => {
   res.end(JSON.stringify(obj, null, 2) + "\n");
 };
 
+// ── THIS SURFACE IS TWO-COLUMN. Adding a verb here is half the change. ──────
+//
+// Gnomon (PureScript→Go) is the PRIMARY runtime; this file is the development
+// shell's half of the same shim. Every path, every `?key=` and every
+// `x-bosun-*` header below must also exist in
+// conformance/go/bosun_cli_serve_foreign.go, and `scripts/control-parity.sh`
+// (run by `npm test`) goes red when one column has something the other lacks.
+// Broker mode was added here alone and nothing could tell for a week — hence
+// the check, and hence this note where the next verb gets written.
+//
 // GET /state · GET /where/:service · POST /control/reload · POST
 // /control/spawn?port= · POST /control/stop?port=. The control verbs map to
 // machinery serve already owns: reload→applyReload (serveDiff),

@@ -3,11 +3,13 @@
 # observer. Transpiles the I/O-free Docker harness (Bosun.Conformance.DockerMain)
 # via backend-go, builds a NATIVE Go binary, and runs it as a resident daemon:
 # it observes the live MacMini container group over ssh (`docker inspect`)
-# with the pure core + the three hand-written Go foreigns —
+# with the pure core + Bosun's own hand-written Go foreigns —
 #
 #   conformance/go/bosun_exec_foreign.go      (Bosun_CLI_Exec_execLineImpl)
 #   conformance/go/bosun_resident_foreign.go  (Bosun_CLI_Resident_residentImpl + nowMs)
-#   conformance/go/argonaut_parser_foreign.go (Data.Argonaut.Parser._jsonParser)
+#
+# — the JSON-decode library foreigns having moved to backend-go's foreign/
+# layer on 2026-08-24, where a registry package's FFI belongs,
 #
 # — and serves /state + /control. This exercises the foreign-calls-back-into-
 # PureScript direction (a Go shim invoking the tick/stateBody/control Effect
@@ -55,10 +57,9 @@ echo "==> backend-go transpile (corefn -> Go, pruned to $MAIN)"
 rm -rf "$OUT"
 ( cd "$BACKEND_GO" && spago run -- --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
 cp "$BACKEND_GO/runtime.go"                          "$OUT/runtime.go"
-# library foreigns (JSON decode path) + Bosun's three CLI-edge twins
-cp "$BOSUN/conformance/go/argonaut_core_foreign.go"   "$OUT/argonaut_core_foreign.go"
-cp "$BOSUN/conformance/go/foreign_object_foreign.go"  "$OUT/foreign_object_foreign.go"
-cp "$BOSUN/conformance/go/argonaut_parser_foreign.go" "$OUT/argonaut_parser_foreign.go"
+# Bosun's OWN CLI-edge twins. The JSON-decode library foreigns (Foreign.Object,
+# Data.Argonaut.{Core,Parser}) moved to backend-go's foreign/ layer on
+# 2026-08-24 and are linked in by the transpile above.
 cp "$BOSUN/conformance/go/bosun_exec_foreign.go"      "$OUT/bosun_exec_foreign.go"
 cp "$BOSUN/conformance/go/bosun_resident_foreign.go"  "$OUT/bosun_resident_foreign.go"
 

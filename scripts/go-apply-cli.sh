@@ -4,12 +4,13 @@
 # Unlike go-apply.sh (which deploys a HARDCODED fixture so its only foreign is
 # os-exec), this transpiles Bosun.Conformance.ApplyCliMain — the real runApply
 # pipeline reading a compose + registry off disk — and so needs the Json-decode
-# foreigns the hardcoded harnesses never exercised:
-#   - conformance/go/argonaut_core_foreign.go   (Data.Argonaut.Core: _caseJson, from*, …)
-#   - conformance/go/foreign_object_foreign.go  (Foreign.Object: _lookup, keys, …)
+# foreigns the hardcoded harnesses never exercised. Those are no longer Bosun's:
+# Data.Argonaut.{Core,Parser} and Foreign.Object moved to backend-go's foreign/
+# layer on 2026-08-24, and the transpile links them in for any program whose
+# dependency closure has those modules. What this script still copies is
 #   - conformance/go/bosun_applycli_foreign.go  (readJson/readYaml/argv/execLine)
-# plus backend-go's runtime.go. All copied next to the generated `package main`
-# sources where `go build *.go` resolves them. backend-go stays pristine.
+# plus backend-go's runtime.go, next to the generated `package main` sources
+# where `go build *.go` resolves them.
 #
 # The binary reads a .json compose directly or a .yml compose via gopkg.in/yaml.v3
 # (already in the module cache; the script sets up a one-line go.mod so the
@@ -34,8 +35,8 @@ echo "==> backend-go transpile (corefn -> Go, pruned to $MAIN)"
 rm -rf "$OUT"
 ( cd "$BACKEND_GO" && spago run -- --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
 cp "$BACKEND_GO/runtime.go" "$OUT/runtime.go"
-cp "$BOSUN/conformance/go/argonaut_core_foreign.go"  "$OUT/argonaut_core_foreign.go"
-cp "$BOSUN/conformance/go/foreign_object_foreign.go" "$OUT/foreign_object_foreign.go"
+# Bosun's OWN FFI only. Foreign.Object / Data.Argonaut.* moved to backend-go's
+# foreign/ layer on 2026-08-24, which links them itself.
 cp "$BOSUN/conformance/go/bosun_applycli_foreign.go" "$OUT/bosun_applycli_foreign.go"
 
 echo "==> go module setup (yaml.v3 from cache) + build ($(ls "$OUT"/*.go | wc -l | tr -d ' ') Go files)"

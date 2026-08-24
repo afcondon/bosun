@@ -13,9 +13,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -109,6 +111,50 @@ func ioNormalizeYaml(v any) any {
 	default:
 		return v
 	}
+}
+
+// getJsonUrlImpl / postJsonUrlImpl :: EffectFn1 String HttpResult — talk to a
+// LOCAL daemon's control surface without throwing. `readJsonUrlImpl` above is
+// right for a source we REQUIRE (a failure there should abort); these are for a
+// source we merely ask, where an unreachable router is an outcome `bosun reload`
+// has to be able to report rather than die on. `{ ok, body, error }`, with
+// `body` null whenever `ok` is false.
+//
+// No `-f`, deliberately, and for the same reason as the node twin: a non-2xx
+// whose body is the daemon's own `{ok:false,error:…}` must reach the caller
+// intact rather than be collapsed into a curl exit code that discards what the
+// daemon actually said.
+var Bosun_CLI_IO_getJsonUrlImpl any = func(args ...any) any {
+	return ioJSONCurl(args[0].(string))
+}
+
+var Bosun_CLI_IO_postJsonUrlImpl any = func(args ...any) any {
+	return ioJSONCurl(args[0].(string), "-X", "POST")
+}
+
+func ioJSONCurl(url string, extra ...string) map[string]any {
+	flags := append([]string{"-sS", "--max-time", "8"}, extra...)
+	cmd := exec.Command("curl", append(flags, url)...)
+	// stderr is CAPTURED, not inherited: we report the failure, so curl must not
+	// also print it (the node twin pipes it for the same reason).
+	var errBuf bytes.Buffer
+	cmd.Stderr = &errBuf
+	out, err := cmd.Output()
+	if err != nil {
+		detail := strings.TrimSpace(errBuf.String())
+		if detail == "" {
+			detail = err.Error()
+		}
+		return map[string]any{"ok": false, "body": nil, "error": detail}
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		return map[string]any{"ok": true, "body": nil, "error": ""}
+	}
+	var v any
+	if err := json.Unmarshal(out, &v); err != nil {
+		return map[string]any{"ok": false, "body": nil, "error": err.Error()}
+	}
+	return map[string]any{"ok": true, "body": v, "error": ""}
 }
 
 func ioYamlKey(k any) string {

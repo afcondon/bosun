@@ -6,7 +6,8 @@
   "description": "A typed deployment-configuration reconciler.",
   "scripts": {
     "build": "spago build",
-    "test": "spago test",
+    "test": "spago test && bash scripts/control-parity.sh",
+    "parity": "bash scripts/control-parity.sh",
     "bosun": "spago run -p bosun-cli",
     "chair-server": "spago build && node chair-server/run.js"
   },

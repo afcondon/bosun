@@ -139,9 +139,7 @@ else
   rm -rf "$OUT"
   ( cd "$BACKEND_GO" && spago run -- --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
   cp "$BACKEND_GO/runtime.go" "$OUT/runtime.go"
-  cp "$BOSUN"/conformance/go/argonaut_core_foreign.go   "$OUT/"
-  cp "$BOSUN"/conformance/go/argonaut_parser_foreign.go "$OUT/"
-  cp "$BOSUN"/conformance/go/foreign_object_foreign.go  "$OUT/"
+  # Bosun's OWN FFI only; the library foreigns are backend-go's foreign/ layer.
   cp "$BOSUN"/conformance/go/bosun_exec_foreign.go      "$OUT/"
   cp "$BOSUN"/conformance/go/bosun_resident_foreign.go  "$OUT/"
   cp "$BOSUN"/conformance/go/bosun_probe_foreign.go     "$OUT/"   # NEW: the 4 probes
