@@ -178,6 +178,36 @@ POST /control/stop?port=9999     # nothing at all
      may never have been admitted — see /state's "rejected" and "drift".
 ```
 
+### The 307 door is not the daemon (added 2026-08-24)
+
+A brokered row's *listener* on its registered public port and the *process*
+behind it are separate things, and the `/state` fields say so separately.
+`bound :: Boolean` was carrying four situations at once — and the comment beside
+it claimed two:
+
+| `brokered[].door` | what it means | what to do |
+|---|---|---|
+| `none` | the row names no public port (es9-daemon is a unix socket) | nothing; `/where` is the door |
+| `open` | the router holds the port and answers `307` there | nothing |
+| `aside` | something else holds the port and still answers | if that is the daemon itself, fine; else stop the holder |
+| `reclaim` | the holder has gone; the router is binding it again | nothing — it is a moment, not a state |
+| `blocked` | the bind failed for a reason no probe can clear (`EACCES`) | read `bindError` |
+
+`doorCheckedAt` is when the adoption claim was last put to the test. Only
+`aside` is swept: it goes to `reclaim` and then `open` the moment the holder
+exits, on the same `ADOPTION_WATCH_MS` clock, from the same `recheckAdopted`,
+that reclaims an adopted *proxy* port. Before this it was never swept at all,
+so a brokered public port adopted at bind time stayed adopted forever — the
+`:3028` bug of 2026-08-17 living on in the new bucket.
+
+Reclaiming a door touches `bound` and the adoption claim and **nothing else**.
+Not the child, not `ready`. A brokered service has one arm in that sweep where a
+proxy route has two, and the missing one is the point: there is no broker
+equivalent of the `adoptedBackend` re-check, because a broker records no
+adoption claim that could go stale — `brokerStopVerdict` re-derives ownership by
+probing at the moment it is asked. Only the listener needs a clock, because a
+port we stepped aside from has no other event that could tell us the holder left.
+
 **Tasks 2 & 3 were already landed** before this session: the `/state` +
 `/control/*` contract and CORS live in `cli/src/Bosun/CLI/Serve.js`; the
 observe/control seam abstraction (Docker-on-Node now, BEAM observer later) is

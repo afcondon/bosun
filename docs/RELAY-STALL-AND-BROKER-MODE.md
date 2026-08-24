@@ -439,7 +439,8 @@ running?") instead of DeepStar doing its own process management.
 
 ## 7. Found and not fixed
 
-Four, each actionable:
+Four, each actionable. §7.4 was fixed on 2026-08-24 and is kept
+here with its remedy, because the remedy is the interesting part.
 
 1. **Bosun's Chair does not render the brokered bucket.** `/state` gained a
    `brokered` array; the Chair's `StateView` (`chair/src/Chair/State.purs:86`)
@@ -461,12 +462,29 @@ Four, each actionable:
    redirects — but it is a *second* place that encodes "local", alongside
    `classifyHost`'s `mbp`-or-nothing rule. The two will disagree the first time
    a third local host name appears.
-4. **A brokered public port can be adopted but never reclaimed.**
-   `recheckAdopted` walks `states` (proxy routes) only, so a broker that stepped
-   aside from an `EADDRINUSE` at bind time never re-probes and never takes the
-   port back when the external holder exits. This is the exact bug fixed for
-   proxy routes on 2026-08-17 (`:3028`), reintroduced in the new bucket. The
-   remedy is the same: include brokered states in the `ADOPTION_WATCH_MS` sweep.
+4. ~~**A brokered public port can be adopted but never reclaimed.**~~
+   **FIXED 2026-08-24.** `recheckAdopted` walked `states` (proxy routes) only,
+   so a broker that stepped aside from an `EADDRINUSE` at bind time never
+   re-probed and never took the port back when the external holder exited — the
+   `:3028` bug of 2026-08-17 reintroduced in the new bucket. It was the same
+   remedy: brokered doors are in the `ADOPTION_WATCH_MS` sweep, alongside the
+   two proxy arms and reached from the same three callers (the watch timer,
+   `/state`, `applyReload`).
+
+   Two things it was NOT. **One arm, not two** — a broker gets the listener
+   re-check and no equivalent of the `adoptedBackend` re-check, because a broker
+   records no adoption claim that could go stale (`brokerStopVerdict` probes at
+   the moment it is asked, which is why it needs no clock). And **reclaiming a
+   door touches nothing about the process**: `bound` and the adoption claim,
+   never `child` or `ready`. The 307 listener only ever said "go over there";
+   `unbindPort` already refuses to conflate the two in the other direction.
+
+   What the fix added beyond the sweep is `brokered[].door`
+   (`Bosun.Serve.brokerDoor`, five constructors). `bound: false` was carrying
+   four situations — portless by design, stepped aside, blocked by a bind error,
+   and mid-reclaim — and the comment beside it named two. Splitting them is what
+   §7.1 needs to render a brokered row at all: "no door, by design" and "a door
+   somebody else is holding" want opposite responses and were the same `false`.
 
 Two further judgement calls recorded so they are not mistaken for oversights:
 
@@ -534,8 +552,27 @@ curl -s -X POST 'localhost:3996/control/stop?port=9999'    # nothing here → 40
 curl -s -X POST 'localhost:3996/control/spawn?port=8183'   # {ok,serviceId,up,bound} — unchanged
 ```
 
-`spago test` — 186 passing, of which 10 are the broker admission cases and 7 the
-`brokerStopVerdict` cases in
+Reclaiming an adopted 307 door (added 2026-08-24) — the §7.4 fix, which needs a
+real `EADDRINUSE` and so cannot be reached from the spec suite:
+
+```bash
+python3 -m http.server 8180 --bind 127.0.0.1 &   # hold loopdemo's registered port
+BOSUN_SERVE_STATUS_PORT=3899 node cli/run.js serve fixtures/broker/registry.json &
+#   ≈ :8180 already held — loopdemo:worker is brokered, so serve steps aside
+curl -s localhost:3899/state | jq '.brokered[] | {serviceId, bound, door}'
+#   loopdemo:worker  bound:false  door:"aside"   (the other three: door:"none")
+kill %1                                          # the holder goes
+#   ↺ :8180 holder is gone — reclaiming the 307 door for loopdemo:worker
+#   bound :8180 → 307 → ws://127.0.0.1:28180 (loopdemo:worker, brokered — no relay)
+curl -si localhost:8180/index.html | head -1     # HTTP/1.1 307 Temporary Redirect
+```
+
+Note the `--bind 127.0.0.1`: without it python takes `*:8180` on IPv6 and the
+router's `127.0.0.1` bind succeeds beside it, so there is no `EADDRINUSE` and
+nothing to test.
+
+`spago test` — 194 passing, of which 10 are the broker admission cases, 7 the
+`brokerStopVerdict` cases and 8 the `brokerDoor` cases in
 `test/test/Test/Bosun/ServeSpec.purs`. The first two of those exist specifically
 to pin the default: an unhinted service, and a service hinted `proxy` or
 misspelled, must both plan identically to before.

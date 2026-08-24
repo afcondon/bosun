@@ -31,6 +31,10 @@ module Bosun.Serve
   , StopVerdict(..)
   , stopVerdictTag
   , brokerStopVerdict
+  , BrokerDoor(..)
+  , DoorFacts
+  , doorTag
+  , brokerDoor
   , RejectReason(..)
   , Rejection
   , ServePlan
@@ -260,6 +264,79 @@ brokerStopVerdict hasChild alive probe
   | otherwise = case probe of
       NoProbe -> Unknown
       _ -> Absent
+
+-- | The standing of a brokered service's **307 door** — the listener on the
+-- | registered public port. Not the daemon behind it: the door only ever
+-- | answered "go over there", and everything about it is separate from whether
+-- | the service is running (`unbindPort` takes a door down without touching the
+-- | process, and it must).
+-- |
+-- | This exists because `bound :: Boolean` was carrying four situations at once
+-- | in `/state`, and the comment beside it claimed two: a broker with no public
+-- | port to hold (es9-daemon is a unix socket — the ordinary case, not a
+-- | fault), one whose bind failed for a reason a probe will never clear, one
+-- | the router stepped aside from because something else already held the port,
+-- | and one the router holds. Only the third can be taken back, and until now
+-- | nothing did: `recheckAdopted` walked the proxy table only, so a brokered
+-- | port adopted at bind time stayed adopted forever — the `:3028` bug of
+-- | 2026-08-17 re-appearing in the new bucket (RELAY-STALL-AND-BROKER-MODE.md
+-- | §7.4).
+-- |
+-- | `DoorReclaim` is a verdict, not a state the router rests in: it means the
+-- | holder has gone and the listen has not completed yet. It is visible in
+-- | `/state` for the moment between, which is honest — "taking it back" is a
+-- | different thing to report than "we hold it".
+data BrokerDoor
+  = NoDoor       -- ^ the row names no public port; there is nothing to hold
+  | DoorOpen     -- ^ the router holds it and answers 307 there
+  | DoorAside    -- ^ another process holds it and still answers; stay out of the way
+  | DoorReclaim  -- ^ we stepped aside and the holder has gone: bind it again
+  | DoorBlocked  -- ^ the bind failed for a reason no probe can clear (EACCES, …)
+derive instance Eq BrokerDoor
+derive instance Generic BrokerDoor _
+instance Show BrokerDoor where show = genericShow
+
+-- | The wire token, for `/state`'s `brokered[].door` and for the shim to
+-- | compare against when it decides what to re-probe.
+doorTag :: BrokerDoor -> String
+doorTag = case _ of
+  NoDoor -> "none"
+  DoorOpen -> "open"
+  DoorAside -> "aside"
+  DoorReclaim -> "reclaim"
+  DoorBlocked -> "blocked"
+
+-- | What the shim can say about one door without being asked to judge it.
+-- |
+-- | `declaresPort` is closed over from the row by `brokerInfo`, exactly as
+-- | `brokerStopVerdict` closes over the row's `Probe` — it is a fact about the
+-- | PLAN, and asking the shim to hand it back would be a round-trip through the
+-- | edge for something the core already knows.
+-- |
+-- | `holderAnswers` is the LAST EVIDENCE about the port, not an assumption:
+-- | `true` from the `EADDRINUSE` that stood us aside (a bind that failed
+-- | because something is there is a probe, of a sort), then `true`/`false` from
+-- | each sweep's probe. There is no "we have not looked" case to represent,
+-- | because the bind itself looked.
+type DoorFacts =
+  { declaresPort  :: Boolean
+  , bound         :: Boolean
+  , bindFailed    :: Boolean
+  , holderAnswers :: Boolean
+  }
+
+-- | Weigh them. The order matters: a door that does not exist cannot be
+-- | blocked, and a bind that failed for a non-`EADDRINUSE` reason is not a
+-- | step-aside — re-listening on it every five seconds would be a permanent
+-- | no-op dressed as recovery, which is why `DoorBlocked` is reported and left
+-- | alone rather than swept.
+brokerDoor :: DoorFacts -> BrokerDoor
+brokerDoor f
+  | not f.declaresPort = NoDoor
+  | f.bindFailed = DoorBlocked
+  | f.bound = DoorOpen
+  | f.holderAnswers = DoorAside
+  | otherwise = DoorReclaim
 
 -- | Why a service is not routable (closed alternatives ⇒ ADT, §10). The first
 -- | two are P1-scope limits; the `Sdi` cases are genuine contract violations
