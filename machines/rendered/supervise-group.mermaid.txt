@@ -1,0 +1,25 @@
+stateDiagram-v2
+    held : Held
+    raising : Raising…  (entry bring-up)
+    raised : Raised  (entry reconcile)
+    lowering : Lowering…  (entry tear-down forget-launch-memory)
+    restarting : Restarting…  (entry restart-one)
+    reloading : Reloading…  (entry re-ingest)
+    adopting : Adopting…  (entry stop-changed forget-changed-launches swap-spec)
+    [*] --> held
+    held --> raising : up all
+    raising --> lowering : down all
+    raising --> raised : it finished
+    raised --> raising : up all
+    raised --> lowering : down all
+    raised --> restarting : restart a service
+    raised --> reloading : reload the spec
+    raised --> raised : keep-alive
+    lowering --> held : it finished
+    restarting --> lowering : down all
+    restarting --> raised : it finished
+    reloading --> lowering : down all
+    reloading --> adopting : the new spec is good
+    reloading --> raised : the new spec is bad
+    adopting --> lowering : down all
+    adopting --> raised : it finished

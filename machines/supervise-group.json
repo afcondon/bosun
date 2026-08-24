@@ -1,0 +1,156 @@
+{
+  "glassbox": 2,
+  "id": "supervise-group",
+  "title": "A supervised group, as seen from the Chair",
+
+  "notes": [
+    "The lifecycle of one `bosun supervise` group — the machine that is currently",
+    "implicit in `Bosun.CLI.Supervise.superviseResident`, where its whole state is a",
+    "`Ref Boolean` named `desiredUp` and its transitions are the arms of a `case verb`.",
+    "",
+    "Written as an artifact to find out what the format could and could not say about a",
+    "real supervisor. Three things it said that the code does not:",
+    "",
+    "1. `held` and `raised` are STATES, not a Boolean. `--held` was added late, and a",
+    "   Boolean has no room for the four transient states below, so they do not exist",
+    "   in the code and the Chair cannot show them.",
+    "",
+    "2. Every command hangs off a state, so a moment that runs a command has to BE a",
+    "   state. `raising`, `lowering`, `restarting`, `reloading` and `adopting` are the",
+    "   format forcing into existence the in-flight moments the code runs synchronously",
+    "   inside a control handler. That is the same thing the follow button's two pending",
+    "   states were, and it is why a control verb arriving mid-transition can be refused",
+    "   as `busy` here and cannot be there.",
+    "",
+    "3. `restart` and `reload` are REFUSED while held. Today they are not gated on",
+    "   `desiredUp` at all, so `POST /control/restart?x` on a group booted with `--held`",
+    "   launches x — quietly defeating the point of holding it. Nothing was decided",
+    "   wrongly; the cell was simply never written down, which is what totality is for.",
+    "",
+    "`tick` in `raised` is a Move to the state it is already in — the statechart external",
+    "self-transition — so it exits and re-enters, and re-entering runs `reconcile`. That",
+    "is the keep-alive loop, and it costs one word.",
+    "",
+    "No deadlines. A supervisor is full of timing, but the group's own lifecycle has",
+    "none: the tick is a recurring heartbeat the host owns, and boot-grace and backoff",
+    "belong to the PER-SERVICE machine, which is a different machine and still a",
+    "classifier rather than a state machine in `Bosun.Supervisor.decide`."
+  ],
+
+  "initial": "held",
+
+  "states": [
+    { "id": "held",       "label": "Held" },
+    { "id": "raising",    "label": "Raising…",   "entry": ["bring-up"] },
+    { "id": "raised",     "label": "Raised",     "entry": ["reconcile"] },
+    { "id": "lowering",   "label": "Lowering…",  "entry": ["tear-down", "forget-launch-memory"] },
+    { "id": "restarting", "label": "Restarting…","entry": ["restart-one"] },
+    { "id": "reloading",  "label": "Reloading…", "entry": ["re-ingest"] },
+    { "id": "adopting",   "label": "Adopting…",  "entry": ["stop-changed", "forget-changed-launches", "swap-spec"] }
+  ],
+
+  "events": [
+    { "id": "up",       "label": "up all",           "source": "user" },
+    { "id": "down",     "label": "down all",         "source": "user" },
+    { "id": "restart",  "label": "restart a service","source": "user" },
+    { "id": "reload",   "label": "reload the spec",  "source": "user" },
+    { "id": "done",     "label": "it finished",      "source": "runtime" },
+    { "id": "reloaded", "label": "the new spec is good", "source": "runtime" },
+    { "id": "rejected", "label": "the new spec is bad",  "source": "runtime" },
+    { "id": "tick",     "label": "keep-alive",       "source": "runtime" }
+  ],
+
+  "config": [
+    { "id": "reload-source", "label": "This resident can re-read its spec", "default": true }
+  ],
+
+  "facts": [
+    { "id": "service-in-group", "label": "The named service is in this group" }
+  ],
+
+  "refusals": [
+    { "id": "not-raised",       "text": "the group is held down" },
+    { "id": "no-such-service",  "text": "no service of that name in this group" },
+    { "id": "no-reload-source", "text": "this resident has no spec to re-read" },
+    { "id": "busy",             "text": "something is already in flight" }
+  ],
+
+  "commands": [
+    { "id": "bring-up",                "label": "Enact the plan from a standing start" },
+    { "id": "reconcile",               "label": "Enact the plan against what is observed" },
+    { "id": "tear-down",               "label": "Run the teardown script" },
+    { "id": "forget-launch-memory",    "label": "Forget every launch, so stopped services read Down" },
+    { "id": "restart-one",             "label": "Enact a plan that treats the named service as failed" },
+    { "id": "re-ingest",               "label": "Re-read and validate the spec" },
+    { "id": "stop-changed",            "label": "Stop the old generation of the changed and removed" },
+    { "id": "forget-changed-launches", "label": "Forget the launches of just those services" },
+    { "id": "swap-spec",               "label": "Adopt the new deployment" }
+  ],
+
+  "rules": [
+    { "from": "held", "on": "up",       "cases": [ { "to": "raising" } ] },
+    { "from": "held", "on": "down",     "cases": [ { "stay": true } ] },
+    { "from": "held", "on": "restart",  "cases": [ { "refuse": "not-raised" } ] },
+    { "from": "held", "on": "reload",   "cases": [ { "refuse": "not-raised" } ] },
+    { "from": "held", "on": "tick",     "cases": [ { "stay": true } ] },
+    { "from": "held", "on": "done",     "cases": [ { "stay": true } ] },
+    { "from": "held", "on": "reloaded", "cases": [ { "stay": true } ] },
+    { "from": "held", "on": "rejected", "cases": [ { "stay": true } ] },
+
+    { "from": "raising", "on": "done",     "cases": [ { "to": "raised" } ] },
+    { "from": "raising", "on": "down",     "cases": [ { "to": "lowering" } ] },
+    { "from": "raising", "on": "up",       "cases": [ { "refuse": "busy" } ] },
+    { "from": "raising", "on": "restart",  "cases": [ { "refuse": "busy" } ] },
+    { "from": "raising", "on": "reload",   "cases": [ { "refuse": "busy" } ] },
+    { "from": "raising", "on": "tick",     "cases": [ { "stay": true } ] },
+    { "from": "raising", "on": "reloaded", "cases": [ { "stay": true } ] },
+    { "from": "raising", "on": "rejected", "cases": [ { "stay": true } ] },
+
+    { "from": "raised", "on": "tick",     "cases": [ { "to": "raised" } ] },
+    { "from": "raised", "on": "up",       "cases": [ { "to": "raising" } ] },
+    { "from": "raised", "on": "down",     "cases": [ { "to": "lowering" } ] },
+    { "from": "raised", "on": "restart",  "cases": [ { "when": { "fact": "service-in-group" }, "to": "restarting" }, { "refuse": "no-such-service" } ] },
+    { "from": "raised", "on": "reload",   "cases": [ { "when": { "config": "reload-source" }, "to": "reloading" }, { "refuse": "no-reload-source" } ] },
+    { "from": "raised", "on": "done",     "cases": [ { "stay": true } ] },
+    { "from": "raised", "on": "reloaded", "cases": [ { "stay": true } ] },
+    { "from": "raised", "on": "rejected", "cases": [ { "stay": true } ] },
+
+    { "from": "lowering", "on": "done",     "cases": [ { "to": "held" } ] },
+    { "from": "lowering", "on": "up",       "cases": [ { "refuse": "busy" } ] },
+    { "from": "lowering", "on": "restart",  "cases": [ { "refuse": "busy" } ] },
+    { "from": "lowering", "on": "reload",   "cases": [ { "refuse": "busy" } ] },
+    { "from": "lowering", "on": "down",     "cases": [ { "stay": true } ] },
+    { "from": "lowering", "on": "tick",     "cases": [ { "stay": true } ] },
+    { "from": "lowering", "on": "reloaded", "cases": [ { "stay": true } ] },
+    { "from": "lowering", "on": "rejected", "cases": [ { "stay": true } ] },
+
+    { "from": "restarting", "on": "done",     "cases": [ { "to": "raised" } ] },
+    { "from": "restarting", "on": "down",     "cases": [ { "to": "lowering" } ] },
+    { "from": "restarting", "on": "up",       "cases": [ { "refuse": "busy" } ] },
+    { "from": "restarting", "on": "restart",  "cases": [ { "refuse": "busy" } ] },
+    { "from": "restarting", "on": "reload",   "cases": [ { "refuse": "busy" } ] },
+    { "from": "restarting", "on": "tick",     "cases": [ { "stay": true } ] },
+    { "from": "restarting", "on": "reloaded", "cases": [ { "stay": true } ] },
+    { "from": "restarting", "on": "rejected", "cases": [ { "stay": true } ] },
+
+    { "from": "reloading", "on": "reloaded", "cases": [ { "to": "adopting" } ] },
+    { "from": "reloading", "on": "rejected", "cases": [ { "to": "raised" } ] },
+    { "from": "reloading", "on": "down",     "cases": [ { "to": "lowering" } ] },
+    { "from": "reloading", "on": "up",       "cases": [ { "refuse": "busy" } ] },
+    { "from": "reloading", "on": "restart",  "cases": [ { "refuse": "busy" } ] },
+    { "from": "reloading", "on": "reload",   "cases": [ { "refuse": "busy" } ] },
+    { "from": "reloading", "on": "tick",     "cases": [ { "stay": true } ] },
+    { "from": "reloading", "on": "done",     "cases": [ { "stay": true } ] },
+
+    { "from": "adopting", "on": "done",     "cases": [ { "to": "raised" } ] },
+    { "from": "adopting", "on": "down",     "cases": [ { "to": "lowering" } ] },
+    { "from": "adopting", "on": "up",       "cases": [ { "refuse": "busy" } ] },
+    { "from": "adopting", "on": "restart",  "cases": [ { "refuse": "busy" } ] },
+    { "from": "adopting", "on": "reload",   "cases": [ { "refuse": "busy" } ] },
+    { "from": "adopting", "on": "tick",     "cases": [ { "stay": true } ] },
+    { "from": "adopting", "on": "reloaded", "cases": [ { "stay": true } ] },
+    { "from": "adopting", "on": "rejected", "cases": [ { "stay": true } ] }
+  ],
+
+  "deadlines": []
+}
