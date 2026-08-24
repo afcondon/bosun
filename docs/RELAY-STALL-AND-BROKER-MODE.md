@@ -325,6 +325,20 @@ running.)
 Likewise, unbinding a broker's listener on reload does not stop the service. The
 listener only ever said "go over there".
 
+**None of that is an argument against an explicit stop, and it was mistaken for
+one.** Broker mode shipped able to START a brokered service and not to stop it:
+`/control/spawn|stop` consulted only the proxy table, so every brokered port
+answered `no proxy route on :N`. The comments above — "a broker has no relay",
+"a broker's listener going away does NOT stop the service" — are about tearing
+down the ROUTE, which is a different act from tearing down the PROCESS and
+stays true. But bosun spawns these daemons itself, so it holds the child, and a
+surface that can start what it cannot stop teaches an operator to reach past it
+for the pid — which is the one habit the control surface exists to prevent.
+"Restart it, I rebuilt the binary" is the most common operation there is, and it
+had no sanctioned path. Fixed 2026-08-24; the rules are in `CONTROL-SURFACE.md`
+and the decision is `Bosun.Serve.brokerStopVerdict`, typed and tested in
+`ServeSpec` rather than left as an if-chain in the shim.
+
 ### 5.6 Readiness is not a new concept
 
 It reuses what the registry already has: **`Bosun.Health.Probe`**, chosen by the
@@ -507,7 +521,21 @@ node cli/run.js serve --plan registry/fleet.json | grep -E '^(ADMITTED|BROKERED|
 #   ...and no BROKERED section
 ```
 
-`spago test` — 176 passing, of which 10 are the broker admission cases in
+Lifecycle control over the same fixture (added 2026-08-24):
+
+```bash
+curl -s -X POST 'localhost:3996/control/spawn?port=8180'   # brokered, starts it
+curl -s -X POST 'localhost:3996/control/stop?port=8180'    # stops it; pid null in /state
+curl -s -X POST 'localhost:3996/control/spawn?service=sockdemo:worker'  # portless
+curl -s -X POST 'localhost:3996/control/stop?port=8182'    # probe `none`, no child → 409 unknown
+curl -s -X POST 'localhost:3996/control/stop?port=9999'    # nothing here → 404, and says so
+
+# the regression check that matters: plaindemo has no serveMode
+curl -s -X POST 'localhost:3996/control/spawn?port=8183'   # {ok,serviceId,up,bound} — unchanged
+```
+
+`spago test` — 186 passing, of which 10 are the broker admission cases and 7 the
+`brokerStopVerdict` cases in
 `test/test/Test/Bosun/ServeSpec.purs`. The first two of those exist specifically
 to pin the default: an unhinted service, and a service hinted `proxy` or
 misspelled, must both plan identically to before.

@@ -14,7 +14,7 @@ import Bosun.Error (SdiViolation(..))
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Health (Probe(..))
 import Bosun.Reachability (hostPort, unixSocket)
-import Bosun.Serve (DriftKind(..), Mediation(..), RejectReason(..), planDrift, readMediation, serveDiff, servePlan, servePlanWith)
+import Bosun.Serve (DriftKind(..), Mediation(..), RejectReason(..), StopVerdict(..), brokerStopVerdict, planDrift, readMediation, serveDiff, servePlan, servePlanWith, stopVerdictTag)
 import Bosun.Service (LooseService, mkDeployment)
 import Data.Array (head)
 import Data.Either (Either(..))
@@ -23,7 +23,7 @@ import Data.Tuple (Tuple(..), fst, snd)
 import Partial.Unsafe (unsafePartial)
 import Test.Bosun.ValidateSpec (leaf)
 import Test.Spec (Spec, describe, it)
-import Test.Spec.Assertions (fail, shouldEqual)
+import Test.Spec.Assertions (fail, shouldEqual, shouldNotEqual)
 
 absPath :: String -> AbsPath
 absPath s = unsafePartial (fromJust (mkAbsPath s))
@@ -285,6 +285,43 @@ spec = describe "Bosun.Serve.servePlan" do
       d.unbind `shouldEqual` [ 3028 ]
       d.bindRoutes `shouldEqual` []
       map _.serviceId d.bindBrokers `shouldEqual` [ "loop" ]
+
+  -- `POST /control/stop` on a BROKERED service. Broker mode shipped able to
+  -- START one (`/where` lazy-spawns it) and not to stop it: the control handler
+  -- consulted only the proxy table, so every brokered row answered `no proxy
+  -- route`. These pin the rule the fix adopted — which is the PROXY path's
+  -- rule, not a second one — and the case a boolean would have hidden.
+  describe "brokerStopVerdict (POST /control/stop on a broker)" do
+    let
+      tcp = TcpConnect (port_ 23028)
+      sock = SocketReady (absPath "/Users/afc/.es9/control.sock")
+
+    it "holds the child ⇒ signal it: a service bosun started is bosun's to stop" do
+      brokerStopVerdict true false tcp `shouldEqual` Signal
+
+    it "holds the child while the probe still says down ⇒ still signal it" do
+      -- A daemon that is slow to bind must not be unstoppable for the window in
+      -- which it is starting; the handle is better evidence than the probe.
+      brokerStopVerdict true false sock `shouldEqual` Signal
+
+    it "no child, but it IS running ⇒ adopted: bosun did not start it, so it must not kill it" do
+      -- The same refusal `adoptedBackend && not child` makes on the proxy side.
+      brokerStopVerdict false true tcp `shouldEqual` Adopted
+
+    it "no child, no probe that could say ⇒ unknown, never a blanket ok" do
+      -- link-spike over UDP multicast: neither "I stopped it" nor "nothing was
+      -- running" is supportable, and an `ok` reads to an operator as "it's down".
+      brokerStopVerdict false false NoProbe `shouldEqual` Unknown
+
+    it "no child, and the probe says nothing is there ⇒ absent, which stops cleanly" do
+      brokerStopVerdict false false tcp `shouldEqual` Absent
+
+    it "a probe that ANSWERED down and a probe that could not be made are different findings" do
+      brokerStopVerdict false false tcp `shouldNotEqual` brokerStopVerdict false false NoProbe
+
+    it "the wire tags the shim answers with are the four, distinctly" do
+      map stopVerdictTag [ Signal, Adopted, Unknown, Absent ]
+        `shouldEqual` [ "signal", "adopted", "unknown", "absent" ]
 
   describe "serveDiff (SIGHUP hot-reload)" do
     let planOf = servePlan <<< mkDeployment

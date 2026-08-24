@@ -191,6 +191,54 @@ $ bosun where alpha-victor-echo-kilo:worker
 `bosun where 3028` does the same thing keyed by public port. `--port <n>`
 addresses a router on a non-default control port.
 
+## 4a. Stopping one, and starting it deliberately (2026-08-24)
+
+`/where` is the *ensure* half. The control surface is the other half, and
+brokered services were missing from it — `/control/spawn|stop` looked only at
+the proxy table, so a brokered port answered `no proxy route on :N`: a refusal
+and a misdiagnosis in one sentence, about a service the router had itself
+started. Both verbs now reach brokers.
+
+```
+POST :3997/control/spawn?port=<registered|actual>   ·  ?service=<projectSlug:role>
+POST :3997/control/stop?port=<registered|actual>    ·  ?service=<projectSlug:role>
+```
+
+`?service=` matters here more than it does for a proxy route: half of these
+daemons **have no port to be addressed by**. `es9-daemon:worker` lives at
+`~/.es9/control.sock`, and until now `/where/<id>` could start it while nothing
+could stop it.
+
+**Spawn is `ensureAndLocate`** — probe first, then start, then wait — so hitting
+it on something already running answers `started: false` rather than handing you
+a second copy. The reply carries `mediation`, `started`, `probe` and `detail`
+exactly as `/where` does, and the same status rule: `200` when the probe passed
+or there was no probe to make, `503` when a check was made and failed.
+
+**Stop refuses what bosun did not start**, which is the proxy path's rule and
+not a second one. `Bosun.Serve.brokerStopVerdict` weighs the evidence:
+
+| bosun holds the child | probe just made | verdict |
+|---|---|---|
+| yes | (either) | `Signal` → `200 {ok, wasRunning: true}`, resolving when the process has actually exited |
+| no | it is up | `Adopted` → `409` — stop that process yourself; the next `/where` finds it gone and starts a fresh one |
+| no | `probe: "none"` | `Unknown` → `409` — nothing here can say whether one is running, and an `ok` would read as "it's down" |
+| no | nothing there | `Absent` → `200 {ok, wasRunning: false}` |
+
+The child handle beats the probe on purpose: a daemon that is slow to bind must
+not become unstoppable for the window in which it is starting.
+
+Two consequences worth stating, because both are asked immediately:
+
+- **Nothing suspends the lazy-spawn.** `/where` is ensure-and-locate, so asking
+  it after a stop starts the service again — by design, that is what it is for.
+  To *observe* without starting, read `/state`: the brokered entry shows
+  `pid: null`.
+- **Stopping the process is still not unbinding the route, and the reverse.**
+  A reload that drops a broker's 307 listener continues to leave the daemon
+  running (`RELAY-STALL-AND-BROKER-MODE.md` §5.5). An explicit stop is a
+  separate act, asked for explicitly.
+
 ## 5. Trying it without touching the rig
 
 `fixtures/broker/registry.json` has one row of every shape, all harmless

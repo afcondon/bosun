@@ -28,6 +28,9 @@ module Bosun.Serve
   , readMediation
   , ServeHint
   , Broker
+  , StopVerdict(..)
+  , stopVerdictTag
+  , brokerStopVerdict
   , RejectReason(..)
   , Rejection
   , ServePlan
@@ -200,6 +203,63 @@ type Broker =
   -- `observe` already implements as `SocketReady`.
   , probe         :: Probe
   }
+
+-- | What `POST /control/stop` is entitled to do to a BROKERED service.
+-- |
+-- | Broker mode shipped able to START a service and not to stop it: `/where`
+-- | lazy-spawns the daemon, so the router holds its child, but the control
+-- | surface looked only at the proxy table and answered `no proxy route`. A
+-- | surface that can start what it cannot stop teaches an operator to go round
+-- | it for the pid, which is the habit it exists to prevent. Note this is a
+-- | different act from taking the ROUTE down: unbinding a broker's 307 listener
+-- | still does not stop the process, and must not.
+-- |
+-- | The rule is the proxy path's, not a second one. There, `adoptedBackend &&
+-- | not child` refuses with 409 — bosun did not start it, so bosun must not
+-- | kill it. A broker keeps no adoption flag to consult, because there is
+-- | nothing to write it from: ensure-and-locate probes before it spawns and
+-- | reports `started: false` on a survivor without recording the finding. So
+-- | the fact is re-derived at the moment it is needed, which is where the proxy
+-- | path arrived anyway — a remembered flag has no `exit` event to clear it,
+-- | and `recheckAdopted` had to put it back on a clock.
+-- |
+-- | `Unknown` is the case a boolean would have hidden. A daemon with no
+-- | checkable readiness signal (link-spike, UDP multicast) and no child of ours
+-- | supports neither "I stopped it" nor "nothing was running": report unknown
+-- | WITH the reason, the rule `Bosun.CLI.Observe` follows for a probe it cannot
+-- | make, rather than an `ok` an operator reads as "the daemon is down".
+data StopVerdict
+  = Signal      -- ^ bosun holds the child; SIGTERM it and await the exit
+  | Adopted     -- ^ it is running and is not ours — refuse, and name the reason
+  | Unknown     -- ^ no child, and no probe that could say whether one is needed
+  | Absent      -- ^ no child, and the probe says nothing is there to stop
+derive instance Eq StopVerdict
+derive instance Generic StopVerdict _
+instance Show StopVerdict where show = genericShow
+
+-- | The wire token the resident shim answers with.
+stopVerdictTag :: StopVerdict -> String
+stopVerdictTag = case _ of
+  Signal -> "signal"
+  Adopted -> "adopted"
+  Unknown -> "unknown"
+  Absent -> "absent"
+
+-- | Decide it. `hasChild` is the router's own handle; `alive` is the probe just
+-- | made; `probe` is the one the PLAN chose, and `NoProbe` is what separates
+-- | `Unknown` from `Absent` — a failed check and an impossible check are not
+-- | the same finding.
+-- |
+-- | Holding the child wins over everything: a service we started is ours to
+-- | stop whether or not its probe currently answers, and a daemon that is slow
+-- | to bind must not become unstoppable for the window in which it is starting.
+brokerStopVerdict :: Boolean -> Boolean -> Probe -> StopVerdict
+brokerStopVerdict hasChild alive probe
+  | hasChild = Signal
+  | alive = Adopted
+  | otherwise = case probe of
+      NoProbe -> Unknown
+      _ -> Absent
 
 -- | Why a service is not routable (closed alternatives ⇒ ADT, §10). The first
 -- | two are P1-scope limits; the `Sdi` cases are genuine contract violations

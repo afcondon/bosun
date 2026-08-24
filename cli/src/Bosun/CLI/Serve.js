@@ -235,7 +235,10 @@ export const serveImpl = (config) => {
     server.listen(rd.publicPort, INTERNAL_HOST, () =>
       console.log(`  bound :${rd.publicPort} → 421 → ${rd.target} (${rd.serviceId} on ${rd.host})`));
     redirects.set(rd.publicPort, { serviceId: rd.serviceId, host: rd.host, target: rd.target });
-    listeners.set(rd.publicPort, { server });
+    // `serviceId` on the listener entry so the control surface can NAME what
+    // holds this port when it refuses to act on it. A refusal that cannot say
+    // which service it is about sends the operator back to /state to find out.
+    listeners.set(rd.publicPort, { server, serviceId: rd.serviceId });
   };
 
   // Close a listener (and stop any backend behind it). Resolves once BOTH the
@@ -500,7 +503,9 @@ const sendJSON = (res, code, obj) => {
 // GET /state · GET /where/:service · POST /control/reload · POST
 // /control/spawn?port= · POST /control/stop?port=. The control verbs map to
 // machinery serve already owns: reload→applyReload (serveDiff),
-// spawn→ensureBackend, stop→stopBackend, where→ensureAndLocate.
+// spawn→ensureBackend, stop→stopBackend, where→ensureAndLocate. For a BROKERED
+// port the same two verbs go to `controlBroker`, which reaches the same two
+// operations from the other side (ensureAndLocate / stopBroker).
 function controlRouter(req, res, ctx) {
   const u = new URL(req.url, "http://localhost");
   if (req.method === "OPTIONS") { res.writeHead(204, CORS); res.end(); return; }
@@ -630,10 +635,59 @@ function controlRouter(req, res, ctx) {
   }
 
   if (req.method === "POST" && (u.pathname === "/control/spawn" || u.pathname === "/control/stop")) {
+    const stopping = u.pathname === "/control/stop";
+    // Ports are identity on this surface (e2684b9) and stay so. `?service=` is
+    // accepted BESIDE them because broker mode created a class of service with
+    // no port to be identified by at all — es9-daemon is reached at
+    // `~/.es9/control.sock` — and for those, `/where/<id>` could start the
+    // daemon while nothing could stop it. Same key `/state` and `/where` print.
+    // Until now `?service=` answered `no proxy route on :0`, which reads as "the
+    // daemon is missing" about a daemon that is running fine
+    // (FINDINGS-supervision-blind-spots.md).
+    const id = u.searchParams.get("service") || "";
     const port = Number(u.searchParams.get("port"));
-    const l = ctx.listeners.get(port);
-    if (!l || !l.state) { sendJSON(res, 404, { ok: false, error: `no proxy route on :${port}` }); return; }
-    const state = l.state;
+    const asked = id ? `service '${id}'` : `:${port}`;
+
+    // Brokers first, and keyed exactly as `/where` keys them — the REGISTERED
+    // port or the one the service actually listens on, because the rewrite
+    // makes those different and that is the point of it.
+    //
+    // Looking here at all is the fix for a route that could be STARTED and not
+    // STOPPED: `/where` lazy-spawns a brokered daemon, so the router holds its
+    // child, and this handler consulted only `listeners` — where a broker
+    // appears under `brokerState` if it took a 307 port, and does not appear at
+    // all if it took none (a unix-socket daemon, a UDP fan-out). Every brokered
+    // row therefore fell through to the "no proxy route" 404, which was both a
+    // refusal and a misdiagnosis (:3028, 2026-08-24).
+    //
+    // Refusing to stop what we started is not a boundary, it is a missing
+    // feature: an operator who cannot say "restart it, I rebuilt the binary"
+    // reaches past the control surface for the pid, which is the one habit the
+    // control surface exists to prevent. What stays true is the DIFFERENT
+    // claim `unbindPort` makes — taking a broker's ROUTE down is no reason to
+    // take its PROCESS down. An explicit stop is a separate act, asked for.
+    const brokerState = id
+      ? ctx.brokers.get(id)
+      : [...ctx.brokers.values()].find((s) => s.broker.publicPort === port || s.broker.port === port);
+    if (brokerState) { controlBroker(res, brokerState, stopping); return; }
+
+    const l = id ? undefined : ctx.listeners.get(port);
+    const state = l ? l.state : ctx.states.find((s) => s.route.serviceId === id);
+    if (!state) {
+      // Two situations that used to share one sentence, and that want opposite
+      // responses from an operator: something IS served here — a 421 redirect to
+      // another host — but has no local process to act on (go to that host's
+      // router), versus nothing is served here at all (look at the registry).
+      // The brokered third case is no longer among them; it is handled above.
+      sendJSON(res, 404, l
+        ? { ok: false, error: `:${port} is a 421 redirect to ${l.serviceId || "a service"} on another host, `
+            + `so this router has no process here to ${stopping ? "stop" : "spawn"}. `
+            + `Ask the bosun on that host.` }
+        : { ok: false, error: `no proxy route, no broker and no redirect on this router answers to ${asked}. `
+            + `GET /state lists everything it holds; if you expected one, the registry row may never have `
+            + `been admitted — see /state's "rejected" and "drift".` });
+      return;
+    }
     const serviceId = state.route.serviceId;
     // An adopted route has no backend of ours to start or stop: the external
     // holder owns the public port directly. Answering `ok` here would report a
@@ -645,8 +699,8 @@ function controlRouter(req, res, ctx) {
         ok: false,
         serviceId,
         external: true,
-        error: `:${port} is held by a process bosun serve did not start, so it has no backend to `
-          + `${u.pathname === "/control/stop" ? "stop" : "spawn"}. Stop the external holder — the router `
+        error: `:${state.route.publicPort} is held by a process bosun serve did not start, so it has no backend to `
+          + `${stopping ? "stop" : "spawn"}. Stop the external holder — the router `
           + `re-probes and reclaims the port within ${Math.round(ADOPTION_WATCH_MS / 1000)}s.`,
       });
       return;
@@ -655,7 +709,7 @@ function controlRouter(req, res, ctx) {
     // it, so there is no child to signal. `stopBackend` would drop the claim,
     // report `wasRunning: false`, and leave a service that is still serving
     // looking stopped — the wrong answer, not merely an incomplete one.
-    if (u.pathname === "/control/stop" && state.adoptedBackend && !state.child) {
+    if (stopping && state.adoptedBackend && !state.child) {
       sendJSON(res, 409, {
         ok: false,
         serviceId,
@@ -665,7 +719,7 @@ function controlRouter(req, res, ctx) {
       });
       return;
     }
-    if (u.pathname === "/control/stop") {
+    if (stopping) {
       // Answer when it is actually DOWN, not when the signal has been sent. The
       // old handler nulled `state.child` and replied immediately, so a Chair
       // "reboot" (stop then spawn) could put the new backend on the internal
@@ -694,6 +748,107 @@ function controlRouter(req, res, ctx) {
   }
 
   sendJSON(res, 404, { ok: false, error: "not found" });
+}
+
+// `/control/spawn|stop` for a BROKERED service — the lifecycle half of broker
+// mode, which shipped with only its `/where` half.
+//
+// Spawn is `ensureAndLocate` under another name, deliberately: probe-first is
+// the same right answer here as it is there, and an operator who hits spawn on
+// something already running should be told `started: false`, not handed a
+// second copy.
+//
+// The status rule is `/where`'s, not the proxy path's — 200 when the check
+// passed OR there was no check to make, 503 when a check was made and failed
+// (ENSURE-AND-LOCATE.md §2). A `probe: "none"` daemon answering 502/503 would
+// be the coercion-to-down that PRINCIPLES.md forbids everywhere else.
+function controlBroker(res, state, stopping) {
+  const b = state.broker;
+  const serviceId = b.serviceId;
+
+  if (!stopping) {
+    ensureAndLocate(state).then((r) => {
+      const answered = r.ready || r.probe === "none";
+      sendJSON(res, answered ? 200 : 503, {
+        ok: answered,
+        serviceId,
+        mediation: "broker",
+        // `up` from evidence, or from holding the child when there is no
+        // evidence to be had — never from having just run the start command.
+        up: r.ready || !!state.child,
+        started: r.started,
+        probe: r.probe,
+        detail: r.detail,
+        at: locatorLabel(b),
+        // The 307 door, which most brokers do not have. `bound: false` here is
+        // the ordinary portless case, not a bind failure — `bindError` is how
+        // the two are told apart.
+        bound: !!state.bound,
+        bindError: state.bindError,
+      });
+    }).catch((e) => sendJSON(res, 502, { ok: false, serviceId, mediation: "broker", error: msg(e) }));
+    return;
+  }
+
+  // The proxy path refuses to stop a backend it did not start (`adoptedBackend
+  // && !child` → 409): bosun didn't start it, so it mustn't kill it. Same rule,
+  // one difference in how the fact is obtained — a broker stores no adoption
+  // flag, because there is nothing to store it FROM. `ensureAndLocate` probes
+  // before it spawns and reports `started: false` on a survivor; it never
+  // writes the finding down. So re-derive it from the world at the moment it
+  // matters, which is where the proxy path ended up anyway: a remembered flag
+  // has no `exit` event to clear it, and `recheckAdopted` exists to put it back
+  // on a clock. Probing once, here, needs no clock at all.
+  //
+  // The shim gathers the evidence; `Bosun.Serve.brokerStopVerdict` weighs it.
+  // The four-way answer is a decision, so it is typed and tested in the core
+  // (ServeSpec) rather than being an if-chain out here where nothing can reach
+  // it.
+  probeBroker(b).then((alive) => {
+    const verdict = b.stopVerdict(!!state.child, alive);
+    if (verdict === "adopted") {
+      sendJSON(res, 409, {
+        ok: false,
+        serviceId,
+        mediation: "broker",
+        adopted: true,
+        error: `${serviceId} is running at ${locatorLabel(b)}, but bosun serve did not start it, so there `
+          + `is no child here to signal — and killing a daemon it does not own is not this router's to do. `
+          + `Stop that process; the next /where finds it gone and starts a fresh one.`,
+      });
+      return;
+    }
+    if (verdict === "unknown") {
+      // Neither "I stopped it" nor "nothing was running" is a claim that can be
+      // supported here: no child of ours to signal, and no probe that could
+      // tell us whether something else is up. Report unknown WITH the reason,
+      // as `Bosun.CLI.Observe` does for a probe it cannot make, rather than
+      // sending back an `ok` an operator would read as "the daemon is down".
+      sendJSON(res, 409, {
+        ok: false,
+        serviceId,
+        mediation: "broker",
+        adopted: null,
+        error: `bosun serve holds no child for ${serviceId}, and this service publishes no readiness `
+          + `signal it can check (${locatorLabel(b)}), so it can neither stop it nor claim it is already `
+          + `stopped. Whether something is running there is not a question this router can answer.`,
+      });
+      return;
+    }
+    stopBroker(state).then((r) => sendJSON(res, 200, {
+      ok: r.exited,
+      serviceId,
+      mediation: "broker",
+      up: !r.exited,
+      wasRunning: r.had,
+      // Said plainly because it is the first thing an operator will ask after
+      // stopping one of these: nothing here suspends the lazy-spawn. `/where`
+      // is ensure-and-locate, so asking it again starts the service again by
+      // design; `/state` is the read-only view that will show it down.
+      note: r.had ? "brokered: /where will start it again on the next ask; /state observes without starting" : undefined,
+      error: r.exited ? undefined : "SIGTERM then SIGKILL sent; the daemon has not exited",
+    }));
+  }).catch((e) => sendJSON(res, 502, { ok: false, serviceId, mediation: "broker", error: msg(e) }));
 }
 
 // ── ENSURE-AND-LOCATE ────────────────────────────────────────────────────────
@@ -1048,7 +1203,29 @@ function signalGroup(child, sig) {
   catch (_) { try { child.kill(sig); } catch (_) {} }
 }
 
-// Stop a backend and resolve only when it has actually EXITED — SIGTERM, then
+// Stop a PROXIED backend: drop the route's bookkeeping, then `stopChild`.
+function stopBackend(state) {
+  clearIdle(state);
+  // Drop any adoption claim: we are no longer relaying to that backend, and the
+  // next request must re-probe rather than trust a stale `true`. Note we do NOT
+  // signal it — an adopted backend is not ours to kill.
+  state.adoptedBackend = false;
+  return stopChild(state, state.route.serviceId);
+}
+
+// Stop a BROKERED daemon. `ensureBrokerChild` is deliberately not `ensureBackend`
+// — a broker has no internal-port rewrite, no idle timer and no relay waiting on
+// it — but STOPPING is the same act on both sides, so it is the same function.
+// Duplicating the SIGTERM/grace/SIGKILL/await-exit sequence to keep the two
+// paths visually separate would be duplicating the subtle part.
+//
+// Nothing here clears an adoption flag, because a broker keeps none: whether
+// this daemon is ours is probed at the moment it is asked (`controlBroker`).
+function stopBroker(state) {
+  return stopChild(state, state.broker.serviceId);
+}
+
+// Signal a child and resolve only when it has actually EXITED — SIGTERM, then
 // SIGKILL at the grace deadline. Stopping was previously treated as
 // instantaneous (`state.child = null`, reply sent), which is a belief about the
 // world stated one signal too early: the process could still hold its internal
@@ -1056,20 +1233,15 @@ function signalGroup(child, sig) {
 //
 // Resolves `{ had, exited }`: `had` distinguishes "there was nothing running"
 // from "it stopped", so a caller can report the difference instead of a blanket
-// success.
-function stopBackend(state) {
-  clearIdle(state);
+// success. `label` is only for the SIGKILL line — a broker has no `route`.
+function stopChild(state, label) {
   state.ready = null;
-  // Drop any adoption claim: we are no longer relaying to that backend, and the
-  // next request must re-probe rather than trust a stale `true`. Note we do NOT
-  // signal it — an adopted backend is not ours to kill.
-  state.adoptedBackend = false;
   const child = state.child;
   if (!child) {
     // A stop already in flight is the honest answer to a second stop.
     return (state.stopping || Promise.resolve()).then(() => ({ had: false, exited: true }));
   }
-  state.child = null; // no new proxying to it from here on
+  state.child = null; // nothing routes to it, or reports it, from here on
   const p = new Promise((resolve) => {
     let done = false;
     const finish = (exited) => {
@@ -1082,7 +1254,7 @@ function stopBackend(state) {
     child.once("exit", () => finish(true));
     signalGroup(child, "SIGTERM");
     const hard = setTimeout(() => {
-      console.log(`  ⚑ ${state.route.serviceId} ignored SIGTERM — SIGKILL`);
+      console.log(`  ⚑ ${label} ignored SIGTERM — SIGKILL`);
       signalGroup(child, "SIGKILL");
     }, STOP_GRACE_MS);
     const giveUp = setTimeout(() => finish(false), STOP_GRACE_MS + STOP_GIVEUP_MS);

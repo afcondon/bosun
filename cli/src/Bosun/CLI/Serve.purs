@@ -29,7 +29,7 @@ import Bosun.Reconcile (reconcile)
 import Bosun.Report (renderDrift, renderDriftKind, renderReject, renderServePlan)
 import Bosun.Health (Probe(..))
 import Bosun.Protocol (Locator, whereResultCodec)
-import Bosun.Serve (Broker, DriftKind(..), PortDrift, Redirect, Route, ServePlan, planDrift, serveDiff, servePlanWith)
+import Bosun.Serve (Broker, DriftKind(..), PortDrift, Redirect, Route, ServePlan, brokerStopVerdict, planDrift, serveDiff, servePlanWith, stopVerdictTag)
 import Bosun.Version (version)
 import Bosun.Atoms (unAbsPath, unPort)
 import Data.Argonaut.Core (Json)
@@ -41,7 +41,7 @@ import Data.Int as Int
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Either (Either(..))
-import Data.Function.Uncurried (Fn1, mkFn1)
+import Data.Function.Uncurried (Fn1, Fn2, mkFn1, mkFn2)
 import Data.Nullable (Nullable, toMaybe, toNullable)
 import Effect (Effect)
 import Effect.Console (log)
@@ -94,6 +94,17 @@ type BrokerInfo =
   , probe :: String
   , probePort :: Nullable Int
   , probePath :: Nullable String
+  -- What `/control/stop` may do to THIS broker, given the router's own child
+  -- handle and a probe just made: `Bosun.Serve.brokerStopVerdict`, closed over
+  -- this row's real `Probe`. It rides on the record rather than on `ServeConfig`
+  -- so the decision keeps the typed probe instead of a tag round-trip — the
+  -- shim has only tags to hand back, and reconstructing a `Probe` from one
+  -- would be inventing a fact to satisfy a signature.
+  --
+  -- Passed IN for the same reason `whereJson` is: this is a DECISION, and
+  -- decisions live in the core beside the admission rules, not as an if-chain
+  -- at the edge where nothing can test them.
+  , stopVerdict :: Fn2 Boolean Boolean String
   }
 
 -- | The `/where` answer, flattened the same way. The shim fills in the three
@@ -282,6 +293,7 @@ brokerInfo b =
   , probe: probeTag b.probe
   , probePort: toNullable (probeTcpPort b.probe)
   , probePath: toNullable (probeSocketPath b.probe)
+  , stopVerdict: mkFn2 \hasChild alive -> stopVerdictTag (brokerStopVerdict hasChild alive b.probe)
   }
 
 -- The wire tags for the probes `serve` can actually make. Everything else
