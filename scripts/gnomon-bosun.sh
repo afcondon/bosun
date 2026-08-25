@@ -37,6 +37,10 @@ stale(){
   [ -n "$(find "$BOSUN/cli" "$BOSUN/core" "$BOSUN/adapters" "$BOSUN/conformance/src" \
             -name '*.purs' -newer "$BIN" -print -quit 2>/dev/null)" ] && return 0
   [ -n "$(find "$BOSUN/conformance/go" -name '*.go' -newer "$BIN" -print -quit 2>/dev/null)" ] && return 0
+  # backend-go's own layers count too: the runtime, and (since 2026-08-24) the
+  # per-package foreign/ directory. A fix landing upstream must reach the cached
+  # binary, or the stress-testing this script exists for is testing yesterday.
+  [ -n "$(find "$BACKEND_GO/runtime.go" "$BACKEND_GO/foreign" -newer "$BIN" -print -quit 2>/dev/null)" ] && return 0
   return 1
 }
 
@@ -49,11 +53,16 @@ build(){
   ( cd "$BACKEND_GO" && spago run -- --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" ) >&2 \
     || { log "backend-go transpile failed"; exit 1; }
   cp "$BACKEND_GO/runtime.go" "$OUT/runtime.go"
-  # library decode foreigns + Bosun's CLI-edge twins (REAL Bosun_CLI_* symbols,
-  # so fixes like exec's setsid/reap propagate to the binary automatically).
-  cp "$BOSUN"/conformance/go/argonaut_core_foreign.go         "$OUT/"
-  cp "$BOSUN"/conformance/go/argonaut_parser_foreign.go       "$OUT/"
-  cp "$BOSUN"/conformance/go/foreign_object_foreign.go        "$OUT/"
+  # NOTE (2026-08-24): the LIBRARY decode foreigns — Foreign.Object,
+  # Data.Argonaut.{Core,Parser} — are no longer copied from here. They were
+  # Bosun carrying the backend's work, and they now live in backend-go's
+  # foreign/ layer, which links them in itself for any program whose dependency
+  # closure contains those modules. What remains below is Bosun's OWN FFI, which
+  # is the only kind conformance/go should ever hold.
+  #
+  # Consequence: this build needs a backend-go with that layer. Without it the
+  # link fails on Foreign_Object_*, and the remedy is to update backend-go, not
+  # to put the shims back.
   cp "$BOSUN"/conformance/go/bosun_io_foreign.go              "$OUT/"
   cp "$BOSUN"/conformance/go/bosun_exec_foreign.go            "$OUT/"
   cp "$BOSUN"/conformance/go/bosun_probe_foreign.go           "$OUT/"
