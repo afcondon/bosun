@@ -100,6 +100,12 @@ type cliBrokerSpec struct {
 	// the CORE weighs it, so both columns reach the same four-way answer from
 	// one tested rule rather than from two if-chains at two edges.
 	stopVerdict func(...any) any
+	// `Bosun.Serve.brokerDoor`, closed over whether this row declared a public
+	// port at all. Same arrangement as `stopVerdict` and for the same reason:
+	// `bound: false` carries four different situations, and which one it is is a
+	// decision, so it is weighed in the core where a test can reach it rather
+	// than by an if-chain here that only the Go column would ever run.
+	door func(...any) any
 }
 
 type cliBroker struct {
@@ -110,12 +116,18 @@ type cliBroker struct {
 	opMu sync.Mutex
 	mu   sync.Mutex
 
-	spec      cliBrokerSpec
-	cmd       *exec.Cmd
-	exited    chan struct{}
-	bound     bool
-	bindErr   any
-	spawnFail bool // the last ensure could not start it; retry on the next ask
+	spec    cliBrokerSpec
+	cmd     *exec.Cmd
+	exited  chan struct{}
+	bound   bool
+	bindErr any
+	// `aside`: the registered public port was already held when we went to bind
+	// it, so this router stepped out of the way. It is the `holderAnswers`
+	// evidence `brokerDoor` weighs, and it starts life at the `EADDRINUSE` —
+	// a bind that failed because something is there is a probe, of a sort.
+	aside          bool
+	asideCheckedAt any  // ISO-8601, or nil while nothing has ever looked
+	spawnFail      bool // the last ensure could not start it; retry on the next ask
 }
 
 type cliListener struct {
@@ -399,6 +411,9 @@ func cliRegisterBroker(b map[string]any) *cliBroker {
 	if sv, ok := _force(b["stopVerdict"]).(func(...any) any); ok {
 		spec.stopVerdict = sv
 	}
+	if d, ok := _force(b["door"]).(func(...any) any); ok {
+		spec.door = d
+	}
 	cliMu.Lock()
 	defer cliMu.Unlock()
 	// Carry the live child across a reload that did not change the entry —
@@ -416,6 +431,20 @@ func cliRegisterBroker(b map[string]any) *cliBroker {
 	}
 	cliBrokers[spec.serviceID] = st
 	return st
+}
+
+// Which of the four situations a `bound: false` is. The facts are read by the
+// caller under `st.mu` and passed in, so this never takes a lock and can be
+// called from inside one. A nil `door` means the row arrived without the core's
+// decision attached — a wiring fault, reported as `null` rather than as a tag
+// this file made up.
+func cliBrokerDoor(spec cliBrokerSpec, bound bool, bindErr any, aside bool) any {
+	if spec.door == nil {
+		return nil
+	}
+	return spec.door(map[string]any{
+		"bound": bound, "bindFailed": bindErr != nil, "holderAnswers": aside,
+	})
 }
 
 func cliBindBroker(b map[string]any) {
@@ -441,8 +470,16 @@ func cliBindBroker(b map[string]any) {
 		st.bound = false
 		if strings.Contains(err.Error(), "address already in use") {
 			st.bindErr = nil
+			// The bind that just failed IS evidence about the port, and here it is
+			// the only evidence there will ever be: this column has no sweep to
+			// re-probe it with (the `recheckAdopted` gap, ledgered in go-broker.sh).
+			firstAside := !st.aside
+			st.aside = true
+			st.asideCheckedAt = cliNow()
 			st.mu.Unlock()
-			fmt.Printf("  ≈ :%d already held — %s is brokered, so serve steps aside\n", *public, sid)
+			if firstAside {
+				fmt.Printf("  ≈ :%d already held — %s is brokered, so serve steps aside\n", *public, sid)
+			}
 		} else {
 			st.bindErr = err.Error()
 			st.mu.Unlock()
@@ -452,7 +489,7 @@ func cliBindBroker(b map[string]any) {
 	}
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	st.mu.Lock()
-	st.bound, st.bindErr = true, nil
+	st.bound, st.bindErr, st.aside = true, nil, false
 	st.mu.Unlock()
 	cliMu.Lock()
 	cliByPort[*public] = &cliListener{ln: ln, srv: srv, broker: st}
@@ -790,9 +827,12 @@ func cliUnbindPort(port int) {
 	// answered "go over there"; the service is on its own address holding
 	// whatever it holds, and unbinding a 307 is no reason to take an audio
 	// interface away from it.
+	// The adoption claim goes with the listener it was about: `aside` describes a
+	// port this router was standing off from, and it is no longer standing
+	// anywhere near it.
 	if l.broker != nil {
 		l.broker.mu.Lock()
-		l.broker.bound = false
+		l.broker.bound, l.broker.aside = false, false
 		l.broker.mu.Unlock()
 	}
 	if l.srv != nil {
@@ -1147,7 +1187,8 @@ func cliControlBroker(w http.ResponseWriter, st *cliBroker, stopping bool) {
 			return
 		}
 		st.mu.Lock()
-		hasChild, bound, bindErr := st.cmd != nil, st.bound, st.bindErr
+		hasChild, bound, bindErr, door := st.cmd != nil, st.bound, st.bindErr,
+			cliBrokerDoor(spec, st.bound, st.bindErr, st.aside)
 		st.mu.Unlock()
 		answered := res.ready || res.probe == "none"
 		code := 503
@@ -1160,10 +1201,10 @@ func cliControlBroker(w http.ResponseWriter, st *cliBroker, stopping bool) {
 			// evidence to be had — never from having just run the start command.
 			"up": res.ready || hasChild, "started": res.started, "probe": res.probe, "detail": res.detail,
 			"at": cliLocatorLabel(spec),
-			// The 307 door, which most brokers do not have. `bound: false` here is
-			// the ordinary portless case, not a bind failure — `bindError` is how
-			// the two are told apart.
-			"bound": bound, "bindError": bindErr,
+			// The 307 door, which most brokers do not have. `bound` alone cannot say
+			// which of four situations a `false` is, so `door` says it — `/state`
+			// reports the same word for the same reason.
+			"bound": bound, "bindError": bindErr, "door": door,
 		})
 		return
 	}
@@ -1267,6 +1308,12 @@ func cliStateBody() map[string]any {
 			"transport": st.spec.transport, "at": cliLocatorLabel(st.spec),
 			"url": cliNullStr(st.spec.url), "probe": st.spec.probe,
 			"pid": pid, "bound": st.bound, "bindError": st.bindErr,
+			// `bound: false` was carrying four situations — portless (the ordinary
+			// case), stepped aside, blocked by a bind error, and mid-reclaim. `door`
+			// names which; `doorCheckedAt` says when the port was last put to the
+			// test (null ⇒ never stood aside from).
+			"door":          cliBrokerDoor(st.spec, st.bound, st.bindErr, st.aside),
+			"doorCheckedAt": st.asideCheckedAt,
 		})
 		st.mu.Unlock()
 	}
