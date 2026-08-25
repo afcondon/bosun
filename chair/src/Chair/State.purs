@@ -5,12 +5,14 @@
 -- | how to launch it.
 module Chair.State
   ( RouteStatus
+  , BrokerStatus
   , RedirectInfo
   , RejectInfo
   , DriftInfo
   , RegistryInfo
   , StateView
   , driftEntries
+  , brokerEntries
   , decodeStateView
   , SuperviseState
   , SupervisionRow
@@ -46,6 +48,39 @@ type RouteStatus =
   -- does the router hold the public port? `false` + not external ⇒ nothing is
   -- listening, so no request can arrive and lazy-spawn can never fire
   , bound :: Maybe Boolean
+  , bindError :: Maybe String
+  }
+
+-- | One BROKERED service as the router currently finds it — a fourth bucket,
+-- | not a flavour of route, and it needs its own type because almost nothing in
+-- | `RouteStatus` applies. There is no `internalPort` (the service keeps its own
+-- | address), no `up` (readiness is whatever `probe` could establish, and for
+-- | half of them nothing could), and `publicPort` is frequently absent, which is
+-- | normal rather than a fault: es9-daemon is reached at `~/.es9/control.sock`
+-- | and link-spike over UDP multicast.
+-- |
+-- | Every field but `serviceId` is `Maybe`, for the reason the router's own
+-- | additive fields are: a router binary predating broker mode emits none of
+-- | this, and the Chair must degrade rather than fail to decode a fleet.
+-- |
+-- | `door` is the standing of the 307 listener on the registered public port —
+-- | `none`/`open`/`aside`/`reclaim`/`blocked` (`Bosun.Serve.doorTag`). It is a
+-- | separate fact from whether the daemon is running, and rendering it as one
+-- | would repeat the conflation the router had to be fixed for.
+type BrokerStatus =
+  { serviceId :: String
+  , publicPort :: Maybe Int
+  -- where it actually is, once running — the payload of `/where`
+  , at :: Maybe String
+  , transport :: Maybe String
+  -- which readiness check the plan chose; `"none"` means NOTHING WAS CHECKED,
+  -- never that a check failed
+  , probe :: Maybe String
+  -- did the router start this one? `Nothing` covers both "no" and an older
+  -- router, which is why it is not rendered as "down"
+  , pid :: Maybe Int
+  , door :: Maybe String
+  , doorCheckedAt :: Maybe String
   , bindError :: Maybe String
   }
 
@@ -92,12 +127,23 @@ type StateView =
   -- field exists to expose applies to Bosun's own parts).
   , drift :: Maybe (Array DriftInfo)
   , registry :: Maybe RegistryInfo
+  -- additive, same convention. Until this was read, `/state` reported brokered
+  -- services and the Chair showed them NOWHERE — the same "registered and
+  -- invisible" class the drift work exists to close, one bucket along
+  -- (RELAY-STALL-AND-BROKER-MODE.md §7.1).
+  , brokered :: Maybe (Array BrokerStatus)
   }
 
 -- | The drift list, absent-as-empty. An old router reports no drift because it
 -- | cannot compute any — which is honest, if unhelpful.
 driftEntries :: StateView -> Array DriftInfo
 driftEntries = fromMaybe [] <<< _.drift
+
+-- | The brokered list, absent-as-empty. A router predating broker mode brokers
+-- | nothing, so empty IS the truth for it — unlike `drift`, where absent means
+-- | "could not compute" and empty means "none".
+brokerEntries :: StateView -> Array BrokerStatus
+brokerEntries = fromMaybe [] <<< _.brokered
 
 -- argonaut-codecs derives the record decoder; `Maybe Int` for `pid` makes it
 -- optional/nullable, matching serve emitting `pid: null` when a backend is down.

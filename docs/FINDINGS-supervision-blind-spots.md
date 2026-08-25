@@ -114,11 +114,35 @@ Two addressing schemes and two rejection messages, neither of which says "you
 are asking the wrong component". Cheap fix: have each refusal name the other —
 *"not in this group; :3028 is served by the router, try `:3997/control`"*.
 
-**Half done, 2026-08-24.** The router's side now accepts `?service=<id>` (it had
-to: broker mode created daemons with no port to address) and its 404 names what
-it found — nothing at all, versus a 421 redirect to another host — instead of
-saying `no proxy route` to every one of them. The supervise side still answers
-`no service in this group` without pointing at the router.
+**FIXED, 2026-08-24.** The router's side accepts `?service=<id>` (it had to:
+broker mode created daemons with no port to address) and its 404 names what it
+found — nothing at all, versus brokered, versus a 421 redirect to another host —
+instead of saying `no proxy route` to every one of them.
+
+The group's side is `Bosun.Supervisor.addressService` +
+`Bosun.Report.renderAddressMiss`, shared by `supervise` and `docker` because
+both had the same one-sentence refusal. It splits **four** mistakes that were
+sharing it — the fourth and fifth were nobody's suspicion until the ADT made
+them ask:
+
+| asked | verdict | the refusal says |
+|---|---|---|
+| `?service=8790` | `LooksLikePort` | it is a port, this group has none to match it against, and `POST :3997/control/stop?port=8790` is the command wanted |
+| `?service=` (missing) | `Unnamed` | nothing was named; ids come from `GET /state` |
+| `?service=ticker:worker` on a group holding `ticker` | `NearMiss` | the id it does hold, and that this surface will not guess |
+| `?service=polyglot` on a group holding `polyglot:api` + `polyglot:site` | `Ambiguous` | both candidates, and that a control verb does not pick |
+| `?service=itajara` | `NotInGroup` | not here under any spelling, **and** that lazy-spawned services live in no group — go to the router |
+
+A `NearMiss` is reported, never acted on: restarting `itajara:worker` because
+someone typed `itajara` would be a control surface signalling something other
+than what it was asked for, which is the habit these refusals exist to prevent.
+
+What the group deliberately does NOT do is ask the router whether it holds the
+name. A synchronous HTTP call to another daemon on a refusal path buys a
+maybe-answer for a new failure mode (the router being down makes this refusal
+slow, or fail), and the router's own half is symmetrically local. The remedy is
+structural instead — name the other addressing scheme and where it lives, which
+is true whether or not the router happens to hold this particular id.
 
 ## 5. A performance daemon should not be lazy-spawned
 

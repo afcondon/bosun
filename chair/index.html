@@ -91,6 +91,9 @@
     .dot.down { color: var(--down); }
     /* adopted: the port is served, but by a process serve did not start */
     .dot.redirect { color: var(--redirect); }
+    /* a brokered service with no 307 door — no port to hold, by design, so the
+       dot must not read as a fault the way `down` would */
+    .dot.idle { color: var(--muted); }
     .toolbar { margin-top: 20px; display: flex; align-items: center; gap: 12px; }
     .btn {
       font: inherit; font-size: 13px; padding: 7px 14px; background: var(--panel);

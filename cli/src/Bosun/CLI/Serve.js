@@ -147,7 +147,42 @@ export const serveImpl = (config) => {
     // goes, and nothing else would ever clear `ready` — the route would proxy
     // to a dead internal port forever and never spawn again.
     const backends = states.filter((s) => s.adoptedBackend && !s.child);
-    if (adopted.length === 0 && backends.length === 0) return Promise.resolve();
+    // And the BROKERED doors, which this sweep did not walk at all — so a 307
+    // port adopted at bind time was never taken back, the very bug closed for
+    // proxy routes on 2026-08-17 living on in the new bucket (§7.4).
+    //
+    // A brokered service gets ONE arm here, not two, and the missing one is the
+    // point: there is no broker equivalent of the `adoptedBackend` check above,
+    // because a broker records no adoption claim to go stale. `ensureAndLocate`
+    // probes before it spawns and `brokerStopVerdict` re-derives ownership at
+    // the moment it is asked, so nothing about the PROCESS needs a clock. Only
+    // the LISTENER does — a port we stepped aside from has no other event that
+    // could ever tell us the holder left.
+    //
+    // Which also means: reclaiming a door must touch `bound`/`aside` and
+    // NOTHING else. Not `child`, not `ready`. The 307 listener only ever said
+    // "go over there"; whether the daemon is running is a separate question
+    // with a separate answer, and `unbindPort` already refuses to conflate them
+    // in the other direction.
+    const doors = [...brokers.values()].filter((s) => s.aside);
+    if (adopted.length === 0 && backends.length === 0 && doors.length === 0) return Promise.resolve();
+    const doorChecks = doors.map((s) =>
+      probePort(s.broker.publicPort).then((alive) => {
+        s.asideCheckedAt = new Date().toISOString();
+        if (alive) return;
+        console.log(`  ↺ :${s.broker.publicPort} holder is gone — reclaiming the 307 door for ${s.broker.serviceId}`);
+        s.aside = false;
+        const l = listeners.get(s.broker.publicPort);
+        // Only OUR listener for this broker, and only if it is not already
+        // listening: a reload may have replaced the entry (or dropped it, for a
+        // broker that no longer takes a port) between the probe and here. If
+        // something grabs the port first, the error handler re-adopts and says
+        // so, so losing the race is safe.
+        if (l && l.brokerState === s && l.server && !l.server.listening) {
+          l.server.listen(s.broker.publicPort, INTERNAL_HOST);
+        }
+      })
+    );
     const backendChecks = backends.map((s) =>
       probePort(s.route.internalPort).then((alive) => {
         if (alive) return;
@@ -157,7 +192,7 @@ export const serveImpl = (config) => {
         clearIdle(s);
       })
     );
-    return Promise.all(backendChecks.concat(adopted.map((s) =>
+    return Promise.all(doorChecks.concat(backendChecks).concat(adopted.map((s) =>
       probePort(s.route.publicPort).then((alive) => {
         s.externalCheckedAt = new Date().toISOString();
         if (alive) return;
@@ -189,7 +224,13 @@ export const serveImpl = (config) => {
     // an audio interface held by a process nobody is tracking any more).
     const state = existing && sameBroker(existing.broker, b)
       ? Object.assign(existing, { broker: b })
-      : { broker: b, child: null, ready: null, stopping: null, bound: false, bindError: null };
+      // `aside`: the registered public port was already held when we went to
+      // bind the 307 listener, so we stepped away from it. The broker-table
+      // twin of a proxy route's `external`, and re-derived the same way — see
+      // `recheckAdopted`. It says nothing whatever about the DAEMON: a door we
+      // do not hold and a service that is not running are unrelated facts.
+      : { broker: b, child: null, ready: null, stopping: null, bound: false, bindError: null,
+          aside: false, asideCheckedAt: null };
     brokers.set(b.serviceId, state);
     return state;
   };
@@ -210,14 +251,27 @@ export const serveImpl = (config) => {
       state.bindError = err.code === "EADDRINUSE" ? null : (err.code || err.message);
       state.bound = false;
       if (err.code === "EADDRINUSE") {
-        console.log(`  ≈ :${b.publicPort} already held — ${b.serviceId} is brokered, so serve steps aside`);
+        // Say it once, not once per reclaim attempt: a door we lose the race
+        // for is re-listened by the sweep, and a line per five seconds would
+        // bury everything else in the log.
+        if (!state.aside) {
+          console.log(`  ≈ :${b.publicPort} already held — ${b.serviceId} is brokered, so serve steps aside`);
+        }
+        // The bind that just failed IS evidence about the port, and the only
+        // evidence there is until the first sweep probes it.
+        state.aside = true;
+        state.asideCheckedAt = new Date().toISOString();
       } else {
         console.error(`  ✗ cannot bind :${b.publicPort} (${state.bindError}) — ${b.serviceId} 307 unavailable`);
       }
     });
+    // `on`, not `listen`'s one-shot callback, for the reason `bindRoute` gives:
+    // a reclaimed door listens a SECOND time and the callback form would not
+    // fire again, leaving `bound` false for a port we do hold.
     server.on("listening", () => {
       state.bound = true;
       state.bindError = null;
+      state.aside = false;
       console.log(`  bound :${b.publicPort} → 307 → ${locatorLabel(b)} (${b.serviceId}, brokered — no relay)`);
     });
     server.on("close", () => { state.bound = false; });
@@ -260,7 +314,11 @@ export const serveImpl = (config) => {
     // only answered "go over there"; the service is on its own address, holding
     // whatever it holds, and unbinding a 307 is no reason to take an audio
     // interface away from it. `applyReload` re-registers or drops the entry.
-    if (l.brokerState) l.brokerState.bound = false;
+    // The adoption claim goes with the listener it was about. Leaving `aside`
+    // set would leave the sweep probing a port this router no longer has a
+    // listener for, and — the moment the holder exits — trying to re-listen on
+    // a server that has just been closed and unregistered.
+    if (l.brokerState) { l.brokerState.bound = false; l.brokerState.aside = false; }
     console.log(`  ⊘ unbound :${port}`);
     const closed = new Promise((resolve) => {
       let done = false;
@@ -377,6 +435,16 @@ export const serveImpl = (config) => {
         pid: s.child ? s.child.pid : null,
         bound: !!s.bound,
         bindError: s.bindError,
+        // `bound: false` was carrying four situations and the comment beside it
+        // claimed two — portless (the ordinary case: es9-daemon is a socket),
+        // stepped aside, blocked by a bind error, and mid-reclaim were all one
+        // `false`. `door` names which (`Bosun.Serve.brokerDoor`), so the Chair
+        // and an operator can tell "no door by design" from "a door somebody
+        // else is holding". `holderAnswers` is `aside`: the last evidence about
+        // that port, from the EADDRINUSE or from the sweep that just ran.
+        door: s.broker.door({ bound: !!s.bound, bindFailed: s.bindError !== null, holderAnswers: !!s.aside }),
+        // when the adoption claim was last put to the test (null ⇒ never adopted)
+        doorCheckedAt: s.asideCheckedAt || null,
       })),
       redirects: [...redirects.entries()].map(([publicPort, r]) => ({ publicPort, ...r })),
       rejected,
@@ -780,11 +848,12 @@ function controlBroker(res, state, stopping) {
         probe: r.probe,
         detail: r.detail,
         at: locatorLabel(b),
-        // The 307 door, which most brokers do not have. `bound: false` here is
-        // the ordinary portless case, not a bind failure — `bindError` is how
-        // the two are told apart.
+        // The 307 door, which most brokers do not have. `bound` alone cannot
+        // say which of four situations a `false` is, so `door` says it —
+        // `/state` reports the same word for the same reason.
         bound: !!state.bound,
         bindError: state.bindError,
+        door: b.door({ bound: !!state.bound, bindFailed: state.bindError !== null, holderAnswers: !!state.aside }),
       });
     }).catch((e) => sendJSON(res, 502, { ok: false, serviceId, mediation: "broker", error: msg(e) }));
     return;

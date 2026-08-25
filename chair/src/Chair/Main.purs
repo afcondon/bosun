@@ -20,7 +20,7 @@ import Affjax.Web as AX
 import Bosun.View (AliasEntry, AliasOverride(..), AnalyzeRequest, AnalyzeResult, ConflictView, DeployErrorView, DivergenceView, RouteBacking, ServiceInstanceView, SvcView, TopologyEntry, ValidationView(..), analyzeRequestCodec, analyzeResultCodec)
 import Chair.Graph (Channel, GroupMode(..), NodeLive(..), allChannels, graphView, layoutPositions, nextMode)
 import Chair.Routes (Route(..), routeCodec)
-import Chair.State (DriftInfo, RedirectInfo, RejectInfo, RouteStatus, StateView, SuperviseState, decodeStateView, decodeSuperviseState, driftEntries)
+import Chair.State (BrokerStatus, DriftInfo, RedirectInfo, RejectInfo, RouteStatus, StateView, SuperviseState, brokerEntries, decodeStateView, decodeSuperviseState, driftEntries)
 import Chair.Topo (fetchTopology, fetchFleetNames)
 import Data.Argonaut.Decode.Error (printJsonDecodeError)
 import Data.Array as Array
@@ -145,6 +145,13 @@ data Action
   | Reload
   | Spawn Int                 -- serve: spawn a route by port (Cockpit table)
   | Stop Int                  -- serve: stop a route by port (Cockpit table)
+  -- serve: the same two verbs on a BROKERED service, keyed by id rather than
+  -- port. Not a variant of the above with a different argument type — half the
+  -- services broker mode exists for hold no port to be addressed by at all
+  -- (es9-daemon on a unix socket), so `?service=` is the only key that works
+  -- for the whole bucket.
+  | SpawnBroker String
+  | StopBroker String
   | GroupUp                   -- supervise: POST /control/up — bring the group up
   | GroupDown                 -- supervise: POST /control/down — hold the group down
   | Restart String            -- supervise: POST /control/restart?service=<id>
@@ -256,6 +263,12 @@ handleAction = case _ of
   Reload -> control Nothing "/control/reload"
   Spawn port -> control Nothing ("/control/spawn?port=" <> show port)
   Stop port -> control Nothing ("/control/stop?port=" <> show port)
+  -- Brokered rows go to the SAME router on the same two verbs; only the key
+  -- differs. Note that a brokered stop does not suspend the lazy-spawn — asking
+  -- `/where` again starts it — which is why the row's button says `stop` and
+  -- not `hold`.
+  SpawnBroker svc -> control Nothing ("/control/spawn?service=" <> svc)
+  StopBroker svc -> control Nothing ("/control/stop?service=" <> svc)
   -- supervise control: whole-group up/down (desired-state, stop HOLDS) + atomic
   -- per-element restart. All POST to the current project's supervise daemon.
   -- The Pending tag drives the "working" amber + button-disable until the
@@ -825,15 +838,26 @@ cockpitBody busy names v =
   HH.div_
     [ HH.div [ cls "stats" ]
         [ stat "admitted" (show (Array.length (Array.filter _.up v.routes)) <> " / " <> show (Array.length v.routes) <> " up")
+        -- Brokered services count SEPARATELY from admitted, because "up" is not
+        -- the same claim: for a proxy route bosun holds the port and knows, and
+        -- for a broker it holds a pid or a probe or (link-spike over multicast)
+        -- neither. Counting the ones bosun started is the only honest number.
+        , stat "brokered" (show (Array.length (Array.filter (isJust <<< _.pid) brokers)) <> " / " <> show (Array.length brokers) <> " ours")
         , stat "redirect" (show (Array.length v.redirects))
         , stat "rejected" (show (Array.length v.rejected))
         , stat "drift" (show (Array.length (driftEntries v)))
         ]
     , driftPanel busy names v
     , sectionTable "ADMITTED" (Array.length v.routes) [ "port", "service", "state", "backend", "pid", "" ] (map (routeRow names) v.routes)
+    -- Its own section, directly under ADMITTED, because these ARE served here —
+    -- they are just not relayed. Putting them below REJECTED would file a
+    -- working service with the refusals.
+    , sectionTable "BROKERED (no relay)" (Array.length brokers) [ "port", "service", "at", "307 door", "probe", "pid", "" ] (map (brokerRow names) brokers)
     , sectionTable "REDIRECT (421)" (Array.length v.redirects) [ "port", "service", "host", "→ target" ] (map (redirectRow names) v.redirects)
     , sectionTable "REJECTED" (Array.length v.rejected) [ "port", "service", "reason" ] (map (rejectRow names) v.rejected)
     ]
+  where
+  brokers = brokerEntries v
 
 -- | The third source of truth, made visible. Silent when the registry and the
 -- | router agree (the overwhelmingly common case) — and when they don't, it sits
@@ -929,6 +953,85 @@ stateClass = case _ of
   External -> "redirect"
   Unbound -> "down"
 
+-- | A BROKERED service. Deliberately NOT a `routeRow` with some columns blank:
+-- | almost nothing carries over. There is no internal port (the service keeps
+-- | its own address), no `up` column (readiness is whatever `probe` could
+-- | establish, and for a UDP fan-out nothing could), and an absent port is
+-- | normal rather than a fault.
+-- |
+-- | The button offers `stop` ONLY when the router holds the pid, on the same
+-- | rule `routeRow` follows: bosun does not kill what bosun did not start, so
+-- | serve answers 409 for a stop with no child, and a surface that offers the
+-- | button which earns the refusal teaches you to ignore refusals. `spawn` is
+-- | always safe — it is ensure-and-locate, so on something already running it
+-- | answers `started: false` rather than starting a second copy.
+brokerRow :: forall m. Map String String -> BrokerStatus -> H.ComponentHTML Action () m
+brokerRow names b =
+  HH.tr_
+    [ td (maybe "—" show b.publicPort)
+    , td (serviceLabel names b.serviceId)
+    , td (fromMaybe "—" b.at)
+    , HH.td_
+        [ HH.span [ cls ("dot " <> doorClass door) ] [ HH.text (doorLabel door) ]
+        , case b.bindError of
+            Nothing -> HH.text ""
+            Just e -> HH.span [ cls "muted" ] [ HH.text (" " <> e) ]
+        ]
+    -- `none` here means NOTHING WAS CHECKED, which is not "down" — the same
+    -- distinction `bosun where` prints and PRINCIPLES.md insists on everywhere
+    -- an observation is reported.
+    , td (case fromMaybe "" b.probe of
+            "none" -> "not checked"
+            "" -> "—"
+            p -> p)
+    , td (maybe "—" show b.pid)
+    , HH.td_
+        [ HH.button
+            [ cls "btn sm"
+            , HE.onClick \_ -> if isJust b.pid then StopBroker b.serviceId else SpawnBroker b.serviceId
+            ]
+            [ HH.text (if isJust b.pid then "stop" else "spawn") ]
+        ]
+    ]
+  where
+  door = readDoor b.door
+
+-- | The standing of a broker's 307 listener, as an ADT rather than the wire
+-- | string it arrives as. `Unstated` is the case the router's five tags do not
+-- | cover: a binary predating the field says nothing, which is not the same
+-- | claim as "this service has no door" and must not draw as one.
+data Door = DoorNone | DoorOpen | DoorAside | DoorReclaim | DoorBlocked | DoorUnstated
+
+readDoor :: Maybe String -> Door
+readDoor = case _ of
+  Just "none" -> DoorNone
+  Just "open" -> DoorOpen
+  Just "aside" -> DoorAside
+  Just "reclaim" -> DoorReclaim
+  Just "blocked" -> DoorBlocked
+  _ -> DoorUnstated
+
+doorLabel :: Door -> String
+doorLabel = case _ of
+  DoorNone -> "no port"
+  DoorOpen -> "307"
+  DoorAside -> "held elsewhere"
+  DoorReclaim -> "reclaiming"
+  DoorBlocked -> "unbindable"
+  DoorUnstated -> "—"
+
+-- `redirect` for `aside` on purpose: it is the same amber the ADMITTED table
+-- uses for a port held by somebody bosun did not start, and it is the same
+-- situation one bucket along.
+doorClass :: Door -> String
+doorClass = case _ of
+  DoorNone -> "idle"
+  DoorOpen -> "up"
+  DoorAside -> "redirect"
+  DoorReclaim -> "redirect"
+  DoorBlocked -> "down"
+  DoorUnstated -> "idle"
+
 redirectRow :: forall m. Map String String -> RedirectInfo -> H.ComponentHTML Action () m
 redirectRow names r = HH.tr_ [ td (show r.publicPort), td (serviceLabel names r.serviceId), td r.host, td r.target ]
 
@@ -978,9 +1081,18 @@ liveMap sv a =
   where
   routeStatus = Map.fromFoldable (map (\r -> r.serviceId /\ (if r.up then LiveUp else LiveDown)) sv.routes)
   redirectIds = Set.fromFoldable (map _.serviceId sv.redirects)
+  -- A brokered service is `LiveUp` only when the router holds its pid. It is
+  -- NOT `LiveDown` otherwise: the router genuinely does not know — a daemon
+  -- started by hand, or one whose probe is `none`, is running or not running
+  -- and no evidence here can say which. `LiveUnknown` draws no dot, which is
+  -- the right thing to draw for a fact nobody has.
+  brokerUp = Set.fromFoldable (map _.serviceId (Array.filter (isJust <<< _.pid) (brokerEntries sv)))
   statusFor canon = case Map.lookup canon routeStatus of
     Just s -> s
-    Nothing -> if Set.member canon redirectIds then LiveRedirect else LiveUnknown
+    Nothing
+      | Set.member canon redirectIds -> LiveRedirect
+      | Set.member canon brokerUp -> LiveUp
+      | otherwise -> LiveUnknown
 
 -- | Map each graph node id → its serve public port, for the armed control mode.
 -- | Only serve ROUTES are controllable (redirects live on another host; rejects

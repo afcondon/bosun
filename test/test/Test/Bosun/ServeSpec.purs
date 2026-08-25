@@ -14,7 +14,7 @@ import Bosun.Error (SdiViolation(..))
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Health (Probe(..))
 import Bosun.Reachability (hostPort, unixSocket)
-import Bosun.Serve (DriftKind(..), Mediation(..), RejectReason(..), StopVerdict(..), brokerStopVerdict, planDrift, readMediation, serveDiff, servePlan, servePlanWith, stopVerdictTag)
+import Bosun.Serve (BrokerDoor(..), DriftKind(..), Mediation(..), RejectReason(..), StopVerdict(..), brokerDoor, brokerStopVerdict, doorTag, planDrift, readMediation, serveDiff, servePlan, servePlanWith, stopVerdictTag)
 import Bosun.Service (LooseService, mkDeployment)
 import Data.Array (head)
 import Data.Either (Either(..))
@@ -322,6 +322,55 @@ spec = describe "Bosun.Serve.servePlan" do
     it "the wire tags the shim answers with are the four, distinctly" do
       map stopVerdictTag [ Signal, Adopted, Unknown, Absent ]
         `shouldEqual` [ "signal", "adopted", "unknown", "absent" ]
+
+  -- A brokered service's 307 LISTENER, which is not its process. `/state`
+  -- reported it as one `bound :: Boolean` carrying four situations, and the
+  -- sweep that reclaims an adopted port walked the proxy table only — so a
+  -- brokered public port could be adopted and never taken back (§7.4).
+  describe "brokerDoor (the 307 listener on a broker's registered port)" do
+    let
+      facts declaresPort bound bindFailed holderAnswers =
+        { declaresPort, bound, bindFailed, holderAnswers }
+
+    it "no declared public port ⇒ no door at all, which is the ordinary case" do
+      -- es9-daemon is reached at ~/.es9/control.sock and link-spike over UDP
+      -- multicast: neither has a port to hold, and neither is a fault.
+      brokerDoor (facts false false false false) `shouldEqual` NoDoor
+
+    it "the router holds it ⇒ open" do
+      brokerDoor (facts true true false false) `shouldEqual` DoorOpen
+
+    it "stepped aside and the holder still answers ⇒ aside: stay out of the way" do
+      brokerDoor (facts true false false true) `shouldEqual` DoorAside
+
+    it "stepped aside and the holder has gone ⇒ reclaim, the proxy path's rule" do
+      -- The whole of §7.4: without this the answer was `DoorAside` forever, and
+      -- the 307 door stayed shut for a port nothing was listening on.
+      brokerDoor (facts true false false false) `shouldEqual` DoorReclaim
+
+    it "a bind that failed for another reason is blocked, never reclaimable" do
+      -- EACCES will fail again in five seconds and in five hours. Re-listening
+      -- on a clock would be a permanent no-op dressed as recovery, so the
+      -- verdict is distinct from the step-aside a probe CAN clear.
+      brokerDoor (facts true false true false) `shouldEqual` DoorBlocked
+      brokerDoor (facts true false true true) `shouldEqual` DoorBlocked
+
+    it "portless beats everything: a door that does not exist cannot be blocked" do
+      brokerDoor (facts false false true true) `shouldEqual` NoDoor
+
+    it "`bound: false` alone is four different findings, which is why it was not enough" do
+      -- The defect stated as a test: every one of these was a `false` in
+      -- /state, and three of the four want different operator responses.
+      map brokerDoor
+        [ facts false false false false   -- portless by design
+        , facts true false false true     -- somebody else holds the port
+        , facts true false false false    -- nobody holds it; we are taking it back
+        , facts true false true false     -- we cannot hold it, and never will
+        ] `shouldEqual` [ NoDoor, DoorAside, DoorReclaim, DoorBlocked ]
+
+    it "the wire tags /state reports are the five, distinctly" do
+      map doorTag [ NoDoor, DoorOpen, DoorAside, DoorReclaim, DoorBlocked ]
+        `shouldEqual` [ "none", "open", "aside", "reclaim", "blocked" ]
 
   describe "serveDiff (SIGHUP hot-reload)" do
     let planOf = servePlan <<< mkDeployment

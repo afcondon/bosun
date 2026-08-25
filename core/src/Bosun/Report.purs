@@ -23,6 +23,7 @@ module Bosun.Report
   , renderReject
   , renderDrift
   , renderDriftKind
+  , renderAddressMiss
   ) where
 
 import Prelude
@@ -39,6 +40,7 @@ import Bosun.Protocol (Locator)
 import Bosun.Selector (Selector)
 import Bosun.Serve (Broker, DriftKind(..), PortDrift, RejectReason(..), Redirect, Rejection, Route, ServePlan)
 import Bosun.Service (unServiceRef)
+import Bosun.Supervisor (AddressMiss(..))
 import Data.Array (filter, groupBy, length, mapWithIndex, null, sortWith)
 import Data.Array.NonEmpty as NEA
 import Data.Foldable (intercalate)
@@ -358,3 +360,51 @@ probeShortLabel = case _ of
   SocketReady _ -> "socket-ready"
   NotifyReady -> "notify-ready"
   NoProbe -> "no-probe"
+
+-- | The refusal a group's control surface gives when `?service=` named nothing
+-- | it holds (`Bosun.Supervisor.addressService`).
+-- |
+-- | Every one of these has to do three things, which is the bar the router's
+-- | own 404 set in bd28adc: name what is TRUE, say why this component will not
+-- | do the thing, and say what to do next. The old sentence — `restart: no
+-- | service `X` in this group` — did the first only, and its truth is exactly
+-- | what makes it misleading: it reads as "that daemon is not running" about a
+-- | daemon that is running fine somewhere this component cannot see.
+-- |
+-- | `verb` is the control verb refusing (`restart` today; `up`/`down` take no
+-- | argument). `routerPort` is where the OTHER addressing scheme lives, passed
+-- | in rather than hardcoded here — the core does not get to know the CLI's
+-- | port constant.
+renderAddressMiss :: { verb :: String, asked :: String, routerPort :: Int } -> AddressMiss -> String
+renderAddressMiss ctx = case _ of
+  Unnamed ->
+    ctx.verb <> ": no service named. This group addresses services by id — "
+      <> "POST /control/" <> ctx.verb <> "?service=<id> — and GET /state lists the ids it holds."
+  LooksLikePort p ->
+    ctx.verb <> ": `" <> show p <> "` is a port, and a supervise group has no port to match it "
+      <> "against — it addresses services by id, and GET /state lists the ids it holds. "
+      <> "Ports are the ROUTER's key: if :" <> show p <> " is a lazy-spawned service it is in no "
+      <> "group at all, and POST :" <> show ctx.routerPort <> "/control/" <> routerVerb ctx.verb
+      <> "?port=" <> show p <> " is the command you want."
+  NearMiss sid ->
+    ctx.verb <> ": no service `" <> ctx.asked <> "` in this group, but it holds `" <> unServiceId sid
+      <> "`. This surface will not guess which service you meant — retry with the id exactly as "
+      <> "GET /state prints it."
+  Ambiguous ids ->
+    ctx.verb <> ": no service `" <> ctx.asked <> "` in this group, and " <> show (length ids)
+      <> " of its services could be meant — " <> intercalate ", " (map (\i -> "`" <> unServiceId i <> "`") ids)
+      <> ". Name one; a control verb does not pick for you."
+  NotInGroup ->
+    ctx.verb <> ": no service `" <> ctx.asked <> "` in this group, under that spelling or any other. "
+      <> "GET /state lists the ids it holds. A service can also be absent because it is LAZY-SPAWNED "
+      <> "rather than supervised — those belong to the router on :" <> show ctx.routerPort
+      <> " and are in no group: try GET :" <> show ctx.routerPort <> "/state, then POST :"
+      <> show ctx.routerPort <> "/control/" <> routerVerb ctx.verb <> "?service=" <> ctx.asked <> "."
+
+-- The router has no `restart`: it spawns and it stops, and a restart there is
+-- the two in order. Pointing an operator at a verb that would 404 would undo
+-- the whole point of the sentence.
+routerVerb :: String -> String
+routerVerb = case _ of
+  "restart" -> "stop"
+  v -> v

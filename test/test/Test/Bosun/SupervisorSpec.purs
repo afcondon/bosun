@@ -11,17 +11,20 @@ import Prelude
 import Bosun.Atoms (ServiceId, mkEnvVar, mkServiceId, unServiceId)
 import Bosun.Plan (Reason(..), Status(..))
 import Bosun.Service (Deployment, Service, mkDeployment, unValidatedDeployment)
-import Bosun.Supervisor (Observation, SupConfig, SvcState, backoffMs, emptySupState, forgetLaunches, initialSvc, recordLaunches, refine, superviseDiff)
+import Bosun.Report (renderAddressMiss)
+import Bosun.Serve (controlPort)
+import Bosun.Supervisor (AddressMiss(..), Observation, SupConfig, SvcState, addressService, backoffMs, emptySupState, forgetLaunches, initialSvc, recordLaunches, refine, superviseDiff)
 import Bosun.Validate (validate)
 import Data.Either (Either(..))
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.String as String
 import Data.Tuple (Tuple(..))
 import Data.Validation.Semigroup (toEither)
 import Test.Bosun.ApplySpec (procLeaf, procLeafEnv)
 import Test.Spec (Spec, describe, it)
-import Test.Spec.Assertions (shouldEqual)
+import Test.Spec.Assertions (shouldEqual, shouldNotEqual)
 
 sid :: String -> ServiceId
 sid = mkServiceId
@@ -192,3 +195,73 @@ spec = describe "Bosun.Supervisor" do
         st' = forgetLaunches [ sid "drop" ] st
       Map.member (sid "drop") st' `shouldEqual` false
       Map.member (sid "keep") st' `shouldEqual` true
+
+  -- `serve` addresses routes by PORT; a supervise group addresses services by
+  -- ID. Asking the wrong one used to answer `no service `X` in this group` for
+  -- four different mistakes — true, and it reads as "that daemon is not
+  -- running" about a daemon that is running fine somewhere this component
+  -- cannot see (FINDINGS-supervision-blind-spots.md §4). The router's half was
+  -- fixed in bd28adc; this is the group's half.
+  describe "addressService — reading a ?service= argument against a group" do
+    let group = [ sid "itajara:worker", sid "continuo:worker", sid "ticker" ]
+
+    it "the exact canonical id is what the surface acts on" do
+      addressService group "itajara:worker" `shouldEqual` Right (sid "itajara:worker")
+
+    it "a port is the ROUTER's key and can never be a service id" do
+      -- The trap itself: `?service=3028` on a group.
+      addressService group "3028" `shouldEqual` Left (LooksLikePort 3028)
+
+    it "a missing ?service= is its own mistake, not an unnamed service" do
+      -- It used to land in the same sentence, with empty backticks.
+      addressService group "" `shouldEqual` Left Unnamed
+
+    it "a bare slug where the group holds `slug:role` is a near miss, and is NAMED" do
+      addressService group "itajara" `shouldEqual` Left (NearMiss (sid "itajara:worker"))
+
+    it "and a `slug:role` where the group holds the bare compose name, the other way" do
+      addressService group "ticker:worker" `shouldEqual` Left (NearMiss (sid "ticker"))
+
+    it "a near miss is REPORTED, never acted on — no Right comes back from one" do
+      -- A control surface that restarts something other than what it was asked
+      -- for is the habit these refusals exist to prevent.
+      addressService group "itajara" `shouldNotEqual` Right (sid "itajara:worker")
+
+    it "two services under one slug is a different answer again: name which" do
+      let two = [ sid "polyglot:site", sid "polyglot:api" ]
+      addressService two "polyglot" `shouldEqual` Left (Ambiguous [ sid "polyglot:site", sid "polyglot:api" ])
+
+    it "nothing under any spelling ⇒ not in this group" do
+      addressService group "es9-daemon" `shouldEqual` Left NotInGroup
+
+    it "the five findings are distinct — one sentence for four of them was the bug" do
+      map (addressService group) [ "", "3028", "itajara", "es9-daemon" ]
+        `shouldEqual` [ Left Unnamed, Left (LooksLikePort 3028), Left (NearMiss (sid "itajara:worker")), Left NotInGroup ]
+
+  describe "renderAddressMiss — the refusal names what to do next" do
+    let ctx asked = { verb: "restart", asked, routerPort: controlPort }
+        has needle hay = String.contains (String.Pattern needle) hay
+
+    it "a port refusal sends the operator to the router, with the command" do
+      let m = renderAddressMiss (ctx "3028") (LooksLikePort 3028)
+      has "is a port" m `shouldEqual` true
+      has "POST :3997/control/stop?port=3028" m `shouldEqual` true
+
+    it "and it points at `stop`, not `restart`: the router has no restart verb" do
+      -- Sending someone to a verb that would 404 would undo the point of the
+      -- sentence.
+      has "/control/restart?port=" (renderAddressMiss (ctx "3028") (LooksLikePort 3028)) `shouldEqual` false
+
+    it "a near miss prints the full id, so the retry is unambiguous" do
+      has "`itajara:worker`" (renderAddressMiss (ctx "itajara") (NearMiss (sid "itajara:worker"))) `shouldEqual` true
+
+    it "an absent service names the lazy-spawn case rather than only the group" do
+      let m = renderAddressMiss (ctx "itajara") NotInGroup
+      has "LAZY-SPAWNED" m `shouldEqual` true
+      has ":3997/state" m `shouldEqual` true
+
+    it "every refusal says where to look, so none of them is only a `no`" do
+      let msgs = map (renderAddressMiss (ctx "x"))
+            [ Unnamed, LooksLikePort 3028, NearMiss (sid "a:b"), Ambiguous [ sid "a:b", sid "a:c" ], NotInGroup ]
+      map (\m -> has "/state" m || has "Name one" m) msgs
+        `shouldEqual` [ true, true, true, true, true ]

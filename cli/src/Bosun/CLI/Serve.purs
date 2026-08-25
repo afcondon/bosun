@@ -29,7 +29,7 @@ import Bosun.Reconcile (reconcile)
 import Bosun.Report (renderDrift, renderDriftKind, renderReject, renderServePlan)
 import Bosun.Health (Probe(..))
 import Bosun.Protocol (Locator, whereResultCodec)
-import Bosun.Serve (Broker, DriftKind(..), PortDrift, Redirect, Route, ServePlan, brokerStopVerdict, planDrift, serveDiff, servePlanWith, stopVerdictTag)
+import Bosun.Serve (Broker, DriftKind(..), PortDrift, Redirect, Route, ServePlan, brokerDoor, brokerStopVerdict, controlPort, doorTag, planDrift, serveDiff, servePlanWith, stopVerdictTag)
 import Bosun.Version (version)
 import Bosun.Atoms (unAbsPath, unPort)
 import Data.Argonaut.Core (Json)
@@ -39,7 +39,7 @@ import Data.Array as A
 import Data.Foldable (for_)
 import Data.Int as Int
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromMaybe, maybe)
+import Data.Maybe (Maybe(..), fromMaybe, isJust, maybe)
 import Data.Either (Either(..))
 import Data.Function.Uncurried (Fn1, Fn2, mkFn1, mkFn2)
 import Data.Nullable (Nullable, toMaybe, toNullable)
@@ -105,6 +105,12 @@ type BrokerInfo =
   -- decisions live in the core beside the admission rules, not as an if-chain
   -- at the edge where nothing can test them.
   , stopVerdict :: Fn2 Boolean Boolean String
+  -- The standing of this broker's 307 door — `Bosun.Serve.brokerDoor`, closed
+  -- over whether the row declared a public port at all. A record rather than
+  -- three positional `Boolean`s: at the JS call site `door(bound, false, true)`
+  -- is unreadable, and these three are exactly the kind of same-typed
+  -- neighbours that get transposed.
+  , door :: Fn1 { bound :: Boolean, bindFailed :: Boolean, holderAnswers :: Boolean } String
   }
 
 -- | The `/where` answer, flattened the same way. The shim fills in the three
@@ -171,9 +177,11 @@ foreign import serveImpl :: EffectFn1 ServeConfig Unit
 
 -- | The read-only JSON status endpoint, off the public-port range and clear of
 -- | SDI's own :3998. A constant, not an option: it is the address the Chair,
--- | chair-server and `bosun reload` all know without being told.
+-- | chair-server and `bosun reload` all know without being told. Defined in the
+-- | core (`Bosun.Serve.controlPort`) because a supervise group has to name it
+-- | too; kept exported here because this is where every caller already looks.
 statusPort :: Int
-statusPort = 3997
+statusPort = controlPort
 
 -- | `statusPort`, unless `BOSUN_SERVE_STATUS_PORT` says otherwise. The override
 -- | exists so a SCRATCH router can be stood up beside the live one — a router
@@ -294,6 +302,13 @@ brokerInfo b =
   , probePort: toNullable (probeTcpPort b.probe)
   , probePath: toNullable (probeSocketPath b.probe)
   , stopVerdict: mkFn2 \hasChild alive -> stopVerdictTag (brokerStopVerdict hasChild alive b.probe)
+  , door: mkFn1 \f -> doorTag
+      (brokerDoor
+        { declaresPort: isJust b.publicPort
+        , bound: f.bound
+        , bindFailed: f.bindFailed
+        , holderAnswers: f.holderAnswers
+        })
   }
 
 -- The wire tags for the probes `serve` can actually make. Everything else
