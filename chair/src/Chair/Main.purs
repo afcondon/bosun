@@ -20,8 +20,10 @@ import Affjax.Web as AX
 import Bosun.View (AliasEntry, AliasOverride(..), AnalyzeRequest, AnalyzeResult, ConflictView, DeployErrorView, DivergenceView, RouteBacking, ServiceInstanceView, SvcView, TopologyEntry, ValidationView(..), analyzeRequestCodec, analyzeResultCodec)
 import Chair.Graph (Channel, GroupMode(..), NodeLive(..), allChannels, graphView, layoutPositions, nextMode)
 import Chair.Routes (Route(..), routeCodec)
-import Chair.State (BrokerStatus, DriftInfo, RedirectInfo, RejectInfo, RouteStatus, StateView, SuperviseState, brokerEntries, decodeStateView, decodeSuperviseState, driftEntries)
+import Chair.State (unsettledTeardowns, BrokerStatus, DriftInfo, RedirectInfo, RejectInfo, RouteStatus, StateView, SuperviseState, brokerEntries, decodeStateView, decodeSuperviseState, driftEntries)
 import Chair.Topo (fetchTopology, fetchFleetNames)
+import Data.Argonaut.Core (Json)
+import Data.Argonaut.Decode (JsonDecodeError, decodeJson)
 import Data.Argonaut.Decode.Error (printJsonDecodeError)
 import Data.Array as Array
 import Data.Codec.Argonaut as CA
@@ -33,6 +35,7 @@ import Data.Maybe (Maybe(..), fromMaybe, isJust, maybe)
 import Data.Set (Set)
 import Data.Set as Set
 import Data.String as String
+import Data.Tuple (Tuple(..))
 import Data.Tuple.Nested (type (/\), (/\))
 import Foreign.Object as FO
 import Effect (Effect)
@@ -105,6 +108,12 @@ type State =
   , ticks :: Int
   , busy :: Boolean
   , controlPending :: Maybe Pending  -- in-flight control op → amber wash + disabled group buttons
+  -- | What the last control verb answered. Until now the Chair posted with
+  -- | `RF.ignore` and threw the body away, so a refusal — or a `down` that
+  -- | stopped nothing — reached the daemon log and no human. A surface that
+  -- | discards the one answer it asked for is the same failure the teardown
+  -- | verdicts exist to end, one layer up.
+  , lastControl :: Maybe { ok :: Boolean, message :: String }
   -- ingestion (pillar 1)
   , composePath :: String
   , registryPath :: String
@@ -198,6 +207,7 @@ component =
     { initialState: \_ ->
         { route: Projects, currentProject: Nothing
         , cockpit: Nothing, superv: Nothing, cockErr: Nothing, ticks: 0, busy: false, controlPending: Nothing
+        , lastControl: Nothing
         , composePath: "", registryPath: "", analysis: Nothing, anaErr: Nothing, anaLoading: false
         , overrides: [], mergeName: "", mergeCanon: ""
         , graphFocus: Nothing, graphSelect: Nothing, groupMode: ByDeps
@@ -336,10 +346,26 @@ controlBase s = case s.currentProject >>= _.supervise of
 control :: forall o. Maybe Pending -> String -> H.HalogenM State Action () o Aff Unit
 control pend path = do
   base <- H.gets controlBase
-  H.modify_ _ { busy = true, controlPending = pend }
-  _ <- H.liftAff (AX.post RF.ignore (base <> path) Nothing)
-  H.modify_ _ { busy = false, controlPending = Nothing }
+  H.modify_ _ { busy = true, controlPending = pend, lastControl = Nothing }
+  res <- H.liftAff (AX.post RF.json (base <> path) Nothing)
+  -- A transport failure is reported as a refusal rather than swallowed: from
+  -- where the operator sits, "the daemon did not answer" and "the daemon said
+  -- no" are both "it did not happen", and only one of them used to be visible.
+  let
+    reply = case res of
+      Left err -> { ok: false, message: "no answer from the daemon — " <> AX.printError err }
+      Right resp -> case decodeControlReply resp.body of
+        Left _ -> { ok: true, message: "" }
+        Right r -> r
+  H.modify_ _ { busy = false, controlPending = Nothing, lastControl = Just reply }
   refresh
+
+-- | `{ ok, message }`, the shape every `/control` verb answers with since
+-- | `b45bb21`. Decoded leniently — an older daemon answering something else
+-- | leaves the Chair silent rather than showing it a decode error it cannot act
+-- | on.
+decodeControlReply :: Json -> Either JsonDecodeError { ok :: Boolean, message :: String }
+decodeControlReply = decodeJson
 
 pollLoop :: forall o. H.HalogenM State Action () o Aff Unit
 pollLoop = do
@@ -818,6 +844,39 @@ projCard _ controllable p =
     , HH.div [ cls "proj-blurb" ] [ HH.text p.blurb ]
     ]
 
+-- | What the last control verb answered, when it is worth saying.
+-- |
+-- | Shown for a refusal always, and for a success only when the daemon had
+-- | something to add — a `down` that stopped everything says "2 stopped" and
+-- | that is worth a line; an `up` says nothing interesting and gets none.
+controlNotice :: forall m. State -> H.ComponentHTML Action () m
+controlNotice s = case s.lastControl of
+  Nothing -> HH.text ""
+  Just r
+    | r.message == "" -> HH.text ""
+    | otherwise -> HH.div [ cls (if r.ok then "muted" else "error") ] [ HH.text r.message ]
+
+-- | The services whose last teardown did not settle.
+-- |
+-- | This is the half that survives a refresh. `controlNotice` shows the answer
+-- | to the click that just happened and is gone on the next one; `/state`
+-- | carries the verdict until the service is launched again, so a partial
+-- | teardown stays visible to whoever looks next — including someone who was
+-- | not the one who clicked.
+teardownNotice :: forall m. State -> H.ComponentHTML Action () m
+teardownNotice s = case s.superv of
+  Nothing -> HH.text ""
+  Just sv -> case unsettledTeardowns sv of
+    [] -> HH.text ""
+    rows ->
+      HH.div [ cls "error" ]
+        ( [ HH.strong_ [ HH.text (show (Array.length rows) <> " service(s) did not stop") ] ]
+            <> map row rows
+        )
+      where
+      row (Tuple sid t) =
+        HH.div_ [ HH.text ("  " <> sid <> " — " <> t.verdict) ]
+
 -- ── cockpit view ─────────────────────────────────────────────────────────────
 
 renderCockpit :: forall m. State -> H.ComponentHTML Action () m
@@ -828,6 +887,8 @@ renderCockpit s =
         , if s.busy then HH.span [ cls "muted" ] [ HH.text "working…" ] else HH.text ""
         ]
     , maybe (HH.text "") (\e -> HH.div [ cls "error" ] [ HH.text ("serve unreachable — " <> e) ]) s.cockErr
+    , controlNotice s
+    , teardownNotice s
     , case s.cockpit of
         Nothing -> HH.p [ cls "muted" ] [ HH.text "waiting for serve…" ]
         Just v -> cockpitBody s.busy s.fleetNames v

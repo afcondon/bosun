@@ -18,8 +18,11 @@ import Bosun.Plan (Snapshot, Status(..), plan)
 import Bosun.Report (renderCommand)
 import Bosun.Service (Deployment, LooseService, mkDeployment)
 import Bosun.Validate (validate)
+import Data.Array as A
 import Data.Either (Either(..))
 import Data.Map as Map
+import Data.String (Pattern(..))
+import Data.String as String
 import Data.Maybe (Maybe(..), fromJust)
 import Data.Set as Set
 import Data.Tuple (Tuple(..))
@@ -131,16 +134,36 @@ spec = describe "Bosun.Apply" do
     withScript (mkDeployment [ procLeafEnv "a" "/srv/a" "./boot-superdirt.sh" [ Tuple (mkEnvVar "SUPERDIRT_DEVICE") "BlackHole 2ch" ] ]) (snap []) \lines ->
       lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; i=0; while kill -0 -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; ( nohup env SUPERDIRT_DEVICE='BlackHole 2ch' ./boot-superdirt.sh >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
 
-  it "a Process command that already backgrounds itself is left as-is (no group captured)" $
+  -- REGRESSION (teardown fidelity): a command carrying its own trailing `&` used
+  -- to be passed through verbatim — no reap, no barrier, and no pidfile — so its
+  -- Stop had nothing to kill and said so to nobody. It now renders EXACTLY what
+  -- the same command without the `&` renders, which is the whole claim: a
+  -- trailing ampersand is a typing habit, not an opt-out of supervision.
+  it "a Process command that backgrounds itself is tracked like any other (the & is dropped)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a &" ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && run-a &" ]
+      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; i=0; while kill -0 -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; ( nohup env run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+
+  -- The redirection-terminated shape the fixtures actually carry: stripping the
+  -- `&` must leave `2>&1` intact (it ends in an ampersand too, one character
+  -- earlier), and the launch's own redirect then wins because it comes last.
+  it "dropping the trailing & does not eat the 2>&1 in front of it" $
+    withScript (mkDeployment [ procLeaf "a" "/srv/a" "python3 -m http.server 8771 >greeter.log 2>&1 &" ]) (snap []) \lines ->
+      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; i=0; while kill -0 -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; ( nohup env python3 -m http.server 8771 >greeter.log 2>&1 >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
 
   -- Stop kills the process GROUP Bosun recorded at launch (reaping the whole
-  -- nohup→server tree) — its own processes, not whatever holds the port —
-  -- tolerant of a missing file (task #8, recorded-PGID half).
-  it "down: a Process Stop kills the recorded process group (Bosun's own, tolerant if absent)" $
+  -- nohup→server tree) — its own processes, not whatever holds the port — and
+  -- REPORTS which `TeardownVerdict` that established. The `|| true` this
+  -- replaced turned "no pidfile, nothing signalled" into a green tick.
+  it "down: a Process Stop kills the recorded process group AND reports what that did" $
     withDownScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) \lines ->
-      lines `shouldEqual` [ "kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true" ]
+      lines `shouldEqual` [ "p=$(cat /tmp/bosun-apply-a.pid 2>/dev/null | tr -dc 0-9); if [ -z \"$p\" ]; then echo bosun-stop:no-record; elif ! kill -0 -\"$p\" 2>/dev/null; then echo bosun-stop:already-gone; elif ! kill -- -\"$p\" 2>/dev/null; then if kill -0 -\"$p\" 2>/dev/null; then echo bosun-stop:refused; else echo bosun-stop:already-gone; fi; else i=0; while kill -0 -\"$p\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; if kill -0 -\"$p\" 2>/dev/null; then echo bosun-stop:survived; else echo bosun-stop:reaped; fi; fi" ]
+
+  -- The stop script is ssh-wrapped in SINGLE QUOTES for a remote host, so it may
+  -- never contain an apostrophe of its own — one would close that quote and hand
+  -- the remainder to the LOCAL shell. Asserted here rather than left to review.
+  it "down: the Process Stop script carries no single quote (it is ssh-wrapped in them)" $
+    withDownScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) \lines ->
+      A.any (String.contains (Pattern "'")) lines `shouldEqual` false
 
   it "Process Restart -> kill the recorded group, then relaunch (recording the new one)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) (snap [ Tuple "a" Failed ]) \lines ->

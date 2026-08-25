@@ -54,7 +54,8 @@ import Bosun.Reachability (hostPort, noNetwork)
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Plan (Reason(..), Snapshot, Status(..), plan)
 import Bosun.Reconcile (buildAliases, reconcile)
-import Bosun.Report (renderArtifactDrift, renderCommand, renderPlan, renderReport, renderScript, renderTopologyDrift)
+import Bosun.Report (renderArtifactDrift, renderCommand, renderPlan, renderReport, renderScript, renderTeardown, renderTeardownSummary, renderTopologyDrift)
+import Bosun.Substrate (TeardownVerdict, readTeardown, teardownSettled)
 import Bosun.Service (ServiceInstance, Source(..), mkRole)
 import Bosun.Validate (validate)
 import Bosun.Version (version)
@@ -293,7 +294,40 @@ runDown targets composePath registryPath = do
         script = downScript targets vd
         stages = A.groupBy (\a b -> a.stage == b.stage) script
       if A.null stages then log "down: nothing to do — no services to stop."
-      else runStages 1 (map NEA.toArray stages)
+      else runTeardown 1 [] (map NEA.toArray stages)
+
+-- | Run a teardown, stage by stage, and say what it did.
+-- |
+-- | Deliberately NOT `runStages`, and the difference is the point: an apply
+-- | ABORTS on a failed stage, because launching a dependent over a dependency
+-- | that never started is worse than stopping. A teardown does the opposite —
+-- | a service that will not die is a reason to keep going and stop the others,
+-- | not a reason to leave the whole rig half-up. So every stage runs, every
+-- | verdict is collected, and the summary at the end is where the operator
+-- | finds out whether the rig is actually down.
+runTeardown :: Int -> Array (Tuple ServiceId TeardownVerdict) -> Array (Array StagedCommand) -> Effect Unit
+runTeardown n acc stages = case A.uncons stages of
+  Nothing -> log ("\ndown: " <> renderTeardownSummary acc)
+  Just { head: stage, tail: rest } -> do
+    log ("stage " <> show n <> ":")
+    verdicts <- traverse runStop stage
+    runTeardown (n + 1) (acc <> A.catMaybes verdicts) rest
+  where
+  runStop sc = case sc.command of
+    Manual note -> do
+      log ("  · skip (manual): " <> note)
+      pure Nothing
+    command -> do
+      let line = renderCommand command
+      res <- execLine line
+      if sc.reportsTeardown then do
+        let v = readTeardown { ran: res.ok, output: res.message }
+        log ("  " <> (if teardownSettled v then "✓" else "✗") <> " " <> renderTeardown sc.service v)
+        pure (Just (Tuple sc.service v))
+      else do
+        log ("  " <> (if res.ok then "✓" else "✗ (" <> show res.code <> ")") <> " " <> line)
+        when (not res.ok && res.message /= "") (log ("      " <> res.message))
+        pure Nothing
 
 runStages :: Int -> Array (Array StagedCommand) -> Effect Unit
 runStages n stages = case A.uncons stages of

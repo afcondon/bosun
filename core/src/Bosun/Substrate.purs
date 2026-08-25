@@ -26,6 +26,14 @@ module Bosun.Substrate
   , defaultPlatform
   , daemonize
   , pidKill
+  , pidStop
+  , TeardownVerdict(..)
+  , allTeardownVerdicts
+  , teardownTag
+  , teardownSettled
+  , TeardownEvidence
+  , readTeardown
+  , releaseBudgetSecs
   , pidPath
   , logPath
   , shellQuote
@@ -36,7 +44,7 @@ import Prelude
 import Bosun.Atoms (ServiceId, unServiceId)
 import Data.Array as Array
 import Data.Generic.Rep (class Generic)
-import Data.Maybe (isJust)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Show.Generic (genericShow)
 import Data.String (Pattern(..), Replacement(..))
 import Data.String as String
@@ -116,11 +124,9 @@ defaultPlatform = { os: MacOS, containerEngine: Docker }
 
 -- | (Re)launch a long-running Process: REAP any prior recorded generation, THEN
 -- | detach a fresh launch recording a KILLABLE identity (the process-GROUP id)
--- | so a later `pidKill` reaps the whole tree. A command that already
--- | backgrounds itself (ends in `&`) is left untouched (Bosun opts out of
--- | tracking it: no reap, no id captured; a later `pidKill` then no-ops). The OS
--- | selects only the *launch* dialect; the reap is POSIX-portable so both share
--- | it:
+-- | so a later `pidStop` reaps the whole tree. EVERY Process is tracked — see
+-- | `dropBackgrounding` for the case that used not to be. The OS selects only
+-- | the *launch* dialect; the reap is POSIX-portable so both share it:
 -- |
 -- |   * **macOS/BSD** — Node's `spawn(detached)` already `setsid`'d the `sh`, so
 -- |     the launch shares that fresh group. We `( … ) &` so the whole line ends
@@ -147,10 +153,9 @@ defaultPlatform = { os: MacOS, containerEngine: Docker }
 -- | program (bare `nohup VAR=val prog` would try to exec `VAR=val`). With no
 -- | prefix `env` is a transparent passthrough.
 daemonize :: OS -> ServiceId -> String -> String
-daemonize os sid cmd
-  | alreadyBackgrounds cmd = cmd
-  | otherwise = reapPrior <> launch
+daemonize os sid cmd = reapPrior <> launch
   where
+  runnable = dropBackgrounding cmd
   -- Kill any prior recorded generation, then BLOCK until its group is
   -- actually gone, before binding the new one (release-before-bind). A fixed
   -- `sleep` under-waits a slow-dying server — e.g. the BEAM holding a UDP
@@ -161,15 +166,44 @@ daemonize os sid cmd
   reapPrior = pidKill sid <> "; " <> awaitDead sid
   launch = case os of
     MacOS ->
-      "( nohup env " <> cmd <> " >" <> logPath sid <> " 2>&1 & "
+      "( nohup env " <> runnable <> " >" <> logPath sid <> " 2>&1 & "
         <> macRecordPgid sid <> " ) &"
     Linux ->
       -- setsid makes the server a session+group leader ⇒ `$!` == its pgid.
-      "setsid env " <> cmd <> " >" <> logPath sid <> " 2>&1 & "
+      "setsid env " <> runnable <> " >" <> logPath sid <> " 2>&1 & "
         <> "echo $! > " <> pidPath sid
 
-alreadyBackgrounds :: String -> Boolean
-alreadyBackgrounds cmd = isJust (String.stripSuffix (Pattern "&") (String.trim cmd))
+-- | Drop a start command's OWN trailing `&`, so `daemonize` can do the
+-- | backgrounding and record what it backgrounded.
+-- |
+-- | This replaces an `alreadyBackgrounds` guard that returned such a command
+-- | VERBATIM — no reap, no release barrier, and no pidfile. The passthrough was
+-- | deliberate ("Bosun opts out of tracking it") but the consequence was not
+-- | stated anywhere the operator could see it: the service's Stop rendered a
+-- | group-kill against a pidfile that never existed, `cat` failed, and the
+-- | old `2>/dev/null || true` turned that into a green tick. `bosun down` over
+-- | `fixtures/hello` reported success with both servers still listening.
+-- |
+-- | Opting out is not a thing a registry row should be able to do by accident,
+-- | and a trailing `&` is exactly an accident — it is how you write a start
+-- | command for a terminal, not a declaration that this service is unmanaged
+-- | (`Executor.Unmanaged` is how you say that, and it is honest about it).
+-- | Dropping the `&` costs nothing: `daemonize` immediately re-backgrounds the
+-- | command inside the subshell whose group it records, so a grandchild that
+-- | goes on to background ITSELF still lands in that group and still gets
+-- | reaped (measured 2026-08-25: `sh -c` → `npm exec` → `http-server` shared
+-- | one pgid and one `kill -- -<pgid>` took all three).
+-- |
+-- | LIMIT, stated because the next person will meet it: this drops ONE trailing
+-- | `&`, which is the whole of the shape that occurs (`… >log 2>&1 &`). A
+-- | command that backgrounds something MID-line (`a & b &`) is left with `a &
+-- | b`, and `b` then runs in the launch subshell's foreground. No such command
+-- | exists in this repo; the same is already true of `cmd1 && cmd2`, which the
+-- | `nohup env` prefix has always only applied to `cmd1`.
+dropBackgrounding :: String -> String
+dropBackgrounding cmd =
+  let t = String.trim cmd
+  in String.trim (fromMaybe t (String.stripSuffix (Pattern "&") t))
 
 -- macOS/BSD: the backgrounded server ($!) sits in the detached sh's group; BSD
 -- `ps -o pgid=` reads that group id (leading spaces trimmed).
@@ -180,9 +214,18 @@ macRecordPgid sid = "ps -o pgid= -p $! | tr -d ' ' > " <> pidPath sid
 -- | launch tree. POSIX-portable (`kill -- -<pgid>` is the same on BSD and GNU),
 -- | so it takes no `OS` — annotated rather than forced into false symmetry; the
 -- | OS divergence is all in `daemonize`'s capture. Tolerant of a missing file
--- | (never launched by Bosun, or an already-`&` command) so a teardown stage
--- | never aborts. NB best-effort against pgid reuse — the resident `supervise`
--- | daemon, holding live state, is the reuse-safe authority.
+-- | (a first-ever Start) so a launch never aborts on its own reap.
+-- |
+-- | THIS IS THE REAP-BEFORE-LAUNCH FORM, and its silence is correct HERE: the
+-- | line it sits in is fire-and-forget (`( … ) &`, spawned detached), so there
+-- | is no reader for a verdict, and the launch that follows is the thing whose
+-- | success is observed. It is NOT the teardown form — a Stop that a human or
+-- | the Chair is waiting on reports what it did (`pidStop`), because `|| true`
+-- | over a `cat` that failed is how a `down` came to answer `{"ok":true}` with
+-- | both servers still listening.
+-- |
+-- | NB best-effort against pgid reuse — the resident `supervise` daemon,
+-- | holding live state, is the reuse-safe authority.
 pidKill :: ServiceId -> String
 pidKill sid = "kill -- -\"$(cat " <> pidPath sid <> " 2>/dev/null)\" 2>/dev/null || true"
 
@@ -191,10 +234,9 @@ pidKill sid = "kill -- -\"$(cat " <> pidPath sid <> " 2>/dev/null)\" 2>/dev/null
 -- | sockets — or `releaseMaxPolls` × 100ms elapse. POSIX-portable
 -- | group-existence check (`kill -0 -<pgid>`, signal 0 tests existence without
 -- | signalling), so OS-independent like `pidKill`. A missing/empty pidfile makes
--- | the guard fail and the loop no-op (a first-ever Start, or an already-`&`
--- | command Bosun doesn't track). This is the release half of release-before-
--- | bind; it sits inside `daemonize`'s detached launch subshell, so the new
--- | generation never binds until the old one is dead.
+-- | the guard fail and the loop no-op (a first-ever Start). This is the release
+-- | half of release-before-bind; it sits inside `daemonize`'s detached launch
+-- | subshell, so the new generation never binds until the old one is dead.
 awaitDead :: ServiceId -> String
 awaitDead sid =
   "i=0; while kill -0 -\"$(cat " <> pidPath sid
@@ -206,6 +248,131 @@ awaitDead sid =
 -- | that dies promptly costs only one poll.
 releaseMaxPolls :: Int
 releaseMaxPolls = 50
+
+-- | The same budget in whole seconds, for the sentences that quote it. Derived,
+-- | not restated, so a change to the budget cannot leave the message lying.
+releaseBudgetSecs :: Int
+releaseBudgetSecs = releaseMaxPolls / 10
+
+-- ── what a teardown actually did ─────────────────────────────────────────────
+
+-- | What one Process Stop established. This is a TAXONOMY where there used to
+-- | be nothing at all: `pidKill`'s teardown form ended `2>/dev/null || true`, so
+-- | every outcome — reaped a live group, found no pidfile, found a corpse, was
+-- | refused by the kernel — arrived at the operator as the same silent exit 0.
+-- | `POST /control/down` over `fixtures/hello` answered `{"ok":true}` with both
+-- | servers still listening, and nothing anywhere could have said otherwise.
+-- |
+-- | Same discipline as `Serve`'s `StopVerdict`: the shell gathers evidence, the
+-- | pure core weighs it (`readTeardown`), so the verdict is unit-testable and
+-- | lowers to the Go column for free.
+-- |
+-- | The brief asked for three — signalled, nothing to signal, cannot tell — and
+-- | said to say so if there was a fourth. There are six, because "nothing to
+-- | signal" is two different facts with two different remedies, and so is
+-- | "did not die":
+-- |
+-- |   * `NoRecord` vs `AlreadyGone` — no pgid recorded at all (bosun did not
+-- |     launch this generation, or `/tmp` was swept: something may well still be
+-- |     running and bosun cannot see it) versus a pgid that was recorded and has
+-- |     already exited (nothing is running; nothing to do). Collapsing these is
+-- |     exactly the old bug: it reports the dangerous case as the harmless one.
+-- |   * `Survived` vs `Refused` — the signal was delivered and ignored (escalate
+-- |     to SIGKILL) versus the kernel would not deliver it (it is not ours to
+-- |     kill; find the owner). Different next command.
+data TeardownVerdict
+  = Reaped       -- ^ signalled the recorded group; it is gone
+  | AlreadyGone  -- ^ a group was recorded and had already exited; nothing to signal
+  | NoRecord     -- ^ no usable pgid recorded; NOTHING was signalled
+  | Survived     -- ^ signalled, still alive when the release barrier expired
+  | Refused      -- ^ the group is alive and the kernel refused the signal
+  | Unreadable   -- ^ the stop reported nothing: the shell never got that far
+derive instance Eq TeardownVerdict
+derive instance Ord TeardownVerdict
+derive instance Generic TeardownVerdict _
+instance Show TeardownVerdict where show = genericShow
+
+-- | Every constructor, for the readers that must consider all of them.
+allTeardownVerdicts :: Array TeardownVerdict
+allTeardownVerdicts = [ Reaped, AlreadyGone, NoRecord, Survived, Refused, Unreadable ]
+
+-- | The bare wire word. `pidStop` echoes it behind `teardownPrefix`; the
+-- | summary line prints it plain.
+teardownTag :: TeardownVerdict -> String
+teardownTag = case _ of
+  Reaped -> "reaped"
+  AlreadyGone -> "already-gone"
+  NoRecord -> "no-record"
+  Survived -> "survived"
+  Refused -> "refused"
+  Unreadable -> "unreadable"
+
+-- | Is the service known to be down? Only the two verdicts that establish it.
+-- | `NoRecord` is deliberately NOT settled even though it is the commonest and
+-- | most innocent-looking: "we signalled nothing" is not "it stopped", and
+-- | treating it as success is the whole of the bug this type exists to end.
+teardownSettled :: TeardownVerdict -> Boolean
+teardownSettled = case _ of
+  Reaped -> true
+  AlreadyGone -> true
+  _ -> false
+
+-- | The prefix that makes the token findable in output that may also carry a
+-- | remote shell's own chatter (an ssh banner, a stray warning).
+teardownPrefix :: String
+teardownPrefix = "bosun-stop:"
+
+-- | What the exec edge can say about one Stop without being asked to judge it:
+-- | whether the shell ran at all, and what it printed. Nothing more is
+-- | available at that seam, and nothing more is needed.
+type TeardownEvidence = { ran :: Boolean, output :: String }
+
+-- | Weigh it. A command that never ran tells us nothing about the service —
+-- | `Unreadable`, NOT "already gone" — and so does a command that ran and
+-- | printed no token we know (a shell too old for the script, output eaten
+-- | somewhere in an ssh pipeline). Both cases used to be indistinguishable from
+-- | success; neither is success now.
+readTeardown :: TeardownEvidence -> TeardownVerdict
+readTeardown ev
+  | not ev.ran = Unreadable
+  | otherwise = fromMaybe Unreadable (Array.find spoken allTeardownVerdicts)
+  where
+  spoken v = String.contains (Pattern (teardownPrefix <> teardownTag v)) ev.output
+
+-- | TEARDOWN FORM of the group kill: establish which `TeardownVerdict` holds and
+-- | say so on stdout, in one POSIX `sh` line, exiting 0 whatever it finds — a
+-- | service that cannot be stopped must not abort the teardown of the rest.
+-- |
+-- | Ordered so that each branch runs only when the previous one has been ruled
+-- | out, because the interesting distinctions are all races:
+-- |
+-- |   1. no digits in the pidfile (missing, empty, or garbage) ⇒ `NoRecord`.
+-- |   2. the group does not exist ⇒ `AlreadyGone` — checked BEFORE signalling,
+-- |      so a corpse is never reported as a kill.
+-- |   3. the signal fails ⇒ re-check existence, because the group may simply
+-- |      have exited between (2) and (3). Alive ⇒ `Refused`; gone ⇒
+-- |      `AlreadyGone`. Without the re-check that race reads as EPERM and sends
+-- |      the operator hunting for an owner who does not exist.
+-- |   4. otherwise poll the same release barrier `daemonize` uses, then look
+-- |      once more: gone ⇒ `Reaped`, alive ⇒ `Survived`.
+-- |
+-- | CONTAINS NO SINGLE QUOTES, and must not grow any: `Report.renderCommand`
+-- | wraps a remote command as `ssh dest '<inner>'`, so one apostrophe in here
+-- | would close that quote and hand the rest of the script to the local shell.
+pidStop :: ServiceId -> String
+pidStop sid =
+  "p=$(cat " <> pidPath sid <> " 2>/dev/null | tr -dc 0-9); "
+    <> "if [ -z \"$p\" ]; then " <> say NoRecord
+    <> "elif ! kill -0 -\"$p\" 2>/dev/null; then " <> say AlreadyGone
+    <> "elif ! kill -- -\"$p\" 2>/dev/null; then "
+    <> "if kill -0 -\"$p\" 2>/dev/null; then " <> say Refused
+    <> "else " <> say AlreadyGone <> "fi; "
+    <> "else i=0; while kill -0 -\"$p\" 2>/dev/null && [ \"$i\" -lt "
+    <> show releaseMaxPolls <> " ]; do sleep 0.1; i=$((i+1)); done; "
+    <> "if kill -0 -\"$p\" 2>/dev/null; then " <> say Survived
+    <> "else " <> say Reaped <> "fi; fi"
+  where
+  say v = "echo " <> teardownPrefix <> teardownTag v <> "; "
 
 -- | Where a launched Process's process-group id is recorded; `Stop`/`Restart`
 -- | and the supervisor's liveness probe read it. (Path only — OS-independent.)

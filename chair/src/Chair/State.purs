@@ -16,16 +16,21 @@ module Chair.State
   , decodeStateView
   , SuperviseState
   , SupervisionRow
+  , TeardownRow
+  , unsettledTeardowns
   , decodeSuperviseState
   ) where
 
-import Prelude ((<<<))
+import Prelude ((<<<), not)
 
 import Data.Argonaut.Core (Json)
 import Data.Argonaut.Decode (JsonDecodeError, decodeJson)
 import Data.Either (Either)
+import Data.Array as Array
 import Data.Maybe (Maybe, fromMaybe)
+import Data.Tuple (Tuple, snd)
 import Foreign.Object (Object)
+import Foreign.Object as Object
 
 -- | One lazy-spawn route as the router currently finds it. `up` is not enough on
 -- | its own: a route can be up because an EXTERNAL process (one serve did not
@@ -171,7 +176,29 @@ type SuperviseState =
   -- (which omit them) still decode.
   , supervised :: Maybe Boolean
   , supervision :: Maybe (Object SupervisionRow)
+  -- | What the last teardown of each service actually did. Absent until a
+  -- | `down` has run, and absent entirely from a supervise binary that predates
+  -- | it — hence `Maybe`, like the two above.
+  , teardown :: Maybe (Object TeardownRow)
   }
+
+-- | One service's last teardown.
+-- |
+-- | `settled` is read rather than derived from `verdict`, deliberately: a
+-- | consumer that decides for itself which of six tokens mean "it stopped" gets
+-- | it wrong the first time a seventh appears, and the daemon already knows.
+type TeardownRow =
+  { verdict :: String
+  , settled :: Boolean
+  , at :: Number
+  }
+
+-- | The services whose last teardown did NOT settle — the only ones an operator
+-- | needs to see. A `down` that worked should say nothing.
+unsettledTeardowns :: SuperviseState -> Array (Tuple String TeardownRow)
+unsettledTeardowns sv =
+  Array.filter (not <<< _.settled <<< snd)
+    (Object.toUnfoldable (fromMaybe Object.empty sv.teardown))
 
 decodeSuperviseState :: Json -> Either JsonDecodeError SuperviseState
 decodeSuperviseState = decodeJson

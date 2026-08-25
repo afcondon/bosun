@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 
 	"gopkg.in/yaml.v3"
 )
@@ -112,9 +113,17 @@ var Bosun_Conformance_ApplyCliMain_argv any = func() any {
 var Bosun_Conformance_ApplyCliMain_execLineImpl any = func(args ...any) any {
 	line := args[0].(string)
 	if strings.HasSuffix(strings.TrimSpace(line), "&") {
-		if err := exec.Command("/bin/sh", "-c", line).Start(); err != nil {
+		// Setsid + reap, for the reasons spelled out in bosun_apply_foreign.go
+		// and bosun_exec_foreign.go: without a new session the launched sh stays
+		// in THIS binary's process group, `daemonize`'s `ps -o pgid= -p $!`
+		// records that group, and the Stop that follows kills every service this
+		// run launched — and the binary itself.
+		cmd := exec.Command("/bin/sh", "-c", line)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := cmd.Start(); err != nil {
 			return map[string]any{"ok": false, "code": 1, "message": err.Error()}
 		}
+		go func() { _ = cmd.Wait() }()
 		return map[string]any{"ok": true, "code": 0, "message": "launched (backgrounded)"}
 	}
 	out, err := exec.Command("/bin/sh", "-c", line).CombinedOutput()

@@ -32,7 +32,7 @@ import Bosun.Executor (Executor(..))
 import Bosun.Plan (Change(..), Plan, changeRef, planSteps)
 import Bosun.Reachability (Address(..), addresses)
 import Bosun.Service (Service, ValidatedDeployment, unBootOrder, unServiceRef, unValidatedDeployment)
-import Bosun.Substrate (composeCmd, daemonize, pidKill, shellQuote)
+import Bosun.Substrate (composeCmd, daemonize, pidStop, shellQuote)
 import Bosun.Target (ExecLoc(..), Target, TargetMap, resolveTarget, unSshDest)
 import Data.Array as A
 import Data.Array.NonEmpty as NEA
@@ -50,7 +50,22 @@ data Command
   | Manual String
 derive instance Eq Command
 
-type StagedCommand = { stage :: Int, service :: ServiceId, command :: Command }
+-- | One command in a script, with the stage it belongs to and the service it
+-- | acts on.
+-- |
+-- | `reportsTeardown` marks the stages whose command answers with a
+-- | `TeardownVerdict` the core can read (`Substrate.readTeardown`) — today,
+-- | exactly the Process Stops. The exec edge needs to know WHICH stages to read
+-- | a verdict from, and it must learn that from the plan rather than by
+-- | sniffing the rendered string: a `docker compose stop` prints no token, and
+-- | concluding `Unreadable` from its silence would be a false alarm about a
+-- | teardown that worked.
+type StagedCommand =
+  { stage :: Int
+  , service :: ServiceId
+  , command :: Command
+  , reportsTeardown :: Boolean
+  }
 
 -- | The ordered command script for a plan. `NoOp`s contribute nothing. The
 -- | `TargetMap` resolves each service's host to its enactment profile (ssh
@@ -66,7 +81,7 @@ applyScript tmap vd p =
         -- a step yields the launch command (if any) THEN any publish commands
         -- (e.g. `tailscale funnel` for a service with a Published address),
         -- both at this step's stage so the publish follows the launch in order.
-        map (\command -> { stage: step.stage, service: svc.id, command })
+        map (\command -> { stage: step.stage, service: svc.id, command, reportsTeardown: false })
           ( A.fromFoldable (commandFor tmap step.change svc)
               <> publishCommands tmap step.change svc
               <> advisoryCommands step.change svc
@@ -76,9 +91,9 @@ applyScript tmap vd p =
 
 -- | The teardown script: a `Stop` for every service, in REVERSE boot order
 -- | (dependents before their dependencies — the D-E5 stop ordering), so a
--- | `Container` group comes down cleanly. A `Process` Stop is still an honest
--- | `# MANUAL` note (an unmanaged local process has no handle to kill — task
--- | #8; the resident `supervise` mode or a recorded-PID `down` closes that). No
+-- | `Container` group comes down cleanly. A `Process` Stop kills the group
+-- | `daemonize` recorded and REPORTS what that did (`reportsTeardown`); a
+-- | mechanism Bosun does not drive is still an honest `# MANUAL` note. No
 -- | publish/unpublish here — stopping the service is the teardown.
 downScript :: TargetMap -> ValidatedDeployment -> Array StagedCommand
 downScript tmap vd =
@@ -92,7 +107,17 @@ downScript tmap vd =
         Nothing -> Nothing
         Just svc -> case commandFor tmap (Stop ref) svc of
           Nothing -> Nothing
-          Just command -> Just { stage, service: svc.id, command }
+          Just command ->
+            Just { stage, service: svc.id, command, reportsTeardown: reportsTeardown svc }
+
+-- Which services' Stop answers with a readable `TeardownVerdict`: the ones
+-- whose teardown is `Substrate.pidStop`. Kept beside `commandFor`'s `Stop`
+-- case, because the two must not drift apart — a Stop that emits a token and a
+-- flag that says it does not (or the reverse) would be worse than neither.
+reportsTeardown :: Service -> Boolean
+reportsTeardown svc = case svc.launch.executor of
+  Process _ -> true
+  _ -> false
 
 -- | The command for one change on one service, `ssh`-wrapped for remote hosts.
 -- | `Nothing` ⇒ a `NoOp` (no command needed). The service's host resolves to a
@@ -146,21 +171,23 @@ commandFor tmap change svc = map (wrap target) (raw change)
   -- `apply` blocks forever on the first foreground server (flask, julia, a dev
   -- server). `daemonize` (Bosun.Substrate, dialected by the host OS) reaps any
   -- prior recorded generation, then backgrounds + log-redirects + records the
-  -- fresh launch — unless the command already backgrounds itself (a fixture
-  -- baking in `… &` is left untouched and untracked). Because that reap is
-  -- built in, a Process Start and a Process Restart are the SAME command:
-  -- "ensure the old generation is dead, then launch" — there is no cheaper
-  -- restart for a native process, and the reap is the `down`-orphan fix.
+  -- fresh launch. EVERY Process goes through that now: a command carrying its
+  -- own trailing `&` has it dropped rather than being passed through untracked,
+  -- so its Stop has a group to kill. Because that reap is built in, a Process
+  -- Start and a Process Restart are the SAME command: "ensure the old
+  -- generation is dead, then launch" — there is no cheaper restart for a native
+  -- process, and the reap is the `down`-orphan fix.
   processLaunch pr = Shell
     { cwd: Just (unAbsPath pr.cwd)
     , line: daemonize target.platform.os svc.id (envAssign pr.env <> pr.command)
     }
 
   -- Stop a Process by killing the group `daemonize` recorded for it — Bosun's
-  -- own record of what it launched, NOT "whatever holds the port". A missing
-  -- PID file (never launched by Bosun, or an already-`&` command) ⇒ a harmless
-  -- no-op (`|| true`), never an error that aborts the teardown.
-  processStop = Shell { cwd: Nothing, line: pidKill svc.id }
+  -- own record of what it launched, NOT "whatever holds the port" — and REPORT
+  -- which of the six `TeardownVerdict`s that established. A missing pidfile
+  -- still does not abort the teardown of the other services, but it no longer
+  -- passes for having stopped anything.
+  processStop = Shell { cwd: Nothing, line: pidStop svc.id }
 
   raw :: Change -> Maybe Command
   raw = case _ of

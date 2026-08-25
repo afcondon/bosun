@@ -83,9 +83,17 @@ var Bosun_CLI_Resident_residentImpl any = func(args ...any) any {
 			return
 		}
 		if r.Method == http.MethodGet && (r.URL.Path == "/state" || r.URL.Path == "/") {
-			residentMu.Lock()
-			body := stateBody().(string)
-			residentMu.Unlock()
+			// `defer` inside a closure, not a bare Unlock: a panic anywhere in
+			// the PureScript effect used to escape with `residentMu` STILL HELD,
+			// and net/http recovers per-connection — so the daemon went on
+			// listening while every later /state and /control blocked forever on
+			// the lock. That is how a type error in the line below (see the
+			// /control branch) presented as a hang rather than a crash.
+			body := func() string {
+				residentMu.Lock()
+				defer residentMu.Unlock()
+				return stateBody().(string)
+			}()
 			w.Header().Set("content-type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, body)
@@ -97,12 +105,28 @@ var Bosun_CLI_Resident_residentImpl any = func(args ...any) any {
 			if arg == "" {
 				arg = r.URL.Query().Get("group")
 			}
-			residentMu.Lock()
-			msg := control(verb, arg).(string)
-			residentMu.Unlock()
+			// `Bosun.CLI.Resident.ControlResult` stopped being a bare String on
+			// 2026-08-17 (b45bb21) and became `{ ok :: Boolean, message ::
+			// String }`, precisely so a refusal could not be laundered into a
+			// confirmation by the shim. Resident.js was updated; THIS column was
+			// not, and `control(...).(string)` panicked on every control verb —
+			// then wedged the daemon on the un-deferred mutex above. Nothing
+			// could tell: control-parity.sh reads the ROUTER shims, not this one,
+			// and menagerie-conf.sh is the only thing that POSTs here.
+			res := func() map[string]any {
+				residentMu.Lock()
+				defer residentMu.Unlock()
+				return control(verb, arg).(map[string]any)
+			}()
+			ok, _ := res["ok"].(bool)
+			msg, _ := res["message"].(string)
+			status := http.StatusOK
+			if !ok {
+				status = http.StatusBadRequest
+			}
 			w.Header().Set("content-type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, `{"ok":true,"message":%q}`, msg)
+			w.WriteHeader(status)
+			fmt.Fprintf(w, `{"ok":%t,"message":%q}`, ok, msg)
 			return
 		}
 		w.Header().Set("content-type", "text/plain")
