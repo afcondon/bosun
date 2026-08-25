@@ -178,6 +178,15 @@ front of it, but a brokered daemon has clients talking to it directly, and
 restarting Bosun must not stop the music. The next ensure probes before it
 spawns, so it finds the survivor and reports `started: false`.
 
+**What broker mode does do, since 2026-08-24:** answer `/control/spawn` and
+`/control/stop`. Never reaping a brokered daemon is a policy about *timers*, not
+a refusal to be commanded — and the two were conflated when broker mode shipped,
+leaving a route the router could start and could not stop. Bosun spawns these
+itself, so it holds the child; the stop rule is the proxy path's rule
+(`Bosun.Serve.brokerStopVerdict`: hold the child ⇒ signal it, running but not
+ours ⇒ 409, nothing checkable ⇒ 409 unknown), and `?service=<id>` addresses the
+half of them that have no port. `CONTROL-SURFACE.md` has the table.
+
 **A broker that binds nothing is still the plan's answer for its port.** The
 registry row claims `:3028` whether or not the router ends up holding it, so a
 `Broker` carries `declaredPort` (what the row asked for) separately from

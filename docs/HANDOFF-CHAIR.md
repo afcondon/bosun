@@ -33,7 +33,10 @@ second host swimlane), and 2 rejections. Ports `8190-8197`.
   `GET,POST,OPTIONS`. **POST from `:3020` is allowed.**
 - `POST :3997/control/spawn?port=N` → `up:true` + real `pid`;
   `/control/stop?port=N` → down; `/control/reload` → typed `serveDiff`.
-  (`404` if no proxy route on that port.)
+  Brokered rows answer both verbs too (`mediation: "broker"` in the reply), and
+  `?service=<id>` addresses one that holds no port. `404` names which it is —
+  nothing on that port, or a 421 redirect to another host; `409` when the
+  service is running but bosun did not start it. See `CONTROL-SURFACE.md`.
 - macmini routes answer `421` + `location:` → tailnet URL (not proxied).
 
 ## Correlation rule for the overlay

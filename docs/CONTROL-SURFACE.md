@@ -11,7 +11,10 @@ Work is split across two Claude sessions; they meet at the serve HTTP contract.
   externalCheckedAt, bound, bindError }`
   (decoded in `chair/src/Chair/State.purs`).
 - `POST :3997/control/spawn?port=N` · `/control/stop?port=N` · `/control/reload`
-  (already called by the Cockpit; restart = stop then spawn).
+  (already called by the Cockpit; restart = stop then spawn). Both verbs also
+  take `?service=<projectSlug:role>` — the only way to address a **brokered**
+  daemon that holds no port at all (es9-daemon on a unix socket), and the key
+  `/state` and `/where` already print. See "Brokered services" below.
 - **Correlation:** `/state` keys by canonical `serviceId`; graph nodes key by
   `localName`. Map through `reconcile.aliases` (ingested→canonical), which
   `analyze` already returns in the `AnalyzeResult`.
@@ -130,6 +133,50 @@ golden-pinned — edit freely. Ports 8190-8197 reserved for it.
 | `POST /control/stop?port=8190` | `{ok,up:false}`; `/state` returns to `up:false`, `pid:null` |
 | `GET :8193` (a macmini route) | `421` + `location` header → tailnet URL (the redirect path) |
 | `POST /control/reload` | typed `serveDiff`; no-op `{unbound:[],boundRoutes:[],boundRedirects:[]}` on an unchanged fixture |
+
+## Brokered services (added 2026-08-24)
+
+Broker mode shipped able to **start** a service and not to stop it. `/where`
+lazy-spawns a brokered daemon, so the router holds its child — but
+`/control/spawn|stop` looked only at the proxy table and answered `no proxy
+route on :N` for every brokered port, which was a refusal and a misdiagnosis in
+one sentence. Both verbs now reach brokers, keyed the way `/where` keys them:
+the registered port, the port the service actually listens on, or `?service=`.
+
+The rule for whether a stop is allowed is the **proxy path's rule**, not a
+second one — bosun does not kill what bosun did not start. A broker keeps no
+adoption flag (ensure-and-locate probes before it spawns and reports `started:
+false` on a survivor without recording it), so the fact is re-derived by a probe
+at the moment it is asked. `Bosun.Serve.brokerStopVerdict` decides; the shim
+gathers evidence and acts.
+
+| situation | answer |
+|---|---|
+| bosun holds the child | `200 {ok, wasRunning: true}` — SIGTERM, then SIGKILL at the grace deadline; resolves when it has actually exited |
+| running, no child of ours | `409 {adopted: true}` — stop that process yourself; the next `/where` finds it gone and starts a fresh one |
+| no child, `probe: "none"` | `409 {adopted: null}` — nothing here can say whether something is running, and an `ok` would read as "it's down" |
+| no child, probe says nothing is there | `200 {ok, wasRunning: false}` |
+
+`/control/stop` on a broker does **not** suspend the lazy-spawn: `/where` is
+ensure-and-locate, so asking it again starts the service again, by design.
+`/state` is the read-only view — it shows `pid: null` without starting
+anything. And stopping the *process* is still a different act from unbinding the
+*route*: `unbindPort` continues to leave a brokered daemon running, because
+taking a 307 listener down is no reason to take an audio interface away.
+
+The two "no route" diagnostics are now distinct, because they want opposite
+responses from an operator:
+
+```
+POST /control/stop?port=8193     # a 421 redirect to another host
+  -> :8193 is a 421 redirect to minard:frontend on another host, so this router
+     has no process here to stop. Ask the bosun on that host.
+
+POST /control/stop?port=9999     # nothing at all
+  -> no proxy route, no broker and no redirect on this router answers to :9999.
+     GET /state lists everything it holds; if you expected one, the registry row
+     may never have been admitted — see /state's "rejected" and "drift".
+```
 
 **Tasks 2 & 3 were already landed** before this session: the `/state` +
 `/control/*` contract and CORS live in `cli/src/Bosun/CLI/Serve.js`; the

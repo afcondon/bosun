@@ -335,14 +335,42 @@ func cliStatusServer(port int, rejected []any, reload func() any) {
 	}
 }
 
+// BROKER MODE HAS NO GO COUNTERPART. The node shim's control verbs also reach
+// brokered services (`controlBroker`, `Bosun.Serve.brokerStopVerdict`), and
+// `?service=<id>` addresses the half of those that hold no port. None of that
+// is mirrored here because *broker mode itself* is not — this column has no
+// broker table, no `/where`, and no `ensureAndLocate` to build one on. The
+// divergence is broker mode entire, not this change; porting it is the
+// prerequisite, and until then the two runtimes agree on everything this file
+// actually implements.
+//
+// What IS mirrored is the diagnostic, because both branches genuinely exist
+// here: a 421 redirect holds a listener with no local process to act on, and
+// that is a different situation from nothing being served at all. One sentence
+// for both sent an operator to check the registry when the answer was "ask the
+// bosun on the other host".
 func cliControlOne(w http.ResponseWriter, r *http.Request) {
 	port := 0
 	fmt.Sscanf(r.URL.Query().Get("port"), "%d", &port)
+	verb := "spawn"
+	if strings.HasSuffix(r.URL.Path, "/stop") {
+		verb = "stop"
+	}
 	cliMu.Lock()
 	l := cliByPort[port]
 	cliMu.Unlock()
-	if l == nil || l.route == nil {
-		cliWriteJSON(w, 404, map[string]any{"ok": false, "error": fmt.Sprintf("no proxy route on :%d", port)})
+	if l == nil {
+		cliWriteJSON(w, 404, map[string]any{"ok": false, "error": fmt.Sprintf(
+			"no proxy route and no redirect on this router answers to :%d. GET /state lists everything it "+
+				"holds; if you expected one, the registry row may never have been admitted.", port)})
+		return
+	}
+	if l.route == nil {
+		target, _ := l.redirect["target"].(string)
+		serviceID, _ := l.redirect["serviceId"].(string)
+		cliWriteJSON(w, 404, map[string]any{"ok": false, "error": fmt.Sprintf(
+			":%d is a 421 redirect to %s (%s) on another host, so this router has no process here to %s. "+
+				"Ask the bosun on that host.", port, serviceID, target, verb)})
 		return
 	}
 	if strings.HasSuffix(r.URL.Path, "/stop") {

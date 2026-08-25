@@ -114,6 +114,12 @@ Two addressing schemes and two rejection messages, neither of which says "you
 are asking the wrong component". Cheap fix: have each refusal name the other —
 *"not in this group; :3028 is served by the router, try `:3997/control`"*.
 
+**Half done, 2026-08-24.** The router's side now accepts `?service=<id>` (it had
+to: broker mode created daemons with no port to address) and its 404 names what
+it found — nothing at all, versus a 421 redirect to another host — instead of
+saying `no proxy route` to every one of them. The supervise side still answers
+`no service in this group` without pointing at the router.
+
 ## 5. A performance daemon should not be lazy-spawned
 
 Itajara sat in `serve` because that is where a dev service goes. But

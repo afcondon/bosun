@@ -227,16 +227,24 @@ partially done, which this doc is part of):
 - **Quartermaster** (`ShapedSteer/quartermaster`) has no Marginalia project yet.
 - Full findings + history: Marginalia **note on Bosun #227** (2026-07-04/05).
 
-## Stopping and starting one route (verified 2026-08-19)
+## Stopping and starting one route (verified 2026-08-19, extended 2026-08-24)
 
-The router's control verbs take a **public port**, not a service id — `?service=`
-is rejected with `no proxy route on :0`, which is easy to misread as the service
-being absent when the id is right there in `/state`.
+The router's control verbs take a **public port**. `?service=<projectSlug:role>`
+is now accepted beside it — it used to answer `no proxy route on :0`, which is
+easy to misread as the service being absent when the id is right there in
+`/state`. It is also the only way to address a **brokered** daemon that holds no
+port at all (es9-daemon on a unix socket).
 
 ```
 POST :3997/control/stop?port=3028     -> {ok, serviceId, up, wasRunning}
 POST :3997/control/spawn?port=3028    -> {ok, serviceId, up, bound}
+POST :3997/control/stop?service=es9-daemon:worker
 ```
+
+Brokered rows answer these too, and add `mediation: "broker"` to the reply. The
+router refuses (409) to stop a brokered daemon it did not start, and refuses
+again — differently — when the service has no readiness probe and so nothing
+here can say whether one is running. `CONTROL-SURFACE.md` has the table.
 
 To pick up a rebuilt binary: `stop`, wait for `up:false`, then `spawn` — or let
 the next client connection lazy-spawn it. `pid` in `/state` before and after is
