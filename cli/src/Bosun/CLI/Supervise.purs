@@ -35,14 +35,14 @@ import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderAddressMiss, renderCommand, renderReport, renderTeardown, renderTeardownSummary)
 import Bosun.Serve (controlPort)
 import Bosun.Service (Deployment, ValidatedDeployment, unServiceRef, unValidatedDeployment)
-import Bosun.Substrate (TeardownVerdict, readTeardown, teardownSettled)
+import Bosun.Substrate (TeardownVerdict, readTeardown, teardownSettled, teardownTag)
 import Bosun.Supervisor (Launch, SuperviseDiff, SupConfig, SupState, SvcState, addressService, defaultConfig, emptySupState, forgetLaunches, recordLaunches, refine, superviseDiff)
 import Bosun.Target (TargetMap)
 import Bosun.Validate (validate)
 import Bosun.Version (version)
 import Data.Array as A
 import Data.Either (Either(..))
-import Data.Foldable (intercalate, traverse_)
+import Data.Foldable (foldr, intercalate, traverse_)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Set as Set
@@ -128,6 +128,19 @@ superviseResident targets mPort startHeld reloadSource dep0 vd0 = do
   -- what makes `supervise` more than a stateless plan-loop — without it a
   -- slow-boot service re-Starts every tick (the relaunch storm).
   supRef <- Ref.new emptySupState
+  -- What the LAST teardown of each service actually did.
+  --
+  -- Remembered rather than re-derived, unlike the adoption claim `b45bb21`
+  -- put back on a clock — because "did the stop reach it?" is a fact about
+  -- history and no probe can answer it later. What keeps it from going stale
+  -- is that a LAUNCH supersedes it: `enactPlan` drops a service's verdict the
+  -- moment it relaunches, because the verdict describes a generation that no
+  -- longer exists.
+  --
+  -- It lives beside `supRef` rather than inside it because `down` wipes the
+  -- launch memory (so stopped services read Down, not Failed) and a verdict
+  -- that vanished with it would be gone exactly when it matters most.
+  teardownRef <- Ref.new (Map.empty :: Map.Map ServiceId { verdict :: TeardownVerdict, at :: Number })
   -- The DEPLOYMENT itself is mutable now: a `POST /control/reload` re-reads the
   -- spec and swaps these, so the loop below always plans/observes against the
   -- CURRENT deployment. Before reload this was closed-over-once; the diff-guided
@@ -201,6 +214,10 @@ superviseResident targets mPort startHeld reloadSource dep0 vd0 = do
       let p = plan vd { desired: vd, recorded: Nothing, observed }
       enact label (applyScript targets vd p)
       Ref.modify_ (recordLaunches cfg now (launchesOf p)) supRef
+      -- A relaunched service's teardown verdict is about the generation we
+      -- just replaced, so keeping it would report a dead fact about a live
+      -- process — the staleness this whole branch exists to remove.
+      Ref.modify_ (\m -> foldr (Map.delete <<< _.id) m (launchesOf p)) teardownRef
 
     bringUp = do
       now <- nowMs
@@ -208,7 +225,15 @@ superviseResident targets mPort startHeld reloadSource dep0 vd0 = do
 
     bringDown = do
       vd <- Ref.read vdRef
-      enactStop "teardown" (downScript targets vd)
+      verdicts <- enactStop "teardown" (downScript targets vd)
+      rememberTeardown verdicts
+      pure verdicts
+
+    rememberTeardown verdicts = do
+      now <- nowMs
+      Ref.modify_
+        (\m -> foldr (\(Tuple sid v) -> Map.insert sid { verdict: v, at: now }) m verdicts)
+        teardownRef
 
     -- Stop just a SUBSET of services (their current, old-spec generation): filter
     -- the full teardown script to the wanted ids. Used by `reload` to bring down
@@ -218,7 +243,10 @@ superviseResident targets mPort startHeld reloadSource dep0 vd0 = do
         wanted = Set.fromFoldable ids :: Set.Set ServiceId
         only = A.filter (\sc -> Set.member sc.service wanted) (downScript targets theVd)
       in
-        enactStop "reload-stop" only
+        do
+          verdicts <- enactStop "reload-stop" only
+          rememberTeardown verdicts
+          pure verdicts
 
     tick = do
       up <- Ref.read desiredUp
@@ -233,7 +261,8 @@ superviseResident targets mPort startHeld reloadSource dep0 vd0 = do
     stateBody = do
       st <- Ref.read supRef
       up <- Ref.read desiredUp
-      pure (snapshotBody up st)
+      td <- Ref.read teardownRef
+      pure (snapshotBody up st td)
 
     control = mkEffectFn2 \verb arg -> case verb of
       "up" -> do
@@ -350,15 +379,41 @@ reloadSummary d =
 -- | the per-service badge data (`restarts`, `lastTransitionAt`, plus `fails` /
 -- | `suspendedUntil` diagnostics) the Chair renders as `↻ N` and "Xs ago". An
 -- | older decoder simply ignores the two new keys.
-snapshotBody :: Boolean -> SupState -> String
-snapshotBody up st =
+-- | `teardown` is ADDITIVE and omitted entirely when empty, so every existing
+-- | decoder — the Chair's included — goes on working untouched (ADR D-S1,
+-- | "never break the existing decode").
+-- |
+-- | It is a TOP-LEVEL object rather than a field of `supervision`, and that is
+-- | the whole reason it survives to be read: `down` writes `emptySupState`, so
+-- | `services` and `supervision` are empty until the next tick repopulates them
+-- | from observation. A verdict parked inside them would be wiped by the very
+-- | operation that produced it.
+snapshotBody :: Boolean -> SupState -> Map.Map ServiceId { verdict :: TeardownVerdict, at :: Number } -> String
+snapshotBody up st td =
   "{ \"desired\": \"" <> (if up then "up" else "down") <> "\""
     <> ", \"supervised\": true"
     <> ", \"services\": { " <> intercalate ", " (map svcEntry entries) <> " }"
     <> ", \"supervision\": { " <> intercalate ", " (map supEntry entries) <> " }"
+    <> teardownField
     <> " }"
   where
   entries = Map.toUnfoldable st :: Array (Tuple ServiceId SvcState)
+
+  teardownEntries = Map.toUnfoldable td :: Array (Tuple ServiceId { verdict :: TeardownVerdict, at :: Number })
+
+  teardownField =
+    if A.null teardownEntries then ""
+    else ", \"teardown\": { " <> intercalate ", " (map teardownEntry teardownEntries) <> " }"
+
+  -- `settled` is carried rather than left to the reader to derive from the tag.
+  -- A consumer that has to know which of six tokens mean "it stopped" will get
+  -- it wrong the first time a seventh is added, and the core already knows.
+  teardownEntry (Tuple sid v) =
+    "\"" <> unServiceId sid <> "\": { "
+      <> "\"verdict\": \"" <> teardownTag v.verdict <> "\""
+      <> ", \"settled\": " <> (if teardownSettled v.verdict then "true" else "false")
+      <> ", \"at\": " <> show v.at
+      <> " }"
 
   svcEntry (Tuple sid s) =
     "\"" <> unServiceId sid <> "\": \"" <> statusToken s.status <> "\""
