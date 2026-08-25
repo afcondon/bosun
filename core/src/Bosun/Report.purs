@@ -24,6 +24,8 @@ module Bosun.Report
   , renderDrift
   , renderDriftKind
   , renderAddressMiss
+  , renderTeardown
+  , renderTeardownSummary
   ) where
 
 import Prelude
@@ -40,6 +42,7 @@ import Bosun.Protocol (Locator)
 import Bosun.Selector (Selector)
 import Bosun.Serve (Broker, DriftKind(..), PortDrift, RejectReason(..), Redirect, Rejection, Route, ServePlan)
 import Bosun.Service (unServiceRef)
+import Bosun.Substrate (TeardownVerdict(..), pidPath, releaseBudgetSecs, teardownSettled, teardownTag)
 import Bosun.Supervisor (AddressMiss(..))
 import Data.Array (filter, groupBy, length, mapWithIndex, null, sortWith)
 import Data.Array.NonEmpty as NEA
@@ -408,3 +411,60 @@ routerVerb :: String -> String
 routerVerb = case _ of
   "restart" -> "stop"
   v -> v
+
+-- ── what a teardown did ──────────────────────────────────────────────────────
+
+-- | One service's `TeardownVerdict`, said out loud.
+-- |
+-- | The bar these sentences have to clear is the one the old teardown failed:
+-- | say what is true, say why the surface will not claim more than that, and
+-- | name the next command. Three of the six are NOT a stop, and they say so in
+-- | the first four words — an operator scanning a teardown log should not have
+-- | to parse a sentence to find out whether their rig is down.
+-- |
+-- | `NoRecord` gets the longest note on purpose. It is the commonest of the
+-- | three failures, it is the one that used to read as success, and it is the
+-- | only one where bosun genuinely does not know whether anything is running —
+-- | so it has to hand over an instrument (`lsof`) rather than a verdict.
+renderTeardown :: ServiceId -> TeardownVerdict -> String
+renderTeardown sid = case _ of
+  Reaped ->
+    unServiceId sid <> " — stopped: signalled the recorded process group and it is gone."
+  AlreadyGone ->
+    unServiceId sid <> " — already down: the recorded process group had exited before the stop, "
+      <> "so there was nothing to signal."
+  NoRecord ->
+    unServiceId sid <> " — NOT STOPPED: bosun holds no process group for this service, so it "
+      <> "signalled nothing and cannot say what is running. Either this bosun never launched it "
+      <> "(a service someone else started, or one from before a restart of the daemon), or "
+      <> pidPath sid <> " has been swept. Find the holder with "
+      <> "`lsof -i :<port> -sTCP:LISTEN` and stop it by hand."
+  Survived ->
+    unServiceId sid <> " — NOT STOPPED: the recorded process group took the signal and was still "
+      <> "alive " <> show releaseBudgetSecs <> "s later. Escalate by hand: "
+      <> "kill -9 -- -\"$(cat " <> pidPath sid <> ")\"."
+  Refused ->
+    unServiceId sid <> " — NOT STOPPED: the recorded process group is alive and the kernel refused "
+      <> "the signal, so it is not this user's to kill. See who owns it: "
+      <> "ps -o user=,pid=,command= -g \"$(cat " <> pidPath sid <> ")\"."
+  Unreadable ->
+    unServiceId sid <> " — UNKNOWN: the stop command reported nothing. The shell running it never "
+      <> "got that far (an ssh that would not connect, a host that is down), so nothing at all is "
+      <> "known about whether the service is still up. Re-run the teardown once the host answers."
+
+-- | The one-line roll-up for `/control/down`'s reply and the end of a `bosun
+-- | down`. Leads with the count that stopped ONLY when everything did; the
+-- | moment anything did not, the failures move to the front and are named
+-- | individually, because "1 of 2 stopped" is the shape of sentence people read
+-- | as "fine".
+renderTeardownSummary :: Array (Tuple ServiceId TeardownVerdict) -> String
+renderTeardownSummary vs = case unsettled of
+  [] -> case length vs of
+    0 -> "nothing to stop"
+    n -> show n <> " stopped"
+  us ->
+    show (length us) <> " NOT STOPPED (" <> intercalate ", " (map named us) <> "); "
+      <> show (length vs - length us) <> " stopped"
+  where
+  unsettled = filter (\(Tuple _ v) -> not (teardownSettled v)) vs
+  named (Tuple sid v) = unServiceId sid <> ": " <> teardownTag v

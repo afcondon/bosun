@@ -49,7 +49,7 @@ safety net: anything Gnomon gets wrong, Node is the proven oracle to diff agains
 | **forker** | spawns 2 child workers in its process group | **pgid reaping** — `down` must kill the whole tree (THE regression guard for the 06-19 bug) |
 | **socketd** | binds a unix socket, no TCP port | socket-probe readiness; non-port liveness |
 | **lazyready** | binds instantly; `/health` returns 503 for 5 s then 200 | **readiness ≠ liveness** (the es9 false-green lesson) |
-| **selfbg** | double-forks / daemonizes itself | the `alreadyBackgrounds` path — Bosun must NOT re-daemonize, but must still reap the right group |
+| **selfbg** | double-forks / daemonizes itself | a start command that ends in its own `&`. Bosun DROPS that `&` and daemonizes it like anything else (`Substrate.dropBackgrounding`, 2026-08-25) — the axis is that a self-backgrounding GRANDCHILD still lands in the recorded group and still gets reaped. The old `alreadyBackgrounds` passthrough left it untracked, and its `down` reported success having signalled nothing |
 | **needsenv** | refuses to bind unless `MENAGERIE_KEY` is set | typed `env` injection on the process executor (the ERL_LIBS case) |
 | **oneshot** | computes a value, prints it, exits 0 | `completed-ok` state — not Failed, not restarted under `Never`/`OnFailure` |
 | **leader** + **follower-a** + **follower-b** | followers are `part-of` leader | **coupled co-restart** (one_for_all), boot order, blast-radius |

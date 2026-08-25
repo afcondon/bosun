@@ -1335,3 +1335,149 @@ The two-mode milestone is done (docker + native, up/down/restart from the Chair,
 companion project **Quartermaster** (Marginalia #238), to be written after the
 Menagerie. The boundary is `docs/PROVISIONING-SEAM.md`. `bosun preflight` →
 `quartermaster verify`; Bosun only *consumes* the host-readiness signal.
+
+---
+
+## Engine (2026-08-25): teardown FIDELITY — `down` could report success having killed nothing
+
+The 2026-06-19 fix above made the recorded pgid *correct*. It left the other half
+of that bug standing: the teardown could not say whether it had used it.
+
+`Substrate.pidKill`'s teardown form was
+`kill -- -"$(cat …pid 2>/dev/null)" 2>/dev/null || true`. With no pidfile the
+`cat` fails, `kill -- -""` errors, `2>/dev/null || true` swallows it, and the
+stage "succeeds". Reproduced live on a scratch supervise group over
+`fixtures/hello`: `POST /control/down` →
+`{"ok":true,"message":"down: desired=down, auto-restart suspended"}` with both
+`python3 -m http.server` processes still listening on 8771 and 8772.
+
+Two halves, and the second is the broader one.
+
+**(a) The untracked case.** `daemonize` had a guard clause: a command whose
+trimmed form ended in `&` was returned VERBATIM — no reap, no release barrier,
+no pidfile. Deliberate ("Bosun opts out of tracking it") but silent, and the
+consequence appeared nowhere the operator could see it. Blast radius measured:
+exactly three registry rows in the repo, all fixtures (`hello:greeter`,
+`hello:echoer`, `portable:greeter`); no live service took that path.
+
+That guard is gone. `dropBackgrounding` drops ONE trailing `&` and the command is
+daemonized like any other. A trailing ampersand is how you write a start command
+for a terminal, not a declaration that a service is unmanaged — `Executor.
+Unmanaged` is how you say that, and it is honest about it. It costs nothing:
+`daemonize` immediately re-backgrounds inside the subshell whose group it
+records, and a grandchild that goes on to background ITSELF still lands in that
+group (measured: `sh -c` → `npm exec` → `http-server` shared one pgid; one
+`kill -- -<pgid>` took all three).
+
+**(b) The dishonest success**, which reaches EVERY service including the live
+rig: `|| true` hid any failure to signal, not just the untracked one. A pidfile
+lost to a `/tmp` sweep, a stale pgid, a service bosun never launched — all
+reported success.
+
+### `TeardownVerdict` — name the taxonomy
+
+Same discipline as `Serve.StopVerdict` and `BrokerDoor`: **the shell gathers
+evidence, the pure core weighs it.** `Substrate.pidStop` renders a one-line POSIX
+`sh` script that establishes which case holds and echoes a token; `readTeardown`
+turns `{ ran, output }` into a verdict; `Report.renderTeardown` says it out loud.
+All pure, so it is unit-tested AND lowers to the Go column for free.
+
+| verdict | means | settled? |
+|---|---|---|
+| `Reaped` | signalled the recorded group; it is gone | ✔ |
+| `AlreadyGone` | a group was recorded and had already exited | ✔ |
+| `NoRecord` | no usable pgid recorded; NOTHING was signalled | ✘ |
+| `Survived` | signalled, still alive when the 5s barrier expired | ✘ |
+| `Refused` | the group is alive and the kernel refused the signal | ✘ |
+| `Unreadable` | the stop reported nothing; the shell never got that far | ✘ |
+
+The brief asked for three (signalled / nothing to signal / cannot tell) and said
+to say so if there was a fourth. There are six, because "nothing to signal" is
+two facts with two remedies (`NoRecord` = something may well still be running and
+bosun cannot see it, vs `AlreadyGone` = nothing is running), and so is "did not
+die" (`Survived` = escalate to SIGKILL, vs `Refused` = find the owner).
+Collapsing the first pair is exactly the old bug: it reports the dangerous case
+as the harmless one.
+
+`StagedCommand` gained `reportsTeardown :: Boolean` so the exec edge knows which
+stages carry a verdict. It learns that from the PLAN, not by sniffing the
+rendered string: a `docker compose stop` prints no token, and concluding
+`Unreadable` from its silence would be a false alarm about a teardown that worked.
+
+`/control/down` keeps `ok: true` even when services survive, deliberately: the
+shim answers 400 for `ok:false`, and 400 says the REQUEST was bad. It was not —
+desired=down took effect and auto-restart is suspended. The truth rides the
+message, failures first:
+
+```
+{"ok":true,"message":"down: desired=down, auto-restart suspended — 1 NOT STOPPED (hello:greeter: no-record); 1 stopped"}
+```
+
+**Not fixed, and worth a follow-up:** `/state` still carries no per-service
+teardown verdict, so a machine consumer (chair-server) sees only the message
+string. The Chair discards the control response body entirely (`RF.ignore`), so
+it currently shows none of this.
+
+### The Go column had a matching hole, exposed by this change
+
+`bosun_exec_foreign.go` (the REAL `Bosun.CLI.Exec` twin) has set
+`SysProcAttr{Setsid:true}` since the Menagerie caught the divergence. The two
+Phase-6C harness shims — `bosun_apply_foreign.go` and
+`bosun_applycli_foreign.go` — never did, and nothing could tell: their fixture's
+start commands ended in `&`, so no pidfile was ever written. The moment every
+Process became tracked, the recorded pgid was the **Go binary's own group**,
+shared by every service that run launched. Observed: stopping `hellogo-greeter`
+left `hellogo-echoer` reporting `already-gone` — one stop had reaped both. Both
+shims now setsid and reap, matching the node column; re-run gives two distinct
+pgids and two independent `reaped`s.
+
+### Evidence
+
+- supervise group over `fixtures/hello` on scratch :3899 — `POST /control/down`
+  stops both; `lsof` before shows two listeners, after shows none.
+- same with `hello:greeter`'s pidfile deleted after launch — `1 NOT STOPPED
+  (hello:greeter: no-record); 1 stopped`, and 8771 is still listening, correctly.
+- `fixtures/pidtest` (the already-tracked shape) — launch line byte-identical to
+  before; `down` reaps; a second `down` reads `AlreadyGone`.
+- `go-conformance.sh`: node ≡ go, byte-identical. Exactly one line moved from the
+  baseline, and it moved identically on both columns.
+- 225 tests (was 208); `control-parity.sh` green; `gnomon-bosun.sh check` builds
+  and runs.
+
+The `env`/`cd` trap did NOT bite: `parseStartCommand` peels the leading
+`cd <abs> &&` into `Process.cwd` and `renderCommand` re-emits it OUTSIDE the
+`nohup env`, so `env` never sees a builtin. Verified by rendering every fixture's
+apply script and collecting the first word after `nohup env` — all 20 fixtures,
+zero builtins.
+
+### And a second one, found by running the Menagerie: `/control` was dead in the Go column
+
+`conformance/go/bosun_resident_foreign.go` did
+
+```go
+residentMu.Lock()
+msg := control(verb, arg).(string)
+residentMu.Unlock()
+```
+
+`Bosun.CLI.Resident.ControlResult` stopped being a bare `String` on 2026-08-17
+(b45bb21) — it became `{ ok :: Boolean, message :: String }` precisely so a
+refusal could not be laundered into a `200 {ok:true}` by the shim. `Resident.js`
+was updated. This column was not, so `control(...).(string)` **panicked on every
+control verb** — for a week. Worse, the panic escaped with `residentMu` still
+held (no `defer`), and `net/http` recovers per-connection: the daemon went on
+listening while every subsequent `/state` and `/control` blocked forever on the
+lock. A type error presented as a hang.
+
+Nothing could tell. `control-parity.sh` reads the two ROUTER shims, not this one;
+`menagerie-conf.sh` is the only thing that POSTs here, and it is run by hand.
+
+Fixed: read the record, honour its `ok` (400 when false, as `Resident.js` does),
+and take the lock under `defer` in both branches so a future panic crashes the
+request instead of wedging the daemon. `menagerie-conf.sh` is green on both
+columns again, `/state` byte-identical across runtimes — and the Gnomon column's
+`down`/`up` assertions are being *exercised* for the first time since b45bb21.
+
+**Standing gap:** `control-parity.sh` has no floor over `bosun_resident_foreign.go`.
+The check that would have caught this is a FFI-signature comparison, not a path
+set — worth adding when someone next touches that script.

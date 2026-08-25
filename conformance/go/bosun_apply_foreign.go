@@ -17,6 +17,7 @@ package main
 import (
 	"os/exec"
 	"strings"
+	"syscall"
 )
 
 // execLineImpl :: EffectFn1 String { ok :: Boolean, code :: Int, message :: String }
@@ -30,9 +31,24 @@ import (
 var Bosun_Conformance_ApplyMain_execLineImpl any = func(args ...any) any {
 	line := args[0].(string)
 	if strings.HasSuffix(strings.TrimSpace(line), "&") {
-		if err := exec.Command("/bin/sh", "-c", line).Start(); err != nil {
+		// NODE-FIDELITY, and now load-bearing: Exec.js spawns a `… &` launch
+		// `{detached:true}`, which setsid's the sh into a NEW session/group, and
+		// `bosun_exec_foreign.go` has matched that since the Menagerie caught the
+		// divergence. This harness never did — and until every Process became
+		// TRACKED (2026-08-25, the teardown-fidelity change) nothing could tell:
+		// its fixture's start commands ended in `&`, so `daemonize` passed them
+		// through and no pidfile was ever written. The moment one was, it held
+		// the GO BINARY's own process group — shared by every service this run
+		// launched — and a single `pidStop` reaped the lot (observed: stopping
+		// hellogo-greeter left hellogo-echoer `already-gone`).
+		cmd := exec.Command("/bin/sh", "-c", line)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := cmd.Start(); err != nil {
 			return map[string]any{"ok": false, "code": 1, "message": err.Error()}
 		}
+		// Go does not auto-reap; a Start() without Wait() leaves the launcher sh
+		// a zombie that still counts in the group and cannot be killed again.
+		go func() { _ = cmd.Wait() }()
 		return map[string]any{"ok": true, "code": 0, "message": "launched (backgrounded)"}
 	}
 	out, err := exec.Command("/bin/sh", "-c", line).CombinedOutput()
