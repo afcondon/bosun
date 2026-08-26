@@ -28,5 +28,6 @@ package:
     - codec
     - codec-argonaut
     - functions
+    - glassbox
   run:
     main: Bosun.CLI.Main

@@ -1,0 +1,128 @@
+# The lifecycle of one `bosun supervise` group — the machine that is currently
+# implicit in `Bosun.CLI.Supervise.superviseResident`, where its whole state is a
+# `Ref Boolean` named `desiredUp` and its transitions are the arms of a `case verb`.
+#
+# Written as an artifact to find out what the format could and could not say about a
+# real supervisor. Three things it said that the code does not:
+#
+# 1. `held` and `raised` are STATES, not a Boolean. `--held` was added late, and a
+#    Boolean has no room for the four transient states below, so they do not exist
+#    in the code and the Chair cannot show them.
+#
+# 2. Every command hangs off a state, so a moment that runs a command has to BE a
+#    state. `raising`, `lowering`, `restarting`, `reloading` and `adopting` are the
+#    format forcing into existence the in-flight moments the code runs synchronously
+#    inside a control handler. That is the same thing the follow button's two pending
+#    states were, and it is why a control verb arriving mid-transition can be refused
+#    as `busy` here and cannot be there.
+#
+# 3. `restart` and `reload` are REFUSED while held. Today they are not gated on
+#    `desiredUp` at all, so `POST /control/restart?x` on a group booted with `--held`
+#    launches x — quietly defeating the point of holding it. Nothing was decided
+#    wrongly; the cell was simply never written down, which is what totality is for.
+#
+# `tick` in `raised` is a Move to the state it is already in — the statechart external
+# self-transition — so it exits and re-enters, and re-entering runs `reconcile`. That
+# is the keep-alive loop, and it costs one word.
+#
+# No deadlines. A supervisor is full of timing, but the group's own lifecycle has
+# none: the tick is a recurring heartbeat the host owns, and boot-grace and backoff
+# belong to the PER-SERVICE machine, which is a different machine and still a
+# classifier rather than a state machine in `Bosun.Supervisor.decide`.
+
+machine  supervise-group  "A supervised group, as seen from the Chair"
+format   2
+initial  held
+
+states
+  held        "Held"
+  raising     "Raising…"
+  raised      "Raised"
+  lowering    "Lowering…"
+  restarting  "Restarting…"
+  reloading   "Reloading…"
+  adopting    "Adopting…"
+
+events
+  up        user     "up all"
+  down      user     "down all"
+  restart   user     "restart a service"
+  reload    user     "reload the spec"
+  done      runtime  "it finished"
+  reloaded  runtime  "the new spec is good"
+  rejected  runtime  "the new spec is bad"
+  tick      runtime  "keep-alive"
+
+config
+  reload-source  = true  "This resident can re-read its spec"
+
+facts
+  service-in-group  "The named service is in this group"
+
+refusals
+  not-raised        "the group is held down"
+  no-such-service   "no service of that name in this group"
+  no-reload-source  "this resident has no spec to re-read"
+  busy              "something is already in flight"
+
+commands
+  bring-up                 "Enact the plan from a standing start"
+  reconcile                "Enact the plan against what is observed"
+  tear-down                "Run the teardown script"
+  forget-launch-memory     "Forget every launch, so stopped services read Down"
+  restart-one              "Enact a plan that treats the named service as failed"
+  re-ingest                "Re-read and validate the spec"
+  stop-changed             "Stop the old generation of the changed and removed"
+  forget-changed-launches  "Forget the launches of just those services"
+  swap-spec                "Adopt the new deployment"
+
+held:
+  up                                    -> raising
+  down, tick, done, reloaded, rejected  -> stay
+  restart, reload                       -> refuse not-raised
+
+raising:
+  entry  bring-up
+  done                      -> raised
+  down                      -> lowering
+  up, restart, reload       -> refuse busy
+  tick, reloaded, rejected  -> stay
+
+raised:
+  entry  reconcile
+  tick                                             -> raised
+  up                                               -> raising
+  down                                             -> lowering
+  restart                   when service-in-group  -> restarting
+                            else                   -> refuse no-such-service
+  reload                    when reload-source     -> reloading
+                            else                   -> refuse no-reload-source
+  done, reloaded, rejected                         -> stay
+
+lowering:
+  entry  tear-down, forget-launch-memory
+  done                            -> held
+  up, restart, reload             -> refuse busy
+  down, tick, reloaded, rejected  -> stay
+
+restarting:
+  entry  restart-one
+  done                      -> raised
+  down                      -> lowering
+  up, restart, reload       -> refuse busy
+  tick, reloaded, rejected  -> stay
+
+reloading:
+  entry  re-ingest
+  reloaded             -> adopting
+  rejected             -> raised
+  down                 -> lowering
+  up, restart, reload  -> refuse busy
+  tick, done           -> stay
+
+adopting:
+  entry  stop-changed, forget-changed-launches, swap-spec
+  done                      -> raised
+  down                      -> lowering
+  up, restart, reload       -> refuse busy
+  tick, reloaded, rejected  -> stay

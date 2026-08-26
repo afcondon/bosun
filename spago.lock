@@ -103,6 +103,7 @@
             "foldable-traversable",
             "foreign-object",
             "functions",
+            "glassbox",
             "integers",
             "maybe",
             "nullable",
@@ -132,6 +133,7 @@
             "effect",
             "either",
             "foreign-object",
+            "glassbox",
             "maybe",
             "ordered-collections",
             "partial",
@@ -860,7 +862,11 @@
         "zipperarray": "2.0.0"
       }
     },
-    "extra_packages": {}
+    "extra_packages": {
+      "glassbox": {
+        "path": "../../purescript-hylograph-libs/purescript-glassbox/core"
+      }
+    }
   },
   "packages": {
     "aff": {
@@ -1419,6 +1425,28 @@
         "tailrec",
         "tuples",
         "unfoldable"
+      ]
+    },
+    "glassbox": {
+      "type": "local",
+      "path": "../../purescript-hylograph-libs/purescript-glassbox/core",
+      "dependencies": [
+        "argonaut-core",
+        "arrays",
+        "codec",
+        "codec-argonaut",
+        "either",
+        "foldable-traversable",
+        "foreign-object",
+        "maybe",
+        "numbers",
+        "ordered-collections",
+        "parsing",
+        "prelude",
+        "record",
+        "strings",
+        "tuples",
+        "variant"
       ]
     },
     "graphs": {
@@ -2208,6 +2236,38 @@
         "transformers"
       ]
     },
+    "parsing": {
+      "type": "registry",
+      "version": "11.0.0",
+      "integrity": "sha256-N88gb/XbM29vw/Uop83shuMFT4wieQCz4wlQAct5eMs=",
+      "dependencies": [
+        "arrays",
+        "control",
+        "effect",
+        "either",
+        "enums",
+        "foldable-traversable",
+        "functions",
+        "identity",
+        "integers",
+        "lazy",
+        "lists",
+        "maybe",
+        "newtype",
+        "nullable",
+        "numbers",
+        "partial",
+        "prelude",
+        "st",
+        "strings",
+        "tailrec",
+        "transformers",
+        "tuples",
+        "unfoldable",
+        "unicode",
+        "unsafe-coerce"
+      ]
+    },
     "partial": {
       "type": "registry",
       "version": "4.0.0",
@@ -2614,6 +2674,21 @@
         "partial",
         "prelude",
         "tuples"
+      ]
+    },
+    "unicode": {
+      "type": "registry",
+      "version": "6.0.0",
+      "integrity": "sha256-5KugCNyYxscmZpnMbssOQA96XimuBN/bjHpdrtd5qaY=",
+      "dependencies": [
+        "arrays",
+        "enums",
+        "integers",
+        "maybe",
+        "partial",
+        "prelude",
+        "strings",
+        "unsafe-coerce"
       ]
     },
     "unsafe-coerce": {

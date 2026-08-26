@@ -1,0 +1,70 @@
+machine  supervise-group
+title    "A supervised group, as seen from the Chair"
+format   2
+initial  held
+
+STATES        LABEL        ON ENTRY                                          ON EXIT
+  held        Held
+  raising     Raising…     bring-up
+  raised      Raised       reconcile
+  lowering    Lowering…    tear-down, forget-launch-memory
+  restarting  Restarting…  restart-one
+  reloading   Reloading…   re-ingest
+  adopting    Adopting…    stop-changed, forget-changed-launches, swap-spec
+
+EVENTS      SOURCE   LABEL
+  up        user     up all
+  down      user     down all
+  restart   user     restart a service
+  reload    user     reload the spec
+  done      runtime  it finished
+  reloaded  runtime  the new spec is good
+  rejected  runtime  the new spec is bad
+  tick      runtime  keep-alive
+
+CONFIG           DEFAULT  LABEL
+  reload-source  true     This resident can re-read its spec
+
+FACTS               MEANING
+  service-in-group  The named service is in this group
+
+REFUSALS            MEANING
+  not-raised        the group is held down
+  no-such-service   no service of that name in this group
+  no-reload-source  this resident has no spec to re-read
+  busy              something is already in flight
+
+COMMANDS                   MEANING
+  bring-up                 Enact the plan from a standing start
+  reconcile                Enact the plan against what is observed
+  tear-down                Run the teardown script
+  forget-launch-memory     Forget every launch, so stopped services read Down
+  restart-one              Enact a plan that treats the named service as failed
+  re-ingest                Re-read and validate the spec
+  stop-changed             Stop the old generation of the changed and removed
+  forget-changed-launches  Forget the launches of just those services
+  swap-spec                Adopt the new deployment
+
+GRID   rows are states, columns are events
+                up       down      restart      reload       done    reloaded  rejected  tick
+  > held        raising  .         !not-raised  !not-raised  .       .         .         .
+    raising     !busy    lowering  !busy        !busy        raised  .         .         .
+    raised      raising  lowering  [1]          [2]          .       .         .         raised
+    lowering    !busy    .         !busy        !busy        held    .         .         .
+    restarting  !busy    lowering  !busy        !busy        raised  .         .         .
+    reloading   !busy    lowering  !busy        !busy        .       adopting  raised    .
+    adopting    !busy    lowering  !busy        !busy        raised  .         .         .
+
+KEY
+  >     the initial state
+  .     stay — the event is declared here and does nothing
+  !tag  refuse with that tag — see REFUSALS
+  [n]   guarded, or declared twice — see CASES
+
+CASES
+  [1]  raised on restart
+         when service-in-group  -> restarting
+         else                   refuse no-such-service
+  [2]  raised on reload
+         when reload-source     -> reloading
+         else                   refuse no-reload-source

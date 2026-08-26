@@ -14,4 +14,10 @@
 workspace:
   packageSet:
     registry: 77.13.1
-  extraPackages: {}
+  extraPackages:
+    # Local path dependency. Glassbox is a sibling repo, not yet published, and
+    # Bosun is its first real host — the machine in `machines/` describes this
+    # daemon's own group lifecycle. Note the coupling: a path dependency picks
+    # up whatever branch that repo has checked out.
+    glassbox:
+      path: ../../purescript-hylograph-libs/purescript-glassbox/core
