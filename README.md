@@ -68,8 +68,10 @@ bosun serve --audit [registry]                # probe every route, report up/dow
 
 ## Layout
 
-Six packages in one spago workspace (develop/test on node; purescript-go is a
-separate conformance column):
+Six packages in one spago workspace. **Gnomon (PureScript→Go) is the primary
+runtime; node is the development shell** — you work in node, the binary that
+ships is Go, and `conformance/` is the gate that holds the two to the same
+behaviour.
 
 | Package | Role |
 |---|---|
@@ -79,6 +81,16 @@ separate conformance column):
 | `test/` | scenario corpus as tests + the PBT generators / fault injectors |
 | `conformance/` | I/O-free `Main`s the backend-go column transpiles + runs (the cross-backend gate) |
 | `chair/` | **Bosun's Chair** — the Halogen front-end (see `chair/DESIGN.md`) |
+
+**Where the Go FFI lives.** Beside the `.purs` it implements, basename with the
+extension swapped — `cli/src/Bosun/CLI/Serve.purs`, `Serve.js`, `Serve.go` are
+three peers, and the backend finds the third via CoreFn `modulePath`, exactly as
+`purs` finds the second. There is no directory of Go shims and nothing copies
+them by hand; a missing twin is visible in an `ls` and caught by
+`scripts/control-parity.sh`. The convention is polyglot-template's
+(`docs/specs/co-located-user-foreigns.md`, after Kevin Jameson,
+*Multi-Platform Code Management*). FFI for *packages Bosun depends on* is not
+Bosun's to write — it belongs in `backend-go/foreign/`.
 
 `spike/` is *not* a workspace package — it's a standalone compile-proof (see
 "The EDSL" below).

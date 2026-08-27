@@ -34,9 +34,8 @@ spago build >/dev/null 2>&1
 mkdir -p /tmp/bosun-serve-go
 echo '<!doctype html><title>go-chaos</title><h1>ok</h1>' > /tmp/bosun-serve-go/index.html
 rm -rf "$OUT"
-( cd "$BACKEND_GO" && spago run -- --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
+( cd "$BOSUN" && "$BACKEND_GO/bin/backend-go" --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
 cp "$BACKEND_GO/runtime.go" "$OUT/runtime.go"
-cp "$BOSUN/conformance/go/bosun_serve_foreign.go" "$OUT/bosun_serve_foreign.go"
 ( cd "$OUT" && go build -race -o /tmp/bgo_chaos *.go ) || { echo "❌ go build -race failed"; exit 1; }
 
 echo "==> run the Go binary (resident, -race)"

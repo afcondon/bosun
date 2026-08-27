@@ -43,7 +43,7 @@ sides of a deliberate line:
 | Change | Where | Why there |
 |---|---|---|
 | `sync.Once` thunk fix in `_force` | **backend-go** `runtime.go` | **app-agnostic** runtime correctness — every concurrent purescript-go program benefits |
-| the resident reverse-proxy shim | **Bosun** `conformance/go/bosun_serve_foreign.go` | **app-specific** foreign — `package main`, copied into the build by `go-serve.sh`; backend-go stays app-agnostic |
+| the resident reverse-proxy shim | **Bosun** `conformance/src/Bosun/Conformance/ServeMain.go` | **app-specific** foreign — `package main`, copied into the build by `go-serve.sh`; backend-go stays app-agnostic |
 
 This is the same layering rule as Phase 6C (the os-exec foreign lives in Bosun),
 with the new wrinkle that a *runtime* fix legitimately belongs **in** backend-go.

@@ -128,7 +128,7 @@ behind one `/state`+`/control` contract the Chair never has to know about.
 > `fixtures/menagerie/` (ticker + slowboot + forker, Python stdlib) +
 > `scripts/menagerie-conf.sh`. Drives the rig under BOTH the real Node CLI and the
 > **Gnomon** native binary (`Bosun.Conformance.MenagerieMain` running the extracted
-> `superviseResident`; new Go probe foreigns in `conformance/go/bosun_probe_foreign.go`)
+> `superviseResident`; new Go probe foreigns in `cli/src/Bosun/CLI/Observe.go`)
 > and asserts the real effects on each: boot-grace held (slowboot `Starting`, no
 > relaunch storm, zero restarts, one listener/port), forker's group = forker + 2
 > workers, **`down` reaps the whole tree incl. forker's children** (the down-bug

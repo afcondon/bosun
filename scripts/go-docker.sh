@@ -5,8 +5,8 @@
 # it observes the live MacMini container group over ssh (`docker inspect`)
 # with the pure core + Bosun's own hand-written Go foreigns —
 #
-#   conformance/go/bosun_exec_foreign.go      (Bosun_CLI_Exec_execLineImpl)
-#   conformance/go/bosun_resident_foreign.go  (Bosun_CLI_Resident_residentImpl + nowMs)
+#   cli/src/Bosun/CLI/Exec.go      (Bosun_CLI_Exec_execLineImpl)
+#   cli/src/Bosun/CLI/Resident.go  (Bosun_CLI_Resident_residentImpl + nowMs)
 #
 # — the JSON-decode library foreigns having moved to backend-go's foreign/
 # layer on 2026-08-24, where a registry package's FFI belongs,
@@ -55,18 +55,16 @@ sleep 1
 # --- backend-go transpile + build -------------------------------------------
 echo "==> backend-go transpile (corefn -> Go, pruned to $MAIN)"
 rm -rf "$OUT"
-( cd "$BACKEND_GO" && spago run -- --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
+( cd "$BOSUN" && "$BACKEND_GO/bin/backend-go" --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
 cp "$BACKEND_GO/runtime.go"                          "$OUT/runtime.go"
 # Bosun's OWN CLI-edge twins. The JSON-decode library foreigns (Foreign.Object,
 # Data.Argonaut.{Core,Parser}) moved to backend-go's foreign/ layer on
 # 2026-08-24 and are linked in by the transpile above.
-cp "$BOSUN/conformance/go/bosun_exec_foreign.go"      "$OUT/bosun_exec_foreign.go"
-cp "$BOSUN/conformance/go/bosun_resident_foreign.go"  "$OUT/bosun_resident_foreign.go"
 
 echo "==> go build ($(ls "$OUT"/*.go | wc -l | tr -d ' ') Go files)"
 if ! ( cd "$OUT" && go build -o /tmp/bgo_docker *.go ) 2> /tmp/bgo_docker_build.err; then
   if grep -qE "residentImpl|execLineImpl|jsonParser" /tmp/bgo_docker_build.err; then
-    echo "❌ a foreign symbol was unresolved — a conformance/go/*.go file did not"
+    echo "❌ a foreign symbol was unresolved — a co-located *.go did not"
     echo "   make it into the build dir. Check the cp lines above."
   else
     echo "❌ go build failed:"; cat /tmp/bgo_docker_build.err

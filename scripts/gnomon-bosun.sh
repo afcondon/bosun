@@ -36,7 +36,8 @@ stale(){
   [ ! -x "$BIN" ] && return 0
   [ -n "$(find "$BOSUN/cli" "$BOSUN/core" "$BOSUN/adapters" "$BOSUN/conformance/src" \
             -name '*.purs' -newer "$BIN" -print -quit 2>/dev/null)" ] && return 0
-  [ -n "$(find "$BOSUN/conformance/go" -name '*.go' -newer "$BIN" -print -quit 2>/dev/null)" ] && return 0
+  [ -n "$(find "$BOSUN/cli" "$BOSUN/conformance/src" \
+            -name '*.go' -newer "$BIN" -print -quit 2>/dev/null)" ] && return 0
   # backend-go's own layers count too: the runtime, and (since 2026-08-24) the
   # per-package foreign/ directory. A fix landing upstream must reach the cached
   # binary, or the stress-testing this script exists for is testing yesterday.
@@ -50,25 +51,21 @@ build(){
   ( cd "$BOSUN" && spago build ) >&2 || { log "spago build failed"; exit 1; }
   log "backend-go transpile (corefn -> Go, pruned to $MAIN)"
   rm -rf "$OUT"
-  ( cd "$BACKEND_GO" && spago run -- --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" ) >&2 \
+  ( cd "$BOSUN" && "$BACKEND_GO/bin/backend-go" --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" ) >&2 \
     || { log "backend-go transpile failed"; exit 1; }
   cp "$BACKEND_GO/runtime.go" "$OUT/runtime.go"
-  # NOTE (2026-08-24): the LIBRARY decode foreigns — Foreign.Object,
-  # Data.Argonaut.{Core,Parser} — are no longer copied from here. They were
-  # Bosun carrying the backend's work, and they now live in backend-go's
-  # foreign/ layer, which links them in itself for any program whose dependency
-  # closure contains those modules. What remains below is Bosun's OWN FFI, which
-  # is the only kind conformance/go should ever hold.
+  # NOTE: NOTHING of Bosun's is copied here any more, and that is the point.
   #
-  # Consequence: this build needs a backend-go with that layer. Without it the
-  # link fails on Foreign_Object_*, and the remedy is to update backend-go, not
-  # to put the shims back.
-  cp "$BOSUN"/conformance/go/bosun_io_foreign.go              "$OUT/"
-  cp "$BOSUN"/conformance/go/bosun_exec_foreign.go            "$OUT/"
-  cp "$BOSUN"/conformance/go/bosun_probe_foreign.go           "$OUT/"
-  cp "$BOSUN"/conformance/go/bosun_resident_foreign.go        "$OUT/"
-  cp "$BOSUN"/conformance/go/bosun_cli_serve_foreign.go       "$OUT/"   # real serveImpl (was a stub)
-  cp "$BOSUN"/conformance/go/bosun_cli_audit_foreign.go       "$OUT/"   # real auditImpl (was a stub)
+  # The LIBRARY foreigns — Foreign.Object, Data.Argonaut.{Core,Parser} — went to
+  # backend-go's `foreign/` layer on 2026-08-24; Bosun's OWN foreigns went to the
+  # file beside each `.purs` on 2026-08-27 (`Serve.purs`, `Serve.js`, `Serve.go`),
+  # and the backend copies those itself, found via CoreFn `modulePath`. A list of
+  # `cp` lines here was a list of things somebody had to remember, which is
+  # precisely how the build stayed red for nine commits.
+  #
+  # Consequence: the transpile MUST run with the CWD at $BOSUN, since modulePath
+  # is relative to wherever spago built. bin/backend-go exists to make that hard
+  # to get wrong, and supplies the backend's own foreign/ as --foreign-dir.
   log "go build ($(ls "$OUT"/*.go | wc -l | tr -d ' ') Go files; yaml.v3 from cache)"
   (
     cd "$OUT"

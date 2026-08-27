@@ -23,7 +23,7 @@ node --input-type=module \
 
 echo "==> backend-go transpile (corefn -> Go, pruned to $MAIN)"
 rm -rf "$OUT"
-( cd "$BACKEND_GO" && spago run -- --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
+( cd "$BOSUN" && "$BACKEND_GO/bin/backend-go" --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
 cp "$BACKEND_GO/runtime.go" "$OUT/runtime.go"
 
 echo "==> go build + run ($(ls "$OUT"/*.go | wc -l | tr -d ' ') Go files)"

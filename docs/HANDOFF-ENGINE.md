@@ -575,7 +575,7 @@ container readiness the rig daemons lacked, for free.
 ## Engine note (2026-06-18 pm): Docker-on-Go — the foreigns landed
 
 `bosun docker` now also runs as a **native backend-go binary** (not just node).
-Built the Go twins of the CLI's effectful edges — `conformance/go/{bosun_exec,
+Built the Go twins of the CLI's effectful edges — `the co-located twins {Exec.go,
 bosun_resident,argonaut_parser}_foreign.go` — providing the REAL CLI symbols
 (`Bosun_CLI_Exec_execLineImpl`, `Bosun_CLI_Resident_residentImpl`/`nowMs`) plus a
 new library `jsonParser`. `scripts/go-docker.sh` runs both columns on **:3995**
@@ -1452,7 +1452,7 @@ zero builtins.
 
 ### And a second one, found by running the Menagerie: `/control` was dead in the Go column
 
-`conformance/go/bosun_resident_foreign.go` did
+`cli/src/Bosun/CLI/Resident.go` did
 
 ```go
 residentMu.Lock()

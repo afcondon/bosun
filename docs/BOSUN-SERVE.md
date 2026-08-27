@@ -287,7 +287,7 @@ it fails loudly at `serve` start.
 - **P3 — the Go column. ✅ DONE (commit 4bb0b0f; runtime fix aba781a).** The pure
   admission pipeline (`reconcile → servePlan`) transpiles via backend-go and a
   native binary IS the resident reverse proxy: `Bosun.Conformance.ServeMain` +
-  the Go shim `conformance/go/bosun_serve_foreign.go` (`httputil.ReverseProxy` +
+  the Go shim `conformance/src/Bosun/Conformance/ServeMain.go` (`httputil.ReverseProxy` +
   lazy-spawn + single-flight + idle-reap + **serve-layer timeouts**). The
   `sync.Once` thunk fix is upstream in backend-go's `runtime.go`; `go-race.sh` is
   the regression guard. **Verified**: `scripts/go-serve.sh` — native binary

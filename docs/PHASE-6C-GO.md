@@ -34,7 +34,7 @@ The one piece of hand-written Go that Bosun needs — the os-exec shim — is an
 **app-specific foreign**, so it lives in the **Bosun repo**, not in backend-go:
 
 ```
-conformance/go/bosun_apply_foreign.go    # package main; Bosun_Conformance_ApplyMain_execLineImpl
+conformance/src/Bosun/Conformance/ApplyMain.go    # package main; Bosun_Conformance_ApplyMain_execLineImpl
 ```
 
 backend-go has no per-module foreign-file mechanism, but `go build *.go` over
@@ -54,7 +54,7 @@ this file in next to the generated sources. Result:
 
 ## The os-exec foreign (reference)
 
-`conformance/go/bosun_apply_foreign.go` implements
+`conformance/src/Bosun/Conformance/ApplyMain.go` implements
 `execLineImpl :: EffectFn1 String { ok :: Boolean, code :: Int, message :: String }`.
 
 backend-go foreign ABI (read off the runtime catalogue):

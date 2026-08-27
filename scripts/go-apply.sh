@@ -24,17 +24,16 @@ mkdir -p /tmp/bosun-hello-go
 
 echo "==> backend-go transpile (corefn -> Go, pruned to $MAIN)"
 rm -rf "$OUT"
-( cd "$BACKEND_GO" && spago run -- --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
+( cd "$BOSUN" && "$BACKEND_GO/bin/backend-go" --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
 cp "$BACKEND_GO/runtime.go" "$OUT/runtime.go"
 # Bosun owns its one hand-written Go foreign (the os-exec shim) — copied in next
 # to the generated sources so `go build *.go` resolves execLineImpl. Keeps
 # backend-go app-agnostic; nothing there can clobber it.
-cp "$BOSUN/conformance/go/bosun_apply_foreign.go" "$OUT/bosun_apply_foreign.go"
 
 echo "==> go build ($(ls "$OUT"/*.go | wc -l | tr -d ' ') Go files)"
 if ! ( cd "$OUT" && go build -o /tmp/bgo_apply *.go ) 2> /tmp/bgo_apply_build.err; then
   if grep -q "execLineImpl" /tmp/bgo_apply_build.err; then
-    echo "❌ execLineImpl unresolved — conformance/go/bosun_apply_foreign.go did"
+    echo "❌ execLineImpl unresolved — conformance/src/Bosun/Conformance/ApplyMain.go did"
     echo "   not make it into the build dir. Check the cp above / the file exists."
   else
     echo "❌ go build failed:"; cat /tmp/bgo_apply_build.err

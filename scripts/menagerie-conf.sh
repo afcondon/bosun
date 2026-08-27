@@ -10,7 +10,7 @@
 #   · NODE   — the real CLI `bosun supervise` (output/…/Bosun.CLI.Main via run.js)
 #   · GNOMON — the backend-go native binary of Bosun.Conformance.MenagerieMain,
 #              which runs the IDENTICAL `superviseResident` over the same embedded
-#              cast (only new Go surface: conformance/go/bosun_probe_foreign.go).
+#              cast (only new Go surface: cli/src/Bosun/CLI/Observe.go).
 # Then diffs the two `/state` snapshots at the green checkpoint (modulo
 # timestamps) — the dual-runtime dogfood: anything Gnomon gets wrong, Node is the
 # oracle. If backend-go is absent, the Gnomon column is SKIPPED (not failed).
@@ -137,16 +137,13 @@ else
   echo ""
   echo "==> [gnomon] backend-go transpile (corefn -> Go, pruned to $MAIN)"
   rm -rf "$OUT"
-  ( cd "$BACKEND_GO" && spago run -- --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
+  ( cd "$BOSUN" && "$BACKEND_GO/bin/backend-go" --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
   cp "$BACKEND_GO/runtime.go" "$OUT/runtime.go"
   # Bosun's OWN FFI only; the library foreigns are backend-go's foreign/ layer.
-  cp "$BOSUN"/conformance/go/bosun_exec_foreign.go      "$OUT/"
-  cp "$BOSUN"/conformance/go/bosun_resident_foreign.go  "$OUT/"
-  cp "$BOSUN"/conformance/go/bosun_probe_foreign.go     "$OUT/"   # NEW: the 4 probes
   echo "==> [gnomon] go build ($(ls "$OUT"/*.go | wc -l | tr -d ' ') Go files)"
   if ! ( cd "$OUT" && go build -o /tmp/bgo_menagerie *.go ) 2> /tmp/bgo_menagerie_build.err; then
     if grep -qE "probe(Http|Tcp|Socket|PgidAlive)Impl|execLineImpl|residentImpl|jsonParser" /tmp/bgo_menagerie_build.err; then
-      echo "   ✗ a foreign symbol was unresolved — a conformance/go/*.go file did not make it into $OUT"
+      echo "   ✗ a foreign symbol was unresolved — a co-located *.go was not picked up into $OUT"
     else
       echo "   ✗ go build failed:"; cat /tmp/bgo_menagerie_build.err
     fi

@@ -24,9 +24,8 @@ echo "==> build bosun (corefn)"
 
 echo "==> backend-go transpile (pruned to $MAIN)"
 rm -rf "$OUT"
-( cd "$BACKEND_GO" && spago run -- --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
+( cd "$BOSUN" && "$BACKEND_GO/bin/backend-go" --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
 cp "$BACKEND_GO/runtime.go" "$OUT/runtime.go"
-cp "$BOSUN/conformance/go/bosun_race_foreign.go" "$OUT/bosun_race_foreign.go"
 
 if [ "$STOCK" = "--stock" ]; then
   echo "==> --stock: reverting the sync.Once fix on the build COPY (source untouched) to re-show the original breakage"

@@ -163,9 +163,11 @@ transpiled via backend-go and run as a native binary — it read the real
 (3× HTTP 200 + julia WS). This drove the Json-decode foreigns the hardcoded
 harnesses never exercised — `Data.Argonaut.Core` (`_caseJson` Fn7, `from*`,
 `stringify`) and `Foreign.Object` (`_lookup`, `keys`, `toArrayWithKey`, …) — newly
-hand-written in Go and kept in the Bosun repo (`conformance/go/*.go`, package
-main, copied at build; upstream candidates for backend-go, same posture as the
-os-exec shim). YAML support via `gopkg.in/yaml.v3` (a one-line go.mod;
+hand-written in Go and kept in the Bosun repo at the time (a flat
+`conformance/go/`, copied at build; upstream candidates for backend-go, same
+posture as the os-exec shim — both postures are gone now: the library foreigns
+moved upstream on 2026-08-24 and Bosun's own co-located beside their `.purs` on
+2026-08-27). YAML support via `gopkg.in/yaml.v3` (a one-line go.mod;
 `normalizeYaml` matches the JSON/js-yaml runtime shape). **A `--dry-run` diff of
 the rich `fixtures/macmini` YAML compose is byte-identical node-vs-Go** — so the
 whole ingest→decode→plan→script path is conformance-proven across columns, not

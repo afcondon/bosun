@@ -8,7 +8,7 @@
 # Data.Argonaut.{Core,Parser} and Foreign.Object moved to backend-go's foreign/
 # layer on 2026-08-24, and the transpile links them in for any program whose
 # dependency closure has those modules. What this script still copies is
-#   - conformance/go/bosun_applycli_foreign.go  (readJson/readYaml/argv/execLine)
+#   - conformance/src/Bosun/Conformance/ApplyCliMain.go  (readJson/readYaml/argv/execLine)
 # plus backend-go's runtime.go, next to the generated `package main` sources
 # where `go build *.go` resolves them.
 #
@@ -33,11 +33,10 @@ echo "==> build bosun (spago emits corefn + js)"
 
 echo "==> backend-go transpile (corefn -> Go, pruned to $MAIN)"
 rm -rf "$OUT"
-( cd "$BACKEND_GO" && spago run -- --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
+( cd "$BOSUN" && "$BACKEND_GO/bin/backend-go" --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
 cp "$BACKEND_GO/runtime.go" "$OUT/runtime.go"
 # Bosun's OWN FFI only. Foreign.Object / Data.Argonaut.* moved to backend-go's
 # foreign/ layer on 2026-08-24, which links them itself.
-cp "$BOSUN/conformance/go/bosun_applycli_foreign.go" "$OUT/bosun_applycli_foreign.go"
 
 echo "==> go module setup (yaml.v3 from cache) + build ($(ls "$OUT"/*.go | wc -l | tr -d ' ') Go files)"
 (

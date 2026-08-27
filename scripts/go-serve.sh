@@ -5,7 +5,7 @@
 # backend-go, builds a NATIVE Go binary WITH THE RACE DETECTOR, and runs it as a
 # resident reverse proxy: the binary computes the admission plan with the pure
 # core (reconcile -> servePlan) and serves it via the one resident-proxy foreign
-# (conformance/go/bosun_serve_foreign.go). Then it fires concurrent requests at
+# (conformance/src/Bosun/Conformance/ServeMain.go). Then it fires concurrent requests at
 # the public port — each lazy-spawns (once) the python backend on the internal
 # port and proxies — and asserts HTTP 200, clean under -race.
 #
@@ -41,16 +41,15 @@ HTML
 
 echo "==> backend-go transpile (corefn -> Go, pruned to $MAIN)"
 rm -rf "$OUT"
-( cd "$BACKEND_GO" && spago run -- --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
+( cd "$BOSUN" && "$BACKEND_GO/bin/backend-go" --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
 cp "$BACKEND_GO/runtime.go" "$OUT/runtime.go"
 # Bosun owns its one hand-written Go foreign (the resident proxy) — copied in so
 # `go build *.go` resolves serveImpl. Keeps backend-go app-agnostic.
-cp "$BOSUN/conformance/go/bosun_serve_foreign.go" "$OUT/bosun_serve_foreign.go"
 
 echo "==> go build -race ($(ls "$OUT"/*.go | wc -l | tr -d ' ') Go files)"
 if ! ( cd "$OUT" && go build -race -o /tmp/bgo_serve *.go ) 2> /tmp/bgo_serve_build.err; then
   if grep -q "serveImpl" /tmp/bgo_serve_build.err; then
-    echo "❌ serveImpl unresolved — conformance/go/bosun_serve_foreign.go did not"
+    echo "❌ serveImpl unresolved — conformance/src/Bosun/Conformance/ServeMain.go did not"
     echo "   make it into the build dir. Check the cp above / the file exists."
   else
     echo "❌ go build failed:"; cat /tmp/bgo_serve_build.err

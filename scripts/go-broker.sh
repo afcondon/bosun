@@ -106,17 +106,11 @@ echo "==> build bosun (spago emits corefn + js)"
 echo "==> backend-go transpile (corefn -> Go, pruned to $MAIN)"
 [ -d "$BACKEND_GO" ] || { echo "❌ backend-go not found at $BACKEND_GO (set BACKEND_GO)"; exit 1; }
 rm -rf "$OUT"
-( cd "$BACKEND_GO" && spago run -- --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 ) \
+( cd "$BOSUN" && "$BACKEND_GO/bin/backend-go" --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 ) \
   || { echo "❌ backend-go transpile failed"; exit 1; }
 cp "$BACKEND_GO/runtime.go" "$OUT/runtime.go"
 # Only Bosun's OWN FFI twins. Foreign.Object and Data.Argonaut.{Core,Parser}
 # are backend-go's foreign/ layer since 2026-08-24 and it links them itself.
-cp "$BOSUN"/conformance/go/bosun_io_foreign.go        "$OUT/"
-cp "$BOSUN"/conformance/go/bosun_exec_foreign.go      "$OUT/"
-cp "$BOSUN"/conformance/go/bosun_probe_foreign.go     "$OUT/"
-cp "$BOSUN"/conformance/go/bosun_resident_foreign.go  "$OUT/"
-cp "$BOSUN"/conformance/go/bosun_cli_serve_foreign.go "$OUT/"
-cp "$BOSUN"/conformance/go/bosun_cli_audit_foreign.go "$OUT/"
 
 echo "==> go build -race ($(ls "$OUT"/*.go | wc -l | tr -d ' ') Go files)"
 (

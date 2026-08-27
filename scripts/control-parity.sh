@@ -55,8 +55,7 @@ BOSUN="$(cd "$HERE/.." && pwd)"
 # which is how you demonstrate that it goes RED on the state it was written to
 # catch, rather than merely asserting that it would have.
 NODE_SHIM="${NODE_SHIM:-$BOSUN/cli/src/Bosun/CLI/Serve.js}"
-GO_SHIM_DIR="${GO_SHIM_DIR:-$BOSUN/conformance/go}"
-GO_SHIM="${GO_SHIM:-$GO_SHIM_DIR/bosun_cli_serve_foreign.go}"
+GO_SHIM="${GO_SHIM:-$BOSUN/cli/src/Bosun/CLI/Serve.go}"
 
 FAILED=0
 bad() { echo "  ✗ $*"; FAILED=1; }
@@ -125,7 +124,7 @@ compare() {
   echo "      go:   $GO_SHIM"
 }
 
-echo "control-surface parity — cli/src/Bosun/CLI/Serve.js  ≟  conformance/go/bosun_cli_serve_foreign.go"
+echo "control-surface parity — cli/src/Bosun/CLI/Serve.js  ≟  cli/src/Bosun/CLI/Serve.go"
 echo
 compare "dispatched paths"  5 "$(node_paths)"   "$(go_paths)"
 compare "query selectors"   2 "$(node_queries)" "$(go_queries)"
@@ -136,10 +135,15 @@ compare "x-bosun headers"   1 "$(node_headers)" "$(go_headers)"
 # A DIFFERENT failure from the one above, found the same day and worth its own
 # check: the Go build of the real CLI (`scripts/gnomon-bosun.sh`) had been RED
 # for nine commits, because three `foreign import`s landed in cli/src with no
-# `conformance/go/` counterpart and `go build` is the only thing that would have
-# said so — and nothing runs it. This is the same fact for the price of a grep:
-# a `foreign import name` in `Module.Path` needs a `var Module_Path_name` in the
-# Go shims, or the primary runtime will not LINK, let alone diverge.
+# Go counterpart and `go build` is the only thing that would have said so — and
+# nothing runs it. This is the same fact for the price of a grep: a `foreign
+# import name` in `Module.Path` needs a `var Module_Path_name`, or the primary
+# runtime will not LINK, let alone diverge.
+#
+# Since the foreigns co-located (2026-08-27) this asks a sharper question than
+# it used to. It no longer accepts the symbol appearing SOMEWHERE in a pile of
+# Go; it wants it in the file next door — `Serve.purs` -> `Serve.go` — which is
+# also the file the fix goes in, so the failure names its own remedy.
 #
 # Scope and its limit: this sees Bosun's OWN foreign imports. It cannot see a
 # library foreign that PureScript code newly pulls in — `Foreign.Object.ST.poke`
@@ -149,14 +153,16 @@ compare "x-bosun headers"   1 "$(node_headers)" "$(go_headers)"
 ffi_check() {
   local missing=0 total=0 sym mod name
   while IFS= read -r line; do
-    mod=$(echo "$line" | cut -d: -f1 | sed 's|.*/cli/src/||; s|\.purs$||; s|/|_|g')
+    src=$(echo "$line" | cut -d: -f1)
+    twin="${src%.purs}.go"
+    mod=$(echo "$src" | sed 's|.*/cli/src/||; s|\.purs$||; s|/|_|g')
     name=$(echo "$line" | sed 's/.*foreign import //; s/ *::.*//')
     [ -z "$name" ] && continue
     total=$((total + 1))
     sym="${mod}_${name}"
-    if ! grep -qE "^var $sym any" "$GO_SHIM_DIR"/*.go; then
-      [ "$missing" -eq 0 ] && bad "Bosun FFI twins: declared in PureScript, absent from the Go shims —"
-      echo "        · $sym   ($(echo "$line" | cut -d: -f1))"
+    if [ ! -f "$twin" ] || ! grep -qE "^var $sym any" "$twin"; then
+      [ "$missing" -eq 0 ] && bad "Bosun FFI twins: declared in PureScript, absent from the co-located Go —"
+      echo "        · $sym   wanted in $twin"
       missing=$((missing + 1))
     fi
   done < <(grep -rn "^foreign import" "$BOSUN"/cli/src)
@@ -165,7 +171,7 @@ ffi_check() {
     return
   fi
   if [ "$missing" -eq 0 ]; then
-    ok "Bosun FFI twins: all $total cli/src foreign imports have a conformance/go twin"
+    ok "Bosun FFI twins: all $total cli/src foreign imports have a co-located Go twin"
   else
     echo "      The Go binary will not link. scripts/gnomon-bosun.sh is the proof."
   fi
