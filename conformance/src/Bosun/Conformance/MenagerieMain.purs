@@ -32,6 +32,8 @@ import Prelude
 import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.CLI.Resident (runResident)
 import Bosun.CLI.Supervise (superviseResident)
+import Bosun.Machine.SuperviseGroupSource (artifactJson)
+import Glassbox.Codec.JSON (parseSpec)
 import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Target (defaultTargets)
 import Bosun.Validate (validate)
@@ -56,7 +58,16 @@ main = case jsonParser composeJson of
       Left _ -> log "menagerie (Go column): fixture failed to validate (should not happen)"
       -- `Nothing` reload source: the fixture is embedded, not a file on disk, so
       -- there is nothing to re-read — `POST /control/reload` reports that.
-      Right vd -> superviseResident defaultTargets (Just 8788) false Nothing r.deployment vd >>= runResident
+      -- The group lifecycle artifact, compiled in for the same reason the
+      -- compose fixture is: this Main is transpiled and run under backend-go,
+      -- so it cannot open a file. `Bosun.Machine.SuperviseGroupSource` is
+      -- generated from `machines/supervise-group.json`, so the two columns
+      -- drive the identical machine and not merely a similar one.
+      Right vd -> case parseSpec artifactJson of
+        Left err -> log ("menagerie (Go column): the lifecycle artifact does not decode — " <> err)
+        Right machine ->
+          superviseResident defaultTargets (Just 8788) false Nothing machine r.deployment vd
+            >>= runResident
 
 -- The JSON equivalent of fixtures/menagerie/compose.yml. Kept in sync by hand
 -- (3 services); the node column reads the YAML, this embeds the same content, and

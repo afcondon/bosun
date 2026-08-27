@@ -24,5 +24,6 @@ package:
     - bosun-core
     - bosun-adapters
     - bosun-cli
+    - glassbox
   run:
     main: Bosun.Conformance.Main

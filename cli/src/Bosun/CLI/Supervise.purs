@@ -30,6 +30,14 @@ import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeSupSnapshot)
 import Bosun.CLI.Resident (Resident, accepted, nowMs, refused, runResident)
+import Bosun.CLI.Supervise.Machine (complaints, desiredFromPhase, evDone, evDown, evRejected, evReload, evReloaded, evRestart, evTick, evUp, phaseTag)
+import Bosun.Machine.SuperviseGroup as SG
+import Bosun.Machine.SuperviseGroupSource (artifactJson)
+import Glassbox.Drive (Wiring, fire, start) as Drive
+import Glassbox.Host (dispatch)
+import Glassbox.Codec.JSON (parseSpec)
+import Glassbox.Run (setConfig, setFact, worldFrom)
+import Glassbox.Spec (CommandId, ConfigId(..), EventId, FactId(..), RefusalId, Spec, StateId, Value(..), textOfRefusal)
 import Bosun.Plan (Change(..), Plan, Status(..), plan, planSteps)
 import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderAddressMiss, renderCommand, renderReport, renderTeardown, renderTeardownSummary)
@@ -41,10 +49,10 @@ import Bosun.Target (TargetMap)
 import Bosun.Validate (validate)
 import Bosun.Version (version)
 import Data.Array as A
-import Data.Either (Either(..))
+import Data.Either (Either(..), isRight)
 import Data.Foldable (foldr, intercalate, traverse_)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromMaybe, maybe)
+import Data.Maybe (Maybe(..), fromMaybe, isJust, maybe)
 import Data.Set as Set
 import Data.Traversable (traverse)
 import Data.Tuple (Tuple(..))
@@ -101,9 +109,33 @@ runSupervise targets mPort startHeld composePath registryPath = do
       log "cannot supervise: the deployment does not validate —"
       log ""
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
-    Right vd ->
-      superviseResident targets mPort startHeld (Just (reIngest composePath registryPath)) dep vd
-        >>= runResident
+    Right vd -> case loadMachine of
+      Left why -> do
+        log ("cannot supervise: " <> why)
+        log ""
+        log "The group lifecycle is `machines/supervise-group.json`, compiled in via"
+        log "`Bosun.Machine.SuperviseGroupSource`. Regenerate both generated modules"
+        log "after editing it: `scripts/machine-vocabulary.sh`."
+      Right machine ->
+        superviseResident targets mPort startHeld (Just (reIngest composePath registryPath)) machine dep vd
+          >>= runResident
+
+-- | The group lifecycle artifact, decoded and checked against what this daemon
+-- | can actually do.
+-- |
+-- | Two failures, and they are different in kind. The decode failing means the
+-- | artifact is not a machine. `complaints` failing means it IS one, and names
+-- | words this daemon has no answer for — a state it cannot report, a command
+-- | it cannot carry out. Both stop the daemon before it starts, which is the
+-- | whole argument: a supervisor that silently drops one of its own commands is
+-- | worse than one that refuses to boot, because you find out at 3am instead of
+-- | at deploy time.
+loadMachine :: Either String Spec
+loadMachine = case parseSpec artifactJson of
+  Left err -> Left ("the group lifecycle artifact does not decode — " <> err)
+  Right machine -> case complaints machine of
+    [] -> Right machine
+    problems -> Left (intercalate "; " problems)
 
 -- | Build the supervise `Resident` — Refs for desired-state and launch memory,
 -- | the observe→refine→plan→enact `tick`, the `/state` renderer, the `/control`
@@ -114,8 +146,8 @@ runSupervise targets mPort startHeld composePath registryPath = do
 -- | dual-runtime parity test (mirrors `Bosun.CLI.Docker.dockerResident`). The
 -- | `targets` are threaded (not hardcoded) so a remote-host supervise resolves
 -- | the same way `apply` does.
-superviseResident :: TargetMap -> Maybe Int -> Boolean -> ReloadSource -> Deployment -> ValidatedDeployment -> Effect Resident
-superviseResident targets mPort startHeld reloadSource dep0 vd0 = do
+superviseResident :: TargetMap -> Maybe Int -> Boolean -> ReloadSource -> Spec -> Deployment -> ValidatedDeployment -> Effect Resident
+superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
   -- `startHeld` boots the resident with the group HELD DOWN (desired=down) and
   -- skips the initial bring-up: the daemon is up and answering /state + /control
   -- so the Chair sees an armable supervise group, but nothing is launched until a
@@ -123,7 +155,33 @@ superviseResident targets mPort startHeld reloadSource dep0 vd0 = do
   -- -Chair path — replacing DeepStar, where the supervisor was resident and you
   -- ran `deepstar up` to raise the rig. Default (false) keeps `supervise`'s
   -- bring-it-up-and-keep-it-up lifecycle for the always-on deployments.
-  desiredUp <- Ref.new (not startHeld)
+  -- WHERE THE GROUP IS, per `machines/supervise-group.json`. Every transition
+  -- below is that artifact's decision; this file only carries them out.
+  --
+  -- This used to be `desiredUp :: Ref Boolean`, and a Boolean had no room for
+  -- the five in-flight states — raising, lowering, restarting, reloading,
+  -- adopting — that the artifact forces into existence by making every command
+  -- hang off a state. They existed in the code all along, as the inside of a
+  -- synchronous control handler; they simply could not be named or shown.
+  phaseRef <- Ref.new machine.initial
+  -- WHICH service a control verb is about.
+  --
+  -- A Glassbox command is an opaque identifier and carries no payload, so
+  -- `restart-one` learns which service the same way the machine learns whether
+  -- that service exists: out of band, from the host. The artifact says WHEN to
+  -- restart one; Bosun says WHICH. That split is the format working, not a gap
+  -- in it — a machine that knew about ServiceIds would be a machine about
+  -- Bosun rather than about supervision.
+  pendingArg <- Ref.new ""
+  -- What the machine did during the fire that is currently running, so the HTTP
+  -- reply can report it. Cleared before each verb.
+  outRef <- Ref.new emptyOut
+  -- The observation the current pass is working from, so `reconcile` enacts
+  -- against what was just seen instead of observing the rig twice in one tick.
+  observedRef <- Ref.new Map.empty
+  -- A reload in flight: `re-ingest` produces it, and `stop-changed`,
+  -- `forget-changed-launches` and `swap-spec` each consume part of it.
+  pendingReload <- Ref.new Nothing
   -- The threaded `recorded` state (D-7): launch memory across ticks. This is
   -- what makes `supervise` more than a stateless plan-loop — without it a
   -- slow-boot service re-Starts every tick (the relaunch storm).
@@ -248,110 +306,244 @@ superviseResident targets mPort startHeld reloadSource dep0 vd0 = do
           rememberTeardown verdicts
           pure verdicts
 
-    tick = do
-      up <- Ref.read desiredUp
+    -- Observe and refine, and record BOTH results. This is bookkeeping, not
+    -- action: it runs on every tick whatever phase the group is in, because
+    -- `/state` must stay current while the group is held. What the observation
+    -- is then USED for is the machine's decision, not this function's — which
+    -- is exactly the `when up (...)` that used to live at the end of `tick`.
+    refreshObserved = do
       dep <- Ref.read depRef
       obs <- observeSupSnapshot dep
       now <- nowMs
       prev <- Ref.read supRef
       let refined = refine cfg now prev obs
       Ref.write refined.state supRef
-      when up (enactPlan "reconcile (keep-alive)" now refined.snapshot)
+      Ref.write refined.snapshot observedRef
+      pure now
+
+    -- Refresh only when nothing is about to. `reconcile` observes for itself —
+    -- its own label says so — so a raised tick that refreshed here as well
+    -- would probe every service twice a second for nothing. A held group has no
+    -- reconcile, and `/state` must still be current, so it refreshes here.
+    tick = do
+      phase <- Ref.read phaseRef
+      when (not (desiredFromPhase phase)) (void refreshObserved)
+      Drive.fire wiring evTick
 
     stateBody = do
       st <- Ref.read supRef
-      up <- Ref.read desiredUp
+      phase <- Ref.read phaseRef
       td <- Ref.read teardownRef
-      pure (snapshotBody up st td)
+      pure (snapshotBody phase st td)
 
-    control = mkEffectFn2 \verb arg -> case verb of
-      "up" -> do
-        Ref.write true desiredUp
-        bringUp
-        accepted "up: desired=up, bringing up"
-      -- The reply carries what the teardown ACTUALLY DID. It used to read
-      -- `{"ok":true,"message":"down: desired=down, auto-restart suspended"}`
-      -- unconditionally, which is two true clauses arranged so that the missing
-      -- third one ("and nothing was stopped") is the one you infer.
-      --
-      -- `ok` stays TRUE even when services survive, and that is a deliberate
-      -- choice rather than an oversight: the shim answers 400 for `ok:false`,
-      -- and 400 says the REQUEST was bad. The request was fine — desired=down
-      -- took effect and auto-restart is suspended — it is the rig that did not
-      -- comply. Answering "bad request" would send the operator to look at
-      -- their curl. So the truth rides the message, and `renderTeardownSummary`
-      -- puts the failures at the front of it where they cannot be skimmed past.
-      "down" -> do
-        Ref.write false desiredUp
-        verdicts <- bringDown
-        -- forget launch memory so stopped services read Down, not Failed
-        Ref.write emptySupState supRef
-        accepted ("down: desired=down, auto-restart suspended — " <> renderTeardownSummary verdicts)
-      "restart" -> do
-        now <- nowMs
-        dep <- Ref.read depRef
-        obs <- observeSupSnapshot dep
-        prev <- Ref.read supRef
-        let refined = refine cfg now prev obs
-        Ref.write refined.state supRef
-        -- A name that is not in the group cannot be restarted, and saying
-        -- "restart: <typo>" as though it had been is how a control surface
-        -- teaches you to trust it wrongly.
-        --
-        -- WHICH mistake it was is the part that used to be missing. `serve`
-        -- keys by PORT and a group keys by ID, so the natural first move on a
-        -- misbehaving daemon — `?service=3028` — answered "no service `3028`
-        -- in this group", which is true and reads as "that daemon is down"
-        -- about a daemon that is up and lazy-spawned by the router
-        -- (FINDINGS-supervision-blind-spots.md §4). The router's half of that
-        -- was fixed in bd28adc; `addressService` is this half, and it splits
-        -- out the empty argument and the near-miss spellings while it is there.
-        case addressService (Set.toUnfoldable (Map.keys refined.snapshot)) arg of
-          Left miss -> refused (renderAddressMiss { verb: "restart", asked: arg, routerPort: controlPort } miss)
-          Right sid -> do
-            enactPlan ("restart " <> arg) now (Map.insert sid Failed refined.snapshot)
-            accepted ("restart: " <> arg)
-      -- HOT-RELOAD (note #397): re-read the spec, diff it against what is
-      -- running, and stop ONLY the services whose launch spec changed (or were
-      -- removed) — the unchanged ones keep running with their launch memory, so
-      -- a live UDP/socket daemon is never double-launched. The changed/added
-      -- services come up on the next keep-alive tick (desired=up). A spec that
-      -- fails to parse/validate is rejected and the running group is untouched.
-      "reload" -> case reloadSource of
-        Nothing -> refused "reload: no reload source configured for this resident"
-        Just reload -> do
-          res <- reload
-          case res of
-            Left err -> refused ("reload: rejected — " <> err)
-            Right (Tuple dep' vd') -> do
+    -- =====================================================================
+    -- The seam: what the artifact's words mean here
+    -- =====================================================================
+
+    note msg = when (msg /= "") (Ref.modify_ (\o -> o { notes = A.snoc o.notes msg }) outRef)
+
+    -- The world the guards read.
+    --
+    -- Both entries are facts about the HOST, which is the point of the split:
+    -- `reload-source` is config because it decides which machine this resident
+    -- is (a resident with no spec to re-read genuinely has no reload arc), and
+    -- `service-in-group` is a fact because it changes under the machine's feet
+    -- as services come and go.
+    machineWorld = do
+      arg <- Ref.read pendingArg
+      observed <- Ref.read observedRef
+      pure
+        ( worldFrom machine
+            # setConfig (ConfigId "reload-source") (VBoolean (isJust reloadSource))
+            # setFact (FactId "service-in-group")
+                (VBoolean (isRight (addressService (Set.toUnfoldable (Map.keys observed)) arg)))
+        )
+
+    -- One reconcile against a FRESH observation.
+    --
+    -- It must observe for itself, and this is where the first attempt at this
+    -- wiring got it wrong. `reconcile` is `raised`'s entry command, so it runs
+    -- on the way in from `raising` — moments after `bring-up` launched
+    -- everything against `Map.empty`. Reusing the observation of the pass would
+    -- have meant reconciling against that same empty snapshot, concluding
+    -- nothing was running, and launching the whole group A SECOND TIME. The
+    -- duplicate generation is the one teardown does not know about, so `down`
+    -- then reported every service reaped while two of them kept their ports.
+    reconcileNow = do
+      now <- refreshObserved
+      observed <- Ref.read observedRef
+      enactPlan "reconcile (keep-alive)" now observed
+
+    restartOne = do
+      now <- nowMs
+      arg <- Ref.read pendingArg
+      observed <- Ref.read observedRef
+      case addressService (Set.toUnfoldable (Map.keys observed)) arg of
+        -- Unreachable: the machine only enters `restarting` when the
+        -- `service-in-group` fact holds, and that fact is this same lookup.
+        Left _ -> note ("restart: " <> arg <> " vanished between the guard and the act")
+        Right sid -> do
+          enactPlan ("restart " <> arg) now (Map.insert sid Failed observed)
+          note ("restart: " <> arg)
+
+    changedIds p = p.diff.removed <> p.diff.changed
+
+    -- Every command the artifact declares, and nothing else. The row comes from
+    -- the generated vocabulary, so a command added to the machine is a MISSING
+    -- FIELD here — named, at compile time — rather than a verb that silently
+    -- does nothing.
+    commandTable :: Record (SG.Commands (Effect (Maybe EventId)))
+    commandTable =
+      { "bring-up": do
+          bringUp
+          pure (Just evDone)
+      , "reconcile": do
+          reconcileNow
+          pure Nothing
+      , "tear-down": do
+          verdicts <- bringDown
+          note (renderTeardownSummary verdicts)
+          pure Nothing
+      , "forget-launch-memory": do
+          Ref.write emptySupState supRef
+          pure (Just evDone)
+      , "restart-one": do
+          restartOne
+          pure (Just evDone)
+      , "re-ingest": case reloadSource of
+          -- Unreachable while `reload-source` config gates the arc.
+          Nothing -> do
+            note "reload: no reload source configured for this resident"
+            pure (Just evRejected)
+          Just reload -> do
+            res <- reload
+            case res of
+              Left err -> do
+                note ("reload: rejected — " <> err)
+                pure (Just evRejected)
+              Right (Tuple dep' vd') -> do
+                oldVd <- Ref.read vdRef
+                let
+                  d = superviseDiff
+                    (unValidatedDeployment oldVd).services
+                    (unValidatedDeployment vd').services
+                Ref.write (Just { dep: dep', vd: vd', diff: d }) pendingReload
+                pure (Just evReloaded)
+      , "stop-changed": do
+          mp <- Ref.read pendingReload
+          case mp of
+            Nothing -> pure Nothing
+            Just p -> do
               oldVd <- Ref.read vdRef
-              let
-                d = superviseDiff
-                  (unValidatedDeployment oldVd).services
-                  (unValidatedDeployment vd').services
-                toStop = d.removed <> d.changed
-              -- Stop the CURRENT generation of removed+changed services — render
-              -- their Stop commands from the OLD vd (it describes what is running
-              -- now), then forget their launch memory so the next tick relaunches
-              -- the changed ones with the new spec and leaves the removed dead.
-              verdicts <- stopSubset oldVd toStop
-              Ref.modify_ (forgetLaunches toStop) supRef
-              -- Swap in the new deployment. UNCHANGED services are untouched and
-              -- keep their launch memory (the double-launch guard).
-              Ref.write dep' depRef
-              Ref.write vd' vdRef
-              -- A reload's stop half is a teardown like any other, and a
-              -- changed service that would not die is the one thing that makes
-              -- the relaunch on the next tick lose the bind race. So the same
-              -- verdicts ride this reply, appended only when there is bad news
-              -- — an unremarkable reload should still read as one line.
-              accepted ("reload: " <> reloadSummary d <> stopNote verdicts)
+              verdicts <- stopSubset oldVd (changedIds p)
+              note (stopNote verdicts)
+              pure Nothing
+      , "forget-changed-launches": do
+          mp <- Ref.read pendingReload
+          case mp of
+            Nothing -> pure Nothing
+            Just p -> do
+              Ref.modify_ (forgetLaunches (changedIds p)) supRef
+              pure Nothing
+      , "swap-spec": do
+          mp <- Ref.read pendingReload
+          case mp of
+            Nothing -> pure (Just evDone)
+            Just p -> do
+              Ref.write p.dep depRef
+              Ref.write p.vd vdRef
+              Ref.write Nothing pendingReload
+              note ("reload: " <> reloadSummary p.diff)
+              pure (Just evDone)
+      }
+
+    wiring :: Drive.Wiring Effect
+    wiring =
+      { spec: machine
+      , phase: Ref.read phaseRef
+      , move: \next -> Ref.write next phaseRef
+      , world: machineWorld
+      , perform: \cmd -> case dispatch commandTable cmd of
+          Just run -> run
+          -- Unreachable in a daemon that started: `complaints` compares the
+          -- artifact's command list with this table's row at boot and refuses
+          -- to run if anything is missing.
+          Nothing -> do
+            log ("supervise: BUG — the artifact names a command this daemon has no handler for: " <> showCommand cmd)
+            pure Nothing
+      , refused: \rid -> Ref.modify_ (_ { refusal = Just rid }) outRef
+      -- Synchronous, because this daemon is. Every command runs to completion
+      -- inside the control handler that provoked it, exactly as before, so the
+      -- transient states are passed THROUGH rather than rested in — `up` walks
+      -- held → raising → raised in one call. The `busy` refusals the artifact
+      -- declares are therefore unreachable today, and are the arc that becomes
+      -- live the moment any of this is made asynchronous.
+      , fork: \act -> act
+      -- No deadlines in this machine: the tick is a heartbeat the host owns,
+      -- and backoff belongs to the per-service classifier, not here.
+      , arm: \_ -> pure unit
+      }
+
+    -- Fire one verb and say what came of it.
+    fireVerb label ev = do
+      Ref.write emptyOut outRef
+      Drive.fire wiring ev
+      out <- Ref.read outRef
+      phase <- Ref.read phaseRef
+      let extra = A.filter (_ /= "") out.notes
+      case out.refusal of
+        Just rid -> refused (label <> ": " <> textOfRefusal machine rid)
+        Nothing -> accepted
+          ( label <> ": " <> phaseTag phase
+              <> (if A.null extra then "" else " — " <> intercalate " " extra)
+          )
+
+    -- Every verb is now the same three steps: tell the host what the verb is
+    -- about, ask the ARTIFACT what that means here, and report what came of it.
+    --
+    -- What used to be in each arm — "is the group up?", "does that service
+    -- exist?", "is there a reload source?" — is not gone; it moved into
+    -- `machines/supervise-group.json`, where it is one table that can be read,
+    -- drawn and checked for holes. Three cells that were never written down
+    -- came back with it: `restart` and `reload` are refused while held, which
+    -- they were not before, so `POST /control/restart` on a `--held` group no
+    -- longer quietly launches the service the hold exists to keep down.
+    control = mkEffectFn2 \verb arg -> case verb of
+      "up" -> fireVerb "up" evUp
+      "down" -> fireVerb "down" evDown
+      "restart" -> do
+        -- Refresh first: the `service-in-group` guard the machine is about to
+        -- read is a question about what is running NOW, and answering it from
+        -- a snapshot taken up to a tick ago is how a live service reads as
+        -- absent. The old handler refreshed here for the same reason.
+        _ <- refreshObserved
+        Ref.write arg pendingArg
+        observed <- Ref.read observedRef
+        -- The machine decides THAT a name it does not know is refused; Bosun
+        -- still says WHICH mistake it was. `serve` keys by port and a group
+        -- keys by id, so `?service=3028` must not answer "no such service"
+        -- about a daemon that is up and lazy-spawned by the router.
+        case addressService (Set.toUnfoldable (Map.keys observed)) arg of
+          Left miss -> do
+            Ref.write emptyOut outRef
+            Drive.fire wiring evRestart
+            out <- Ref.read outRef
+            case out.refusal of
+              Just _ -> refused (renderAddressMiss { verb: "restart", asked: arg, routerPort: controlPort } miss)
+              Nothing -> accepted ("restart: " <> arg)
+          Right _ -> fireVerb "restart" evRestart
+      "reload" -> fireVerb "reload" evReload
       _ -> refused ("unknown control verb: " <> verb)
+  -- Enter the artifact's initial state. It is `held` and has no entry commands,
+  -- so this launches nothing — the bring-up below is a `up` event like any
+  -- other, which is the point: there is one way into `raised` and the boot path
+  -- is not a second one.
+  Drive.start wiring
   if startHeld then
     log "supervise: resident, held down (desired=down) — no initial bring-up; raise from the Chair (▲ up all)"
   else do
     log "supervise: initial bring-up…"
-    bringUp
+    Drive.fire wiring evUp
   pure ({ statusPort: fromMaybe defaultStatusPort mPort, intervalMs, tick, stateBody, control } :: Resident)
 
 -- | The teardown clause a reload reply carries only when something did not
@@ -388,9 +580,17 @@ reloadSummary d =
 -- | `services` and `supervision` are empty until the next tick repopulates them
 -- | from observation. A verdict parked inside them would be wiped by the very
 -- | operation that produced it.
-snapshotBody :: Boolean -> SupState -> Map.Map ServiceId { verdict :: TeardownVerdict, at :: Number } -> String
-snapshotBody up st td =
-  "{ \"desired\": \"" <> (if up then "up" else "down") <> "\""
+-- | `/state`, with `phase` added beside `desired` rather than replacing it.
+-- |
+-- | `desired` is DERIVED from the phase rather than stored next to it, because
+-- | a stored copy is a second description that can disagree — which is the
+-- | complaint the artifact answers. Keeping the field at all is deliberate: the
+-- | Chair on :3020 reads it, and an additive `/state` means the running Chair
+-- | keeps working untouched while it learns about phases at its own pace.
+snapshotBody :: StateId -> SupState -> Map.Map ServiceId { verdict :: TeardownVerdict, at :: Number } -> String
+snapshotBody phase st td =
+  "{ \"desired\": \"" <> (if desiredFromPhase phase then "up" else "down") <> "\""
+    <> ", \"phase\": \"" <> phaseTag phase <> "\""
     <> ", \"supervised\": true"
     <> ", \"services\": { " <> intercalate ", " (map svcEntry entries) <> " }"
     <> ", \"supervision\": { " <> intercalate ", " (map supEntry entries) <> " }"
@@ -435,3 +635,16 @@ statusToken = case _ of
   Down -> "down"
   CompletedOk -> "completed-ok"
   Unknown _ -> "unknown"
+
+-- | What one `fire` did, gathered as it went.
+-- |
+-- | A refusal and a set of notes, rather than a Boolean and a message: the
+-- | commands that run during a transition each have something to say — a
+-- | teardown summary, a reload diff — and the reply is the sum of them.
+type MachineOut = { refusal :: Maybe RefusalId, notes :: Array String }
+
+emptyOut :: MachineOut
+emptyOut = { refusal: Nothing, notes: [] }
+
+showCommand :: CommandId -> String
+showCommand = show
