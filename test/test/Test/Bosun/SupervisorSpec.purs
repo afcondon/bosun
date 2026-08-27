@@ -76,6 +76,26 @@ spec = describe "Bosun.Supervisor" do
       let prev = (initialSvc 0.0) { launchedAt = Just 1000.0, status = Running }
       (one cfg 2000.0 prev { ready: Down, groupAlive: false }).status `shouldEqual` "failed"
 
+    -- The pair below is the whole of the distinction, and the absence of the
+    -- second one is what let the relaunch storm through: `reconcile` runs on
+    -- entry to `raised`, i.e. in the same instant `bring-up` ran the launch
+    -- scripts, and at that distance no child has a process group yet. Read as
+    -- a crash, every specimen was relaunched the moment it was started.
+    --
+    -- What separates them is not the observation — that is identical — but
+    -- whether the service was ever seen up under THIS launch.
+    it "launched, group not visible YET, never seen up ⇒ Starting (not a crash)" do
+      let prev = (initialSvc 0.0) { launchedAt = Just 1000.0, status = Down }
+      (one cfg 1000.0 prev { ready: Down, groupAlive: false }).status `shouldEqual` "starting"
+
+    it "…and the grace is spent, not indefinite: past it, the same reading is Failed" do
+      let prev = (initialSvc 0.0) { launchedAt = Just 1000.0, status = Down }
+      (one cfg 61001.0 prev { ready: Down, groupAlive: false }).status `shouldEqual` "failed"
+
+    it "…while a relaunch after a crash gets the grace again (status Failed, not Running)" do
+      let prev = (initialSvc 0.0) { launchedAt = Just 1000.0, status = Failed }
+      (one cfg 1500.0 prev { ready: Down, groupAlive: false }).status `shouldEqual` "starting"
+
     it "never launched + down ⇒ Down (bring it up)" do
       (one cfg 2000.0 (initialSvc 0.0) { ready: Down, groupAlive: false }).status `shouldEqual` "down"
 

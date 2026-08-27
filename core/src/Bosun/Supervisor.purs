@@ -181,8 +181,23 @@ decide cfg now s o = case o.ready of
   _
     | suspended -> InBackoff
     | o.groupAlive -> if wedged then Failed else Starting
+    -- Launched inside the grace, no group visible yet, and NEVER SEEN UP. The
+    -- clause below used to collect this together with a genuine crash, but they
+    -- are different facts and `s.status` is what tells them apart:
+    --
+    --   seen Running, group now gone  ⇒ it died. Failed, at once.
+    --   never seen up, group not there yet ⇒ it may still be spawning.
+    --
+    -- Boot grace is the period in which we agreed not to judge, so for the
+    -- second case it has to start at the LAUNCH rather than at the moment the
+    -- group becomes observable — otherwise the grace is granted only to
+    -- services that have already stopped needing it. Nothing noticed while
+    -- nothing observed a rig in the same instant it was launched; `reconcile`
+    -- on entry to `raised` does exactly that, and read every specimen as
+    -- crashed.
+    | booting -> Starting
     | exhausted -> InBackoff
-    | isJust s.launchedAt -> Failed   -- we launched it, its group is gone ⇒ crashed
+    | isJust s.launchedAt -> Failed   -- launched, grace spent, group gone ⇒ crashed
     | otherwise -> Down               -- never launched ⇒ bring it up
   where
   suspended = case s.suspendedUntil of
@@ -191,6 +206,12 @@ decide cfg now s o = case o.ready of
   wedged = case s.launchedAt of
     Just l -> now - l >= cfg.bootGraceMs
     Nothing -> false
+  -- Seen up since its launch, so a vanished group is a death, not a slow start.
+  wasUp = case s.status of
+    Running -> true
+    CompletedOk -> true
+    _ -> false
+  booting = isJust s.launchedAt && not wedged && not wasUp
   exhausted = case cfg.maxRetries of
     Just m -> s.fails >= m
     Nothing -> false
