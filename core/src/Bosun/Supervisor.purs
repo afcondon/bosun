@@ -137,9 +137,34 @@ lookupSvc now sid = fromMaybe (initialSvc now) <<< Map.lookup sid
 
 -- | Exponential backoff window for the `n`th consecutive failure (1-based),
 -- | capped at `backoffMaxMs`: base · 2^(n-1).
+-- |
+-- | DO NOT "simplify" this by dropping the `min maxExp` on the EXPONENT. It
+-- | looks redundant beside the `min cfg.backoffMaxMs` on the result, and it is
+-- | not: that outer `min` caps the VALUE, and PureScript is strict, so it
+-- | cannot cap the WORK. `pow2` is not tail-recursive — `2.0 * pow2 (n-1)`
+-- | leaves a multiply pending — so without the clamp the doubling costs ONE
+-- | STACK FRAME PER CONSECUTIVE FAILURE, to compute a number the outer `min`
+-- | was always going to throw away.
+-- |
+-- | That is not theoretical. On 2026-08-31 the MBP was unplugged from the ES-9
+-- | overnight; `es9-daemon`, `fh2-daemon` and `link-spike` failed continuously
+-- | for ten hours, `fails` reached ~8,200, and `pow2` overflowed the stack.
+-- | `Resident.js` catches the throw and re-fires the timer, so the tick never
+-- | completed, group state never converged, and every reconcile relaunched all
+-- | eleven services — 6,309 SuperCollider boots and a 33 MB log before anyone
+-- | noticed. `fails` resets when a service goes healthy, which is why this is
+-- | unreachable in normal operation and inevitable for a daemon whose hardware
+-- | went away.
+-- |
+-- | Clamping the exponent is the honest fix rather than making `pow2`
+-- | stack-safe: past n ≈ 1024 the doubling is `Infinity` anyway, so every frame
+-- | beyond `maxExp` was buying nothing even when the stack held.
 backoffMs :: SupConfig -> Int -> Millis
-backoffMs cfg fails = min cfg.backoffMaxMs (cfg.backoffBaseMs * pow2 (fails - 1))
+backoffMs cfg fails = min cfg.backoffMaxMs (cfg.backoffBaseMs * pow2 (min maxExp (fails - 1)))
   where
+  -- Enough doublings to blow past any cap expressible in milliseconds; beyond
+  -- this the outer `min` decides the answer, so further doubling is dead work.
+  maxExp = 64
   pow2 n = if n <= 0 then 1.0 else 2.0 * pow2 (n - 1)
 
 -- | The pure tick-transition. Given the live observations and the prior state,
