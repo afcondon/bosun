@@ -165,6 +165,29 @@ services:
       expose:
         - host: 3024
 
+  friends-of-itajara:
+    # Friends of Itajara (Marginalia #287, music/friends-of-itajara): the
+    # open-source looper page on the Itajara daemon, one face per module. Its
+    # server.mjs (Node, zero deps) serves the page and holds the two things a
+    # browser cannot do — write a take's notes.json and run `msm harvest` onto
+    # a stick. Stage 0: the page finds the daemon itself over ws://:3028 (the
+    # `bosun serve` broker lazy-spawns itajara on first connect) and reconnects
+    # for ever, so nothing here depends on the daemon being up first, and
+    # supervising the page does not imply supervising the engine. TCP HTTP on
+    # :3029 → default TcpConnect readiness. Port-from-env (PORT), prebuilt
+    # static/index.js (`make bundle` once), drains on TERM — the bosun-daemon
+    # contract. msm must be on the PATH (~/.cargo/bin) for Harvest to work.
+    x-bosun:
+      host: mbp
+      process:
+        cwd: /Users/afc/work/afc-work/music/friends-of-itajara
+        command: PORT=3029 node server.mjs
+        # msm lives in ~/.cargo/bin, which a supervisor's PATH does not have.
+        env:
+          PATH: /Users/afc/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+      expose:
+        - host: 3029
+
   fh2-daemon:
     x-bosun:
       host: mbp
