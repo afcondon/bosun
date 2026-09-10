@@ -208,6 +208,11 @@ toLoose aliases sid rep is =
   , host: rep.host
   , reachability: rep.reachability
   , readiness: fromMaybe NoProbe (A.find (_ /= NoProbe) (map (\si -> si.health.readiness) is))
+  -- Restart is FACET-LOCAL (DECISIONS.md D-2's field table): it may differ
+  -- freely between facets and must agree within one, so it comes from the
+  -- representative instance like host/exposure — never unioned like the
+  -- facet-local-but-additive relationships below.
+  , restart: rep.restart
   , deps: A.nubEq (is >>= \si -> map (resolveDep aliases) si.rawDeps)
   , routes: A.nubEq (is >>= \si -> map (resolveRoute aliases) si.rawRoutes)
   , selectors: A.nubEq (is >>= _.selectors)

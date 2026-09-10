@@ -15,7 +15,7 @@ import Prelude
 import Bosun.Atoms (Host, Port, mkHost, mkPort, mkServiceId)
 import Bosun.Error (DeployError(..))
 import Bosun.Executor (Executor(..))
-import Bosun.Health (Probe(..))
+import Bosun.Health (Probe(..), defaultRestart)
 import Bosun.Reachability
   ( Address(..), BindScope(..), Openness(..), Reachability(..)
   , addresses, classify, hostPort, internalPort, loopbackPort, maxOpenness, noNetwork, openness
@@ -53,6 +53,7 @@ leaf name =
   , host: Nothing
   , reachability: noNetwork
   , readiness: NoProbe
+  , restart: defaultRestart
   , deps: []
   , routes: []
   , selectors: []

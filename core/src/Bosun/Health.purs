@@ -11,7 +11,7 @@ import Prelude
 
 import Bosun.Atoms (AbsPath, EnvVar, Port)
 import Data.Generic.Rep (class Generic)
-import Data.Maybe (Maybe)
+import Data.Maybe (Maybe(..))
 import Data.Show.Generic (genericShow)
 import Data.Tuple (Tuple)
 
@@ -53,6 +53,20 @@ data RestartCondition
 derive instance Eq RestartCondition
 derive instance Generic RestartCondition _
 instance Show RestartCondition where show = genericShow
+
+-- | What an adapter records when its source says nothing about restarting:
+-- | keep the service alive, first backoff window five seconds, uncapped.
+-- |
+-- | The five is not arbitrary and must not drift: it is the same number as
+-- | `Bosun.Supervisor.defaultConfig.backoffBaseMs`, so a spec that declares no
+-- | policy resolves to exactly the supervisor's own defaults and an
+-- | unannotated file behaves as it did before any of this was readable.
+defaultRestart :: RestartPolicy
+defaultRestart =
+  { base: UnlessStopped
+  , conditions: []
+  , backoff: { minSec: 5, maxRetries: Nothing }
+  }
 
 -- | D-E8: resolve `${VAR:-default}` at validate. A `ConfigRef` unsatisfied by
 -- | any in-scope supplier and lacking a default is an `UnboundReference`.

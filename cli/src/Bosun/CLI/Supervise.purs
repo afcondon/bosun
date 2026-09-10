@@ -42,9 +42,9 @@ import Bosun.Plan (Change(..), Plan, Status(..), plan, planSteps)
 import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderAddressMiss, renderCommand, renderReport, renderTeardown, renderTeardownSummary)
 import Bosun.Serve (controlPort)
-import Bosun.Service (Deployment, ValidatedDeployment, unServiceRef, unValidatedDeployment)
+import Bosun.Service (Deployment, ValidatedDeployment, deploymentServices, unServiceRef, unValidatedDeployment)
 import Bosun.Substrate (TeardownVerdict, readTeardown, teardownSettled, teardownTag)
-import Bosun.Supervisor (Launch, SuperviseDiff, SupConfig, SupState, SvcState, addressService, defaultConfig, emptySupState, forgetLaunches, recordLaunches, refine, superviseDiff)
+import Bosun.Supervisor (Launch, Policies, SuperviseDiff, SupConfig, SupState, SvcState, addressService, defaultConfig, emptySupState, forgetLaunches, policies, recordLaunches, refine, superviseDiff)
 import Bosun.Target (TargetMap)
 import Bosun.Validate (validate)
 import Bosun.Version (version)
@@ -210,6 +210,14 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
     cfg :: SupConfig
     cfg = defaultConfig
 
+    -- The group defaults, refined by whatever each service's spec declared.
+    -- Resolved from the CURRENT deployment on every use rather than closed over
+    -- once, so a `/control/reload` that changes a restart policy takes effect
+    -- on the next tick — the same reason `enactPlan` re-reads `vdRef`.
+    policiesFor :: Deployment -> Policies
+    policiesFor d =
+      policies cfg (map (\sv -> Tuple sv.id sv.restart) (deploymentServices d))
+
     runOne sc = case sc.command of
       Manual note -> log ("  · skip (manual): " <> note)
       command -> do
@@ -271,7 +279,8 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
       vd <- Ref.read vdRef
       let p = plan vd { desired: vd, recorded: Nothing, observed }
       enact label (applyScript targets vd p)
-      Ref.modify_ (recordLaunches cfg now (launchesOf p)) supRef
+      dep <- Ref.read depRef
+      Ref.modify_ (recordLaunches (policiesFor dep) now (launchesOf p)) supRef
       -- A relaunched service's teardown verdict is about the generation we
       -- just replaced, so keeping it would report a dead fact about a live
       -- process — the staleness this whole branch exists to remove.
@@ -316,7 +325,7 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
       obs <- observeSupSnapshot dep
       now <- nowMs
       prev <- Ref.read supRef
-      let refined = refine cfg now prev obs
+      let refined = refine (policiesFor dep) now prev obs
       Ref.write refined.state supRef
       Ref.write refined.snapshot observedRef
       pure now

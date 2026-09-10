@@ -11,7 +11,7 @@ import Bosun.Adapters.Targets (ingestTargets)
 import Bosun.Artifact (Artifact(..), ArtifactRef(..))
 import Bosun.Atoms (mkEnvVar, mkHost, unAbsPath)
 import Bosun.Executor (Executor(..), ExecutorMechanism(..), mechanism)
-import Bosun.Health (Probe(..))
+import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Reachability (classify)
 import Bosun.Reconcile (exposureLabel)
 import Bosun.Selector (Selector(..))
@@ -173,6 +173,59 @@ spec = describe "Bosun.Adapters" do
           Just s -> do
             (s.health.readiness == ProcessAlive) `shouldEqual` true
             (s.health.liveness == ProcessAlive) `shouldEqual` true
+
+    -- Restart policy. Before this was readable, EVERY compose service was
+    -- ingested as retry-forever, whatever the file said — which is how
+    -- `fh2-daemon` came to be relaunched 2,912 times with the module switched
+    -- off. Compose has its own vocabulary for this and Bosun now reads it.
+
+    it "compose's own restart: key is read (no => Never)" do
+      let pf = """{"services":{"d":{"restart":"no","x-bosun":{"process":{"cwd":"/abs/d","command":"./run"}}}}}"""
+      case jsonParser pf of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> case find (\s -> s.localName == "d") (ingestCompose j) of
+          Nothing -> fail "d not ingested"
+          Just s -> (s.restart.base == Never) `shouldEqual` true
+
+    it "the on-failure:N form carries its retry cap" do
+      let pf = """{"services":{"d":{"restart":"on-failure:3","x-bosun":{"process":{"cwd":"/abs/d","command":"./run"}}}}}"""
+      case jsonParser pf of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> case find (\s -> s.localName == "d") (ingestCompose j) of
+          Nothing -> fail "d not ingested"
+          Just s -> do
+            (s.restart.base == OnFailure) `shouldEqual` true
+            s.restart.backoff.maxRetries `shouldEqual` Just 3
+
+    it "x-bosun.restart adds the backoff window compose cannot say" do
+      let pf = """{"services":{"d":{"restart":"on-failure","x-bosun":{"restart":{"minSec":30,"maxRetries":5},"process":{"cwd":"/abs/d","command":"./run"}}}}}"""
+      case jsonParser pf of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> case find (\s -> s.localName == "d") (ingestCompose j) of
+          Nothing -> fail "d not ingested"
+          Just s -> do
+            (s.restart.base == OnFailure) `shouldEqual` true
+            s.restart.backoff.minSec `shouldEqual` 30
+            s.restart.backoff.maxRetries `shouldEqual` Just 5
+
+    it "a service that declares nothing keeps the old retry-forever behaviour" do
+      let pf = """{"services":{"d":{"x-bosun":{"process":{"cwd":"/abs/d","command":"./run"}}}}}"""
+      case jsonParser pf of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> case find (\s -> s.localName == "d") (ingestCompose j) of
+          Nothing -> fail "d not ingested"
+          Just s -> do
+            (s.restart.base == UnlessStopped) `shouldEqual` true
+            s.restart.backoff.maxRetries `shouldEqual` Nothing
+
+    it "an unrecognised restart value falls back rather than failing the ingest" do
+      -- A typo in one restart key must not cost you the whole rig.
+      let pf = """{"services":{"d":{"restart":"sometimes","x-bosun":{"process":{"cwd":"/abs/d","command":"./run"}}}}}"""
+      case jsonParser pf of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> case find (\s -> s.localName == "d") (ingestCompose j) of
+          Nothing -> fail "d not ingested"
+          Just s -> (s.restart.base == UnlessStopped) `shouldEqual` true
 
   describe "ingestTargets" do
     let

@@ -11,7 +11,7 @@ import Bosun.Edge (Gate(..), Requirement(..))
 import Bosun.Error (DeployError(..))
 import Bosun.Executor (Executor(..))
 import Bosun.Reachability (hostPort, noNetwork)
-import Bosun.Health (Probe(..))
+import Bosun.Health (Probe(..), defaultRestart)
 import Bosun.Selector (Selector(..))
 import Bosun.Service (LooseDep, LooseRoute, LooseService, mkDeployment, unBootOrder, unValidatedDeployment)
 import Bosun.Validate (validate)
@@ -31,6 +31,7 @@ leaf name =
   , host: Nothing
   , reachability: noNetwork
   , readiness: NoProbe
+  , restart: defaultRestart
   , deps: []
   , routes: []
   , selectors: []

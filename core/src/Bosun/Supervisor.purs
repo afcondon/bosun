@@ -35,8 +35,13 @@ module Bosun.Supervisor
   , SvcState
   , SupState
   , SupConfig
+  , Policies
   , Launch
   , defaultConfig
+  , uniform
+  , cfgFor
+  , policyConfig
+  , policies
   , emptySupState
   , initialSvc
   , lookupSvc
@@ -54,6 +59,7 @@ import Prelude
 
 import Bosun.Atoms (ServiceId, unServiceId)
 import Bosun.Plan (Snapshot, Status(..))
+import Bosun.Health (BaseRestart(..), RestartPolicy)
 import Bosun.Service (Service)
 import Data.Array as A
 import Data.Either (Either(..))
@@ -119,6 +125,63 @@ defaultConfig =
   , maxRetries: Nothing
   }
 
+-- | The group's knobs plus the per-service overrides resolved from each
+-- | service's declared `Bosun.Health.RestartPolicy` — the "later" the
+-- | `SupConfig` comment promised, arrived.
+-- |
+-- | One policy for the whole group was wrong in a way that cost real money:
+-- | with the FH-2 powered off, `fh2-daemon` was relaunched 2,912 times in
+-- | seven days, and `es9-daemon` 1,335 — because "retry forever" was the only
+-- | sentence the supervisor could say, and a rig has services for which it is
+-- | the wrong one. A daemon whose HARDWARE went away is not a daemon that
+-- | crashed; no number of relaunches will plug the module back in.
+type Policies =
+  { dflt      :: SupConfig
+  , byService :: Map ServiceId SupConfig
+  }
+
+-- | Every service on the group's defaults — the old behaviour, and what a
+-- | caller with no spec in hand (or a test) wants.
+uniform :: SupConfig -> Policies
+uniform dflt = { dflt, byService: Map.empty }
+
+-- | The knobs in force for one service: its own if it declared a policy, the
+-- | group's otherwise. A service absent from `byService` is not an error — it
+-- | is the overwhelmingly common case.
+cfgFor :: Policies -> ServiceId -> SupConfig
+cfgFor ps sid = fromMaybe ps.dflt (Map.lookup sid ps.byService)
+
+-- | Resolve one declared `RestartPolicy` against the group defaults.
+-- |
+-- | `Never` becomes `maxRetries: Just 0` — start it once, never relaunch it —
+-- | which is why `decide`'s `exhausted` must not fire before the first launch.
+-- |
+-- | HONEST LOSS: `OnFailure` and `Always` are resolved IDENTICALLY, because the
+-- | observation edge reads a process GROUP's existence, never an exit status,
+-- | so Bosun cannot today tell a clean exit from a crash. Pretending otherwise
+-- | would be the silent-lossy translation D-E11 forbids. It also would not have
+-- | helped the case that prompted this: `fh2-daemon` exits **0** when the FH-2
+-- | is absent, so every exit-code policy would have kept relaunching it. The
+-- | RETRY CAP is what actually stops a hardware-absence storm, and the cap is
+-- | expressible in both modes.
+policyConfig :: SupConfig -> RestartPolicy -> SupConfig
+policyConfig dflt p = dflt
+  { backoffBaseMs = 1000.0 * Int.toNumber (max 1 p.backoff.minSec)
+  , maxRetries = case p.base of
+      Never -> Just 0
+      _ -> p.backoff.maxRetries
+  }
+
+-- | Build the resolved table from the group defaults and each service's
+-- | declared policy — what `bosun supervise` calls once per tick against the
+-- | CURRENT deployment (so a `/control/reload` that changes a policy takes
+-- | effect without restarting the supervisor).
+policies :: SupConfig -> Array (Tuple ServiceId RestartPolicy) -> Policies
+policies dflt xs =
+  { dflt
+  , byService: Map.fromFoldable (map (\(Tuple sid p) -> Tuple sid (policyConfig dflt p)) xs)
+  }
+
 emptySupState :: SupState
 emptySupState = Map.empty
 
@@ -175,12 +238,12 @@ backoffMs cfg fails = min cfg.backoffMaxMs (cfg.backoffBaseMs * pow2 (min maxExp
 -- | arming the next backoff happen AFTER the plan, in `recordLaunches` — only the
 -- | planner knows what it actually relaunched (incl. D-E5 coupled co-restart).
 refine
-  :: SupConfig
+  :: Policies
   -> Millis
   -> SupState
   -> Map ServiceId Observation
   -> { snapshot :: Snapshot, state :: SupState }
-refine cfg now prev obs =
+refine ps now prev obs =
   { snapshot: Map.fromFoldable (map (\(Tuple sid r) -> Tuple sid r.refined) stepped)
   , state: Map.fromFoldable (map (\(Tuple sid r) -> Tuple sid r.svc) stepped)
   }
@@ -191,7 +254,7 @@ refine cfg now prev obs =
       # map \(Tuple sid o) ->
           let
             s = lookupSvc now sid prev
-            refined = decide cfg now s o
+            refined = decide (cfgFor ps sid) now s o
           in
             Tuple sid { refined, svc: transition now s refined }
 
@@ -237,7 +300,13 @@ decide cfg now s o = case o.ready of
     CompletedOk -> true
     _ -> false
   booting = isJust s.launchedAt && not wedged && not wasUp
-  exhausted = case cfg.maxRetries of
+  -- A retry cap bounds RELAUNCHES, never the first bring-up: `isJust
+  -- s.launchedAt` is what keeps the two apart. Without it `maxRetries: Just 0`
+  -- — which is how `BaseRestart.Never` resolves — reads `0 >= 0` on a service
+  -- that has never run and answers `InBackoff`, so the planner NoOps it and
+  -- the service never starts at all. "Never restart" would silently have meant
+  -- "never start", and the spec that asked for it would look ignored.
+  exhausted = isJust s.launchedAt && case cfg.maxRetries of
     Just m -> s.fails >= m
     Nothing -> false
 
@@ -265,11 +334,12 @@ type Launch = { id :: ServiceId, isRestart :: Boolean }
 -- | (so boot-grace starts ticking) and marks the service `Starting`. A `Restart`
 -- | also bumps the cumulative `restarts` badge and the consecutive `fails`, and
 -- | arms the next exponential backoff window.
-recordLaunches :: SupConfig -> Millis -> Array Launch -> SupState -> SupState
-recordLaunches cfg now launches st = foldr stamp st launches
+recordLaunches :: Policies -> Millis -> Array Launch -> SupState -> SupState
+recordLaunches ps now launches st = foldr stamp st launches
   where
   stamp l acc =
     let
+      cfg = cfgFor ps l.id
       s = lookupSvc now l.id acc
       since' = if s.status == Starting then s.since else now
       s' =

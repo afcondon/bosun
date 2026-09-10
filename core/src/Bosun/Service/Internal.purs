@@ -105,6 +105,7 @@ type LooseService =
   , host      :: Maybe Host
   , reachability :: Reachability
   , readiness :: Probe
+  , restart   :: RestartPolicy
   , deps      :: Array LooseDep
   , routes    :: Array LooseRoute
   , selectors :: Array Selector

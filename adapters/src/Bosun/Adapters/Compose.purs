@@ -23,7 +23,7 @@ import Bosun.Edge (DepOrdering(..), Gate(..), Requirement(..))
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Publish (PublishChannel(..))
 import Bosun.Reachability (Address(..), BindScope(..), Reachability(..), hostPort, noNetwork)
-import Bosun.Health (BaseRestart(..), Probe(..))
+import Bosun.Health (BaseRestart(..), Probe(..), RestartPolicy, defaultRestart)
 import Bosun.Selector (Selector(..))
 import Bosun.Service (RawDep, RawRoute, ServiceInstance, Source(..), mkRole)
 import Control.Alt ((<|>))
@@ -60,12 +60,59 @@ decodeService name sj = do
     , artifact: xbosunArtifact o   -- declared `x-bosun.artifact` (else reconcile derives it)
     , reachability: fromMaybe (maybe noNetwork hostPort (publishPort o)) (xbosunExpose o)
     , health: let pr = effProbe o in { liveness: pr, readiness: pr, startup: Nothing }
-    , restart: { base: UnlessStopped, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }
+    , restart: restartOf o
     , rawDeps: dependsOn o <> xbosunDeps o
     , rawRoutes: xbosunRoutes o
     , selectors: map Profile (strArray o "profiles")
     , extra: placeExtra o   -- PROTOTYPE carrier for the failure-domain path (View.placePath)
     }
+
+-- | The restart policy: compose's OWN `restart:` key first, refined by
+-- | `x-bosun.restart`.
+-- |
+-- | Compose already has this vocabulary (`no` | `always` | `on-failure` |
+-- | `on-failure:N` | `unless-stopped`), so Bosun reads it rather than inventing
+-- | a parallel spelling — the lingua-franca claim is worth nothing if the
+-- | adapter ignores the source format's own word for the thing. `x-bosun.restart`
+-- | adds only what compose CANNOT say: the backoff window, and a retry cap on a
+-- | base mode other than `on-failure`.
+-- |
+-- | A file that declares nothing gets `defaultRestart` — `unless-stopped`,
+-- | uncapped — which is exactly what every compose service got before this was
+-- | readable, so no existing spec changes behaviour by being re-read.
+restartOf :: Object Json -> RestartPolicy
+restartOf o = { base, conditions: [], backoff: { minSec, maxRetries } }
+  where
+  xb = (FO.lookup "x-bosun" o >>= toObject) >>= \x -> FO.lookup "restart" x >>= toObject
+
+  -- `on-failure:3` carries a cap in the same token; everything else is a bare mode.
+  native = case String.split (Pattern ":") <$> str o "restart" of
+    Just [ mode ] -> { mode: baseOf mode, cap: Nothing }
+    Just [ mode, n ] -> { mode: baseOf mode, cap: Int.fromString n }
+    _ -> { mode: Nothing, cap: Nothing }
+
+  base = fromMaybe defaultRestart.base
+    ((xb >>= \x -> str x "base" >>= baseOf) <|> native.mode)
+
+  minSec = fromMaybe defaultRestart.backoff.minSec (xb >>= \x -> intAt x "minSec")
+
+  maxRetries = (xb >>= \x -> intAt x "maxRetries") <|> native.cap
+
+-- Compose's spelling of the base mode. `no` is compose's word for it and
+-- `never` is the model's; both are accepted so a hand-written x-bosun block
+-- reads naturally. An unrecognised value falls back to the default rather than
+-- failing the ingest — a typo in a restart key must not cost you the whole rig.
+baseOf :: String -> Maybe BaseRestart
+baseOf = case _ of
+  "no" -> Just Never
+  "never" -> Just Never
+  "always" -> Just Always
+  "on-failure" -> Just OnFailure
+  "unless-stopped" -> Just UnlessStopped
+  _ -> Nothing
+
+intAt :: Object Json -> String -> Maybe Int
+intAt ob k = FO.lookup k ob >>= toNumber >>= Int.fromNumber
 
 -- "tidal-frontend" -> "frontend"; "edge" -> "edge"
 roleFromName :: String -> String

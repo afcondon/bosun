@@ -18,7 +18,7 @@ import Bosun.Atoms (ServiceId, mkServiceId)
 import Bosun.Plan (Snapshot, Status(..))
 import Bosun.Supervisor
   ( Launch, Observation, SupConfig, SupState
-  , backoffMs, emptySupState, initialSvc, recordLaunches, refine
+  , backoffMs, emptySupState, initialSvc, recordLaunches, refine, uniform
   )
 import Data.Array (foldl, mapMaybe)
 import Data.Map as Map
@@ -43,14 +43,14 @@ obs ready groupAlive = Map.singleton web { ready, groupAlive }
 driveTick :: Number -> SupState -> Map.Map ServiceId Observation -> { refined :: Snapshot, state :: SupState }
 driveTick now st o =
   let
-    r = refine cfg now st o
+    r = refine (uniform cfg) now st o
     toLaunch (Tuple sid s) = case s of
       Down -> Just { id: sid, isRestart: false } :: Maybe Launch
       Failed -> Just { id: sid, isRestart: true }
       _ -> Nothing
     launches = mapMaybe toLaunch (Map.toUnfoldable r.snapshot)
   in
-    { refined: r.snapshot, state: recordLaunches cfg now launches r.state }
+    { refined: r.snapshot, state: recordLaunches (uniform cfg) now launches r.state }
 
 -- (now, ready, groupAlive) — the scripted reality the supervisor reacts to.
 script :: Array { now :: Number, ready :: Status, alive :: Boolean }

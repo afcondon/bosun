@@ -13,11 +13,12 @@ import Bosun.Plan (Reason(..), Status(..))
 import Bosun.Service (Deployment, Service, mkDeployment, unValidatedDeployment)
 import Bosun.Report (renderAddressMiss)
 import Bosun.Serve (controlPort)
-import Bosun.Supervisor (AddressMiss(..), Observation, SupConfig, SvcState, addressService, backoffMs, emptySupState, forgetLaunches, initialSvc, recordLaunches, refine, superviseDiff)
+import Bosun.Supervisor (AddressMiss(..), Observation, Policies, SupConfig, SvcState, addressService, backoffMs, cfgFor, emptySupState, forgetLaunches, initialSvc, policies, policyConfig, recordLaunches, refine, superviseDiff, uniform)
 import Bosun.Validate (validate)
 import Data.Either (Either(..))
 import Data.Map (Map)
 import Data.Map as Map
+import Bosun.Health (BaseRestart(..), defaultRestart)
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.String as String
 import Data.Tuple (Tuple(..))
@@ -58,7 +59,7 @@ cfg = { bootGraceMs: 60000.0, backoffBaseMs: 5000.0, backoffMaxMs: 60000.0, maxR
 -- Refine a single service and read back its refined status (as a token) + state.
 one :: SupConfig -> Number -> SvcState -> Observation -> { status :: String, svc :: SvcState }
 one c now prev o =
-  let r = refine c now (Map.singleton (sid "x") prev) (Map.singleton (sid "x") o)
+  let r = refine (uniform c) now (Map.singleton (sid "x") prev) (Map.singleton (sid "x") o)
   in { status: tok (fromMaybe Down (Map.lookup (sid "x") r.snapshot))
      , svc: fromMaybe (initialSvc now) (Map.lookup (sid "x") r.state)
      }
@@ -130,7 +131,7 @@ spec = describe "Bosun.Supervisor" do
 
     it "regression: a slow-boot service does NOT storm — Starting every tick within grace" do
       let
-        step now st = (refine cfg now st (Map.singleton (sid "x") { ready: Down, groupAlive: true })).state
+        step now st = (refine (uniform cfg) now st (Map.singleton (sid "x") { ready: Down, groupAlive: true })).state
         go n now st = if n <= 0 then st else go (n - 1) (now + 3000.0) (step now st)
         seed = Map.singleton (sid "x") ((initialSvc 0.0) { launchedAt = Just 0.0, status = Starting })
         s = fromMaybe (initialSvc 0.0) (Map.lookup (sid "x") (go 5 3000.0 seed))
@@ -138,10 +139,69 @@ spec = describe "Bosun.Supervisor" do
       tok s.status `shouldEqual` "starting"
       s.restarts `shouldEqual` 0
 
+  describe "per-service restart policy — the hardware-absence storm" do
+
+    -- The incident this whole seam exists for: with the FH-2 powered off,
+    -- `fh2-daemon` was relaunched 2,912 times in seven days and `es9-daemon`
+    -- 1,335, because "retry forever" was the only policy the supervisor could
+    -- hold and it held it for every service in the group.
+
+    it "a capped service stops being relaunched once its cap is spent" do
+      let
+        capped = policies cfg [ Tuple (sid "fh2") (defaultRestart { backoff { maxRetries = Just 3 } }) ]
+        -- launched, boot grace spent, group gone, three failures already spent
+        spent = (initialSvc 0.0) { launchedAt = Just 0.0, status = Failed, fails = 3 }
+        r = refine capped 600000.0 (Map.singleton (sid "fh2") spent)
+              (Map.singleton (sid "fh2") { ready: Down, groupAlive: false })
+      tok (fromMaybe Down (Map.lookup (sid "fh2") r.snapshot)) `shouldEqual` "in-backoff"
+
+    it "an uncapped service in the same group keeps being relaunched" do
+      -- The point of PER-SERVICE: capping the FH-2 must not cap Calypso.
+      let
+        mixed = policies cfg
+          [ Tuple (sid "fh2") (defaultRestart { backoff { maxRetries = Just 3 } })
+          , Tuple (sid "web") defaultRestart
+          ]
+        spent = (initialSvc 0.0) { launchedAt = Just 0.0, status = Failed, fails = 3 }
+        r = refine mixed 600000.0 (Map.singleton (sid "web") spent)
+              (Map.singleton (sid "web") { ready: Down, groupAlive: false })
+      tok (fromMaybe Down (Map.lookup (sid "web") r.snapshot)) `shouldEqual` "failed"
+
+    it "`Never` still gets its FIRST start — a cap bounds relaunches, not bring-up" do
+      -- The trap: `Never` resolves to `maxRetries: Just 0`, and `0 >= 0` is
+      -- true on a service that has never run. Read without the launched-yet
+      -- guard, "never restart" would silently mean "never start".
+      let
+        never = policies cfg [ Tuple (sid "es9") (defaultRestart { base = Never }) ]
+        r = refine never 1000.0 (Map.singleton (sid "es9") (initialSvc 0.0))
+              (Map.singleton (sid "es9") { ready: Down, groupAlive: false })
+      tok (fromMaybe Running (Map.lookup (sid "es9") r.snapshot)) `shouldEqual` "down"
+
+    it "`Never` does not relaunch it once it has run and died" do
+      let
+        never = policies cfg [ Tuple (sid "es9") (defaultRestart { base = Never }) ]
+        died = (initialSvc 0.0) { launchedAt = Just 0.0, status = Running }
+        r = refine never 600000.0 (Map.singleton (sid "es9") died)
+              (Map.singleton (sid "es9") { ready: Down, groupAlive: false })
+      tok (fromMaybe Down (Map.lookup (sid "es9") r.snapshot)) `shouldEqual` "in-backoff"
+
+    it "a service with no declared policy resolves to exactly the group defaults" do
+      -- `defaultRestart.backoff.minSec` and `defaultConfig.backoffBaseMs` are
+      -- the same five seconds; if they ever drift, an unannotated spec starts
+      -- behaving differently for no stated reason.
+      policyConfig cfg defaultRestart `shouldEqual` cfg
+
+    it "a declared minSec sets the first backoff window" do
+      (policyConfig cfg (defaultRestart { backoff { minSec = 30 } })).backoffBaseMs
+        `shouldEqual` 30000.0
+
+    it "cfgFor falls back to the group default for an unlisted service" do
+      cfgFor (policies cfg []) (sid "anything") `shouldEqual` cfg
+
   describe "recordLaunches — stamping launch memory after the plan" do
 
     it "a Restart bumps the badge + consecutive fails and arms exponential backoff" do
-      let st = recordLaunches cfg 1000.0 [ { id: sid "x", isRestart: true } ] emptySupState
+      let st = recordLaunches (uniform cfg) 1000.0 [ { id: sid "x", isRestart: true } ] emptySupState
           s = fromMaybe (initialSvc 0.0) (Map.lookup (sid "x") st)
       s.restarts `shouldEqual` 1
       s.fails `shouldEqual` 1
@@ -150,7 +210,7 @@ spec = describe "Bosun.Supervisor" do
       tok s.status `shouldEqual` "starting"
 
     it "a Start (first bring-up) sets launchedAt but no backoff and no badge bump" do
-      let st = recordLaunches cfg 1000.0 [ { id: sid "x", isRestart: false } ] emptySupState
+      let st = recordLaunches (uniform cfg) 1000.0 [ { id: sid "x", isRestart: false } ] emptySupState
           s = fromMaybe (initialSvc 0.0) (Map.lookup (sid "x") st)
       s.restarts `shouldEqual` 0
       s.launchedAt `shouldEqual` Just 1000.0
@@ -209,7 +269,7 @@ spec = describe "Bosun.Supervisor" do
   describe "forgetLaunches — drop memory for stopped services on reload" do
     it "removes exactly the listed services, preserving the rest (the guard)" do
       let
-        st = recordLaunches cfg 1000.0
+        st = recordLaunches (uniform cfg) 1000.0
           [ { id: sid "keep", isRestart: false }, { id: sid "drop", isRestart: false } ]
           emptySupState
         st' = forgetLaunches [ sid "drop" ] st

@@ -14,7 +14,7 @@ import Prelude
 import Bosun.Adapters.StartCommand (parseStartCommand)
 import Bosun.Atoms (AbsPath, mkAbsPath, mkHost, mkPort, mkProjectSlug)
 import Bosun.Reachability (BindScope(..), hostPort, listening, noNetwork, unixSocket)
-import Bosun.Health (BaseRestart(..), Probe(..))
+import Bosun.Health (BaseRestart(..), Probe(..), defaultRestart)
 import Bosun.Serve (ServeHint, readMediation)
 import Bosun.Service (ServiceInstance, Source(..), mkRole)
 import Data.Argonaut.Core (Json, toArray, toNumber, toObject, toString)
@@ -64,7 +64,11 @@ decodeRow j = do
     , artifact: Nothing
     , reachability: reach
     , health: { liveness: NoProbe, readiness: NoProbe, startup: Nothing }
-    , restart: { base: Always, conditions: [], backoff: { minSec: 1, maxRetries: Nothing } }
+    -- A registry row is a service someone registered to be UP; it says nothing
+    -- about restarting, so it takes the shared default with `Always` for the
+    -- base (the registry's standing intent) rather than a second, drifting
+    -- literal. Anything finer is expressed in a compose facet.
+    , restart: defaultRestart { base = Always }
     , rawDeps: []
     , rawRoutes: []
     , selectors: []
