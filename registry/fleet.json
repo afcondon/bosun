@@ -61,21 +61,6 @@
       "tailscaleName": "andrews-macbook-pro"
     },
     {
-      "id": 39,
-      "projectId": 79,
-      "projectName": "psd3-arid-keystone",
-      "projectSlug": "zulu-mike-november-quebec",
-      "role": "frontend",
-      "port": 3011,
-      "url": "http://localhost:3011",
-      "startCommand": "cd /Users/afc/work/afc-work/purescript-hylograph-showcases/psd3-arid-keystone && npx serve public -p 3011",
-      "description": "Sankey Editor frontend — static. Sourced from purescript-polyglot/.claude/commands/deploy.md 2026-04-15 — not retested this session.",
-      "environment": "mbp-native",
-      "prerequisites": null,
-      "host": "mbp",
-      "tailscaleName": "andrews-macbook-pro"
-    },
-    {
       "id": 88,
       "projectId": 82,
       "projectName": "psd3-tilted-radio",
@@ -331,21 +316,6 @@
       "tailscaleName": "andrews-macbook-pro"
     },
     {
-      "id": 37,
-      "projectId": 157,
-      "projectName": "The Shavian Review",
-      "projectSlug": "foxtrot-quebec-juliet-kilo",
-      "role": "frontend",
-      "port": 3301,
-      "url": "http://localhost:3301",
-      "startCommand": "cd /Users/afc/work/afc-work/agent-teams/shavian && npx http-server frontend/public -p 3301",
-      "description": "Static http-server serving the bundled Halogen frontend",
-      "environment": "mbp-native",
-      "prerequisites": null,
-      "host": "mbp",
-      "tailscaleName": "andrews-macbook-pro"
-    },
-    {
       "id": 110,
       "projectId": 5,
       "projectName": "Infovore Data Sources",
@@ -433,20 +403,6 @@
       "projectId": 35
     },
     {
-      "role": "api",
-      "port": 3010,
-      "url": "http://localhost:3010",
-      "startCommand": "cd /Users/afc/work/afc-work/purescript-hylograph-showcases/psd3-arid-keystone && node server/run.js",
-      "description": "Sankey Editor API (HTTPurple). Sourced from purescript-polyglot/.claude/commands/deploy.md 2026-04-15 — not retested this session.",
-      "host": "mbp",
-      "tailscaleName": "andrews-macbook-pro",
-      "environment": "mbp-native",
-      "id": 157,
-      "projectSlug": "zulu-mike-november-quebec",
-      "projectName": "psd3-arid-keystone",
-      "projectId": 79
-    },
-    {
       "role": "frontend",
       "port": 3023,
       "url": "http://localhost:3023",
@@ -487,20 +443,6 @@
       "projectSlug": "lima-yankee-bravo-mike",
       "projectName": "Polyglot",
       "projectId": 134
-    },
-    {
-      "role": "api",
-      "port": 3300,
-      "url": "http://localhost:3300",
-      "startCommand": "cd /Users/afc/work/afc-work/agent-teams/shavian && node server/run.js",
-      "description": "HTTPurple API server — threads, messages, architecture notes, insights, glossary",
-      "host": "mbp",
-      "tailscaleName": "andrews-macbook-pro",
-      "environment": "mbp-native",
-      "id": 162,
-      "projectSlug": "foxtrot-quebec-juliet-kilo",
-      "projectName": "The Shavian Review",
-      "projectId": 157
     },
     {
       "role": "frontend",
@@ -814,6 +756,6 @@
       "projectId": 191
     }
   ],
-  "count": 56,
+  "count": 52,
   "collisions": {}
 }
