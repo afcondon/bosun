@@ -359,6 +359,7 @@ probeShortLabel = case _ of
   HttpGet _ -> "http-get"
   TcpConnect _ -> "tcp-connect"
   ExecCmd _ -> "exec-cmd"
+  HostExec _ -> "host-exec"
   ProcessAlive -> "process-alive"
   SocketReady _ -> "socket-ready"
   NotifyReady -> "notify-ready"

@@ -255,9 +255,25 @@ probeOf o = if isJust (FO.lookup "healthcheck" o) then ExecCmd (healthTest o) el
 effProbe :: Object Json -> Probe
 effProbe o = case (FO.lookup "x-bosun" o >>= toObject) >>= \xb -> str xb "probe" of
   Just "process" -> ProcessAlive
+  -- `exec` ⇒ run `x-bosun.check` on the host and read its exit code. The probe
+  -- to reach for when the service is a SINGLETON someone else might have
+  -- started (a hand-start, a `deepstar up`, a previous session): it asks "is it
+  -- up" rather than `process`'s "did I start it", and so does not answer Down
+  -- about a daemon that is plainly running and then lose a bind race to it.
+  Just "exec" -> maybe (probeOf o) HostExec (checkCmd o)
   Just "socket" -> maybe (probeOf o) SocketReady (socketAddr o)
   Just "http" -> maybe NoProbe (\p -> HttpGet { port: p, path: "/", expectStatus: 200 }) (mkPort 443)
   _ -> probeOf o
+
+-- `x-bosun.check`, the command line the `exec` probe runs. Accepts docker's
+-- `test:` array form (with or without a leading CMD/CMD-SHELL, which the prober
+-- strips) and a bare string for the common one-liner.
+checkCmd :: Object Json -> Maybe (Array String)
+checkCmd o = do
+  xb <- FO.lookup "x-bosun" o >>= toObject
+  j <- FO.lookup "check" xb
+  cmd <- (toArray j <#> A.mapMaybe toString) <|> (toString j <#> \line -> [ "CMD-SHELL", line ])
+  if A.null cmd then Nothing else Just cmd
 
 -- the first unix-socket path in `x-bosun.expose`, if any
 socketAddr :: Object Json -> Maybe AbsPath

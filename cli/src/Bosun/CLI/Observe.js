@@ -55,3 +55,17 @@ export const probeSocketImpl = (socketPath) => {
     return false;
   }
 };
+
+// EffectFn1 (commandLine) -> did it exit 0? The HOST-side exec probe: the only
+// reading that answers "is the service up, whoever started it". A non-zero exit,
+// a timeout, or a missing binary all read false — never a throw, like every
+// other probe here. 5s budget (a claim check shells out to lsof/deepstar; the
+// 3s used for a network connect is tight for a process table walk).
+export const probeExecImpl = (line) => {
+  try {
+    execSync(line, { stdio: "ignore", timeout: 5000 });
+    return true;
+  } catch (e) {
+    return false;
+  }
+};

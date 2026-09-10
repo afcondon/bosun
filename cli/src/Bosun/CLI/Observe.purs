@@ -28,7 +28,9 @@ import Bosun.Service (Deployment, LooseService, deploymentServices)
 import Bosun.Supervisor (Observation)
 import Data.Map (Map)
 import Data.Map as Map
+import Data.Array as A
 import Data.Maybe (Maybe(..))
+import Data.String.Common (joinWith)
 import Data.Traversable (traverse)
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
@@ -42,6 +44,8 @@ foreign import probeTcpImpl :: EffectFn2 String Int Boolean
 foreign import probePgidAliveImpl :: EffectFn1 String Boolean
 -- socket path → does the socket file exist?
 foreign import probeSocketImpl :: EffectFn1 String Boolean
+-- host command line → did it exit 0? (the only "whoever started it" reading)
+foreign import probeExecImpl :: EffectFn1 String Boolean
 
 observe :: Maybe Host -> Probe -> Effect Status
 observe mh = case _ of
@@ -53,6 +57,13 @@ observe mh = case _ of
     pure (if ok then Running else Down)
   SocketReady path -> do
     ok <- runEffectFn1 probeSocketImpl (unAbsPath path)
+    pure (if ok then Running else Down)
+  -- The only probe that answers "is it up, WHOEVER started it". Everything
+  -- else here reads either a port we expect this service to bind or a process
+  -- group we ourselves recorded, and a singleton daemon started by hand — or
+  -- by DeepStar — satisfies neither while being perfectly alive.
+  HostExec argv -> do
+    ok <- runEffectFn1 probeExecImpl (execLine argv)
     pure (if ok then Running else Down)
   NoProbe -> pure (Unknown (ProbeUnreachable "no readiness probe"))
   -- ProcessAlive is keyed by the recorded pid-file, which only `observeService`
@@ -107,6 +118,16 @@ effectiveProbe s = case s.readiness of
     InternalPort p -> TcpConnect p
     _ -> NoProbe
   p -> p
+
+-- Docker's `test:` convention names the FORM in the first token, not the
+-- program: `CMD` is argv, `CMD-SHELL` is a shell line. Both are run here as a
+-- shell line (the same space-joined convention `renderCommand` uses for a
+-- service's own start command), so the leading token is dropped rather than
+-- executed as if it were a binary called `CMD`.
+execLine :: Array String -> String
+execLine argv = joinWith " " case A.uncons argv of
+  Just { head, tail } | head == "CMD" || head == "CMD-SHELL" -> tail
+  _ -> argv
 
 -- The probing machine is the mbp, so `mbp` services are reached on localhost
 -- and `macmini` services over the tailnet. Other hosts are a best-effort

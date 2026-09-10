@@ -92,6 +92,7 @@ probeLabel = case _ of
   HttpGet h -> "http " <> h.path <> " :" <> show (unPort h.port)
   TcpConnect p -> "tcp :" <> show (unPort p)
   ExecCmd cmd -> "exec " <> joinWith " " cmd
+  HostExec cmd -> "host-exec " <> joinWith " " cmd
   ProcessAlive -> "process-alive"
   SocketReady p -> "socket " <> unAbsPath p
   NotifyReady -> "notify"

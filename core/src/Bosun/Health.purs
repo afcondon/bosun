@@ -18,7 +18,20 @@ import Data.Tuple (Tuple)
 data Probe
   = HttpGet     { port :: Port, path :: String, expectStatus :: Int }
   | TcpConnect  Port
-  | ExecCmd     (Array String)   -- compose test:[CMD,…]; k8s exec
+  | ExecCmd     (Array String)   -- compose test:[CMD,…]; k8s exec — runs INSIDE the container
+  -- | Run a command on the HOST and read its exit code: 0 ⇒ up. Deliberately a
+  -- | separate constructor from `ExecCmd`, which is docker's in-container
+  -- | healthcheck and is not host-observable; collapsing the two would have the
+  -- | prober run a container's check on the machine instead.
+  -- |
+  -- | This is the only probe that answers "is the service up, WHOEVER started
+  -- | it". `ProcessAlive` asks the narrower question "is the group *I* recorded
+  -- | alive", which for a singleton daemon someone may start by hand is the
+  -- | wrong one: it reads Down, the supervisor launches a second copy, the copy
+  -- | loses the bind and dies, for ever. That is exactly how `es9-daemon`
+  -- | reached 1,335 failed relaunches while the real one ran happily on pid
+  -- | 1596. See docs/WHO-SPAWNS-WHAT.md.
+  | HostExec     (Array String)
   | ProcessAlive                 -- launchd KeepAlive; supervisord autorestart
   | SocketReady AbsPath
   | NotifyReady                  -- systemd Type=notify sd_notify READY=1

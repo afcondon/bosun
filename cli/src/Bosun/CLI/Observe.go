@@ -15,10 +15,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
@@ -80,4 +82,16 @@ var Bosun_CLI_Observe_probePgidAliveImpl any = func(args ...any) any {
 		return false
 	}
 	return true
+}
+
+// probeExecImpl :: EffectFn1 String Boolean — run a command line on the host and
+// report whether it exited 0 (the JS twin's `execSync` + 5s timeout). The only
+// probe that answers "is it up, whoever started it": every other reading here is
+// either a port this service is expected to bind or a process group Bosun itself
+// recorded, and a hand-started singleton satisfies neither while being alive.
+var Bosun_CLI_Observe_probeExecImpl any = func(args ...any) any {
+	line := args[0].(string)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "/bin/sh", "-c", line).Run() == nil
 }

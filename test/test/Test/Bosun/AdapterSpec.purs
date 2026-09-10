@@ -174,6 +174,37 @@ spec = describe "Bosun.Adapters" do
             (s.health.readiness == ProcessAlive) `shouldEqual` true
             (s.health.liveness == ProcessAlive) `shouldEqual` true
 
+    -- The exec probe: the only reading that answers "is it up, WHOEVER started
+    -- it". `process` asks "is the group I recorded alive", which is Down for a
+    -- perfectly healthy hand-started daemon — and a supervisor that believes
+    -- that launches a second copy into a bind it cannot win.
+
+    it "x-bosun.probe: exec => a HostExec probe carrying the check" do
+      let pf = """{"services":{"d":{"x-bosun":{"probe":"exec","check":["CMD","lsof","-i","UDP:57130"],"process":{"cwd":"/abs/d","command":"./run"}}}}}"""
+      case jsonParser pf of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> case find (\s -> s.localName == "d") (ingestCompose j) of
+          Nothing -> fail "d not ingested"
+          Just s -> (s.health.readiness == HostExec [ "CMD", "lsof", "-i", "UDP:57130" ]) `shouldEqual` true
+
+    it "a bare-string check is accepted as a shell line" do
+      let pf = """{"services":{"d":{"x-bosun":{"probe":"exec","check":"lsof -i UDP:57130","process":{"cwd":"/abs/d","command":"./run"}}}}}"""
+      case jsonParser pf of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> case find (\s -> s.localName == "d") (ingestCompose j) of
+          Nothing -> fail "d not ingested"
+          Just s -> (s.health.readiness == HostExec [ "CMD-SHELL", "lsof -i UDP:57130" ]) `shouldEqual` true
+
+    it "probe: exec with no check falls back rather than probing an empty line" do
+      -- An empty command line would exit 0 in a shell and read every service as
+      -- up — the most dangerous possible default for a liveness probe.
+      let pf = """{"services":{"d":{"x-bosun":{"probe":"exec","process":{"cwd":"/abs/d","command":"./run"}}}}}"""
+      case jsonParser pf of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> case find (\s -> s.localName == "d") (ingestCompose j) of
+          Nothing -> fail "d not ingested"
+          Just s -> (s.health.readiness == NoProbe) `shouldEqual` true
+
     -- Restart policy. Before this was readable, EVERY compose service was
     -- ingested as retry-forever, whatever the file said — which is how
     -- `fh2-daemon` came to be relaunched 2,912 times with the module switched
