@@ -168,12 +168,58 @@ read `Reserved`, and the three genuine violations that were hidden behind them
 are visible: `minard:api` :3000, `psd3-arid-keystone:api` :3010,
 `shavian:api` :3300.
 
-## 6. Known-open
+## 6. Wanted: a Minard for Bosun
 
-- **`itajara` runs three times.** `bosun serve` brokered pid 74644; pid 74638
-  holds `:23028`; a third hand-start (80313) bound nothing and ran blind. The
-  broker's pid bookkeeping is wrong for a process it launched itself, and the
-  broker path has no claim pre-flight. Tier-2 rules should apply to it.
+Andrew's, on reading the above: *"we need a Minard for Bosun to sniff out all
+the clashes on a machine."* Minard maps a codebase and shows you where it
+disagrees with itself; the same instrument pointed at the process estate is
+clearly missing, and this document is the argument for it, because **every
+finding in it was made by hand and none of them by a tool**.
+
+What a single pass over one machine turned up:
+
+| clash | how it was found | how long it had been true |
+|---|---|---|
+| es9-daemon contested by three claimants | reading `restarts` | days |
+| SuperDirt probed on the wrong process | reading a compose comment about process groups | months |
+| :3027 held by a stray realworld dev server | adding a service and noticing the 404 was Express-shaped | 17 days |
+| Minard's :3001/:3002/:3003 reassigned to three other projects | grepping the registry while modelling it | unknown |
+| Minard's DuckDB single-writer | starting a second copy by accident | forever |
+| three itajaras, broker holding the loser's pid | `lsof` vs the broker's own `/state` | 6 hours |
+| a THIRD supervisor on :3990 | being beaten to a port by it | since it was written |
+| 13 reservations filed as violations | reading all 16 | since the check existed |
+
+Every one is a **disagreement between two descriptions of the same fact** —
+which is exactly Minard's subject, and exactly what none of the existing
+surfaces show. Bosun's `/state` shows one group's opinion of itself; the Chair
+renders that; `deepstar verify` walks DeepStar's own registry. Nothing joins
+*what is running* to *what claims to run it* to *what the registry says* to
+*what the compose files say* — and the interesting facts all live in the joins.
+
+The raw material already exists and is already typed: `servePlan`'s four-way
+partition, `planDrift`, `deepstar verify`'s finding kinds, `Holders`, the
+supervision counters, and the `Reserved`/`Sdi` distinction added today. The
+missing piece is the join and a way to look at it — which is Minard's whole
+trick, applied to processes instead of modules.
+
+Two design notes worth having before anyone starts:
+
+- **The unit is a claim, not a port.** A CoreAudio device, a CoreMIDI port, a
+  DuckDB file lock and a UDP socket are all exclusive, and only one of them is a
+  port. Minard-for-Bosun that only reads `lsof -i` would have missed the DuckDB
+  lock, which is the newest and least obvious member of the set.
+- **Report intent alongside state.** Half of today's noise was correct behaviour
+  filed as failure. A clash-finder that cannot say "this is deliberate" will be
+  ignored within a week, exactly as the rejection list was.
+
+## 7. Known-open
+
+- **A Minard for Bosun** — §6.
+- **The `bosun serve` broker has no spawn lock.** Two connections in the same
+  instant spawned two itajaras (74638 and 74644, same second); a third was a
+  hand-start. The broker recorded the one that LOST the bind. Cleaned up to one,
+  but the race is still there, and tier-2 rules should apply to the broker path
+  as they now do to the supervised one.
 - **Two service inventories.** `fixtures/atlantis/compose.yml` has thirteen
   services; `~/.deepstar/services.toml` has six, is untracked personal config,
   and dates from 2026-05. For the release story DeepStar's inventory must cover
@@ -187,4 +233,10 @@ are visible: `minard:api` :3000, `psd3-arid-keystone:api` :3010,
   deserves to be told apart from one that finished.
 - **`fh2-daemon` should exit non-zero** when the FH-2 is absent. One line, in
   `fh2-config`.
-- **The three real SDI violations** in §5, each in an unrelated project.
+- ~~The three real SDI violations in §5.~~ **Done, same day.**
+  psd3-arid-keystone and The Shavian Review were retired (both dead, neither
+  running); Minard became a supervised group on :3992 — see
+  `fixtures/minard/compose.yml`, and note that its DuckDB file lock is an
+  exclusive claim in the §3 sense even though no hardware is involved. The
+  fleet now reports zero SDI violations; all 16 refusals are deliberate
+  reservations.
