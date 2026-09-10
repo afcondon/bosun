@@ -73,6 +73,21 @@ spec = describe "Bosun.Serve.servePlan" do
     p.routes `shouldEqual` []
     map _.reason p.rejected `shouldEqual` [ Sdi NoAbsoluteCwd ]
 
+  it "a row naming NO command is a reservation, not a contract violation" do
+    -- Roughly a third of the live fleet is such rows — a port reserved so the
+    -- router does not bind it while another launcher owns the service. Filing
+    -- them under the same heading as a real mistake is how the genuine
+    -- violations in that registry stayed invisible behind the false ones.
+    let
+      svc = (leaf "x")
+        { host = Just (mkHost "mbp")
+        , reachability = hostPort (port_ 3060)
+        , launch = { executor: Unmanaged "", localName: "x", artifact: Nothing }
+        }
+      p = servePlan (mkDeployment [ svc ])
+    p.routes `shouldEqual` []
+    p.rejected `shouldEqual` [ { serviceId: "x", publicPort: Just 3060, reason: Reserved } ]
+
   it "redirects a remote (macmini) service with a 421 to its tailnet URL" do
     let p = servePlan (mkDeployment [ procSvc "web" 3050 "macmini" "/srv/web" "npx serve -p 3050" ])
     p.routes `shouldEqual` []

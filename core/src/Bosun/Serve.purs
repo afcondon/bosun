@@ -360,6 +360,7 @@ brokerDoor f
 data RejectReason
   = NoHostPort            -- no host port to bind / route
   | NotAProcess           -- container/CDN/systemd/launchd — serve spawns Processes only
+  | Reserved              -- the row names NO command: a port reservation, by design
   | Sdi SdiViolation      -- PortNotInStartCommand / NoAbsoluteCwd
   | PortClaimed Int       -- another service already claims this public port
 derive instance Eq RejectReason
@@ -507,8 +508,21 @@ admit hintFor s = case mediationOf of
                   , idleTimeoutMs: defaultIdleMs
                   }
             | otherwise -> rejectAt public (Sdi PortNotInStartCommand)
-          -- A `cd`-less registry row parses to `Unmanaged` (StartCommand.purs): it
-          -- has no absolute cwd, the SDI footgun. Report it as such.
+          -- Both of these parse to `Unmanaged` (StartCommand.purs) and they are
+          -- NOT the same fact. An EMPTY command is a row that deliberately names
+          -- none: the documented convention for a service someone else runs, so
+          -- the registry can reserve its port without the router binding it.
+          -- Roughly a third of this fleet is such rows — es9-daemon's OSC
+          -- reservation, Friends of Itajara, the five docker-compose showcases —
+          -- and every one of them said "startCommand NULL on purpose" in its own
+          -- description while being reported as a contract violation.
+          --
+          -- Filing a deliberate state under the same heading as a mistake is not
+          -- a cosmetic problem: it is how the ONE genuine violation in this
+          -- registry stayed invisible behind seven false ones.
+          Unmanaged "" -> rejectAt public Reserved
+          -- A non-empty command with no `cd /abs` anchor is the real SDI footgun
+          -- (§7.2) — it meant to be launched and cannot be.
           Unmanaged _ -> rejectAt public (Sdi NoAbsoluteCwd)
           _ -> rejectAt public NotAProcess
     _ -> reject NoHostPort
@@ -523,6 +537,11 @@ admit hintFor s = case mediationOf of
       _ -> refuse NoHostPort
     Right _ -> case s.launch.executor of
       Process pr -> brokerFor pr
+      -- Same distinction as the proxy path above: a row naming no command is a
+      -- reservation, not a mistake. Broker mode relaxes the literal-port rule
+      -- but not this one — it still has to spawn the thing, and there is
+      -- nothing here to spawn.
+      Unmanaged "" -> refuse Reserved
       Unmanaged _ -> refuse (Sdi NoAbsoluteCwd)
       _ -> refuse NotAProcess
 
@@ -722,6 +741,7 @@ rejectSig :: RejectReason -> String
 rejectSig = case _ of
   NoHostPort -> "reject|no-host-port"
   NotAProcess -> "reject|not-a-process"
+  Reserved -> "reject|reserved"
   Sdi PortNotInStartCommand -> "reject|sdi-port-not-in-start-command"
   Sdi NoAbsoluteCwd -> "reject|sdi-no-absolute-cwd"
   PortClaimed port -> "reject|port-claimed|" <> show port

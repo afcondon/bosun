@@ -300,6 +300,7 @@ renderReject :: RejectReason -> String
 renderReject = case _ of
   NoHostPort -> "no host port to bind"
   NotAProcess -> "not a Process launch (serve spawns local processes only)"
+  Reserved -> "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
   Sdi why -> "SDI contract — " <> sdiLabel why
   PortClaimed port -> "public port " <> show port <> " is already claimed by another service (collision)"
 
