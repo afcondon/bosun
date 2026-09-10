@@ -107,3 +107,16 @@ services:
         command: node cli/run.js supervise --port 3994 ${BOSUN_ROOT}/fixtures/atlantis/compose.yml ${BOSUN_ROOT}/fixtures/atlantis/registry.json
       expose:
         - host: 3994
+
+  minard-supervisor:
+    # The code-cartography group (API :3000 + frontend :3010). Joined 2026-09-10
+    # so Minard is demo-ready without a `make start` — see
+    # fixtures/minard/compose.yml for why a group rather than a serve route.
+    x-bosun:
+      host: mbp
+      # NO probe: process — TCP readiness on the exposed :3992, as above.
+      process:
+        cwd: ${BOSUN_ROOT}
+        command: node cli/run.js supervise --port 3992 ${BOSUN_ROOT}/fixtures/minard/compose.yml ${BOSUN_ROOT}/fixtures/minard/registry.json
+      expose:
+        - host: 3992

@@ -389,20 +389,6 @@
       "projectId": 150
     },
     {
-      "role": "api",
-      "port": 3000,
-      "url": "http://localhost:3000",
-      "startCommand": "cd /Users/afc/work/afc-work/CodeExplorer/minard && make start",
-      "description": "Minard API (HTTPurple). make start launches BOTH this and the frontend (port 3001) in one shot — there is no need to start the frontend row separately.",
-      "host": "mbp",
-      "tailscaleName": "andrews-macbook-pro",
-      "environment": "mbp-native",
-      "id": 156,
-      "projectSlug": "sierra-tango-golf-bravo",
-      "projectName": "minard",
-      "projectId": 35
-    },
-    {
       "role": "frontend",
       "port": 3023,
       "url": "http://localhost:3023",
@@ -754,8 +740,36 @@
       "projectSlug": "charlie-india-charlie-november",
       "projectName": "DeepStar",
       "projectId": 191
+    },
+    {
+      "role": "api",
+      "port": 3000,
+      "url": "http://localhost:3000",
+      "startCommand": null,
+      "description": "Minard API (HTTPurple + DuckDB, database/ce-unified.duckdb ~1.2GB). Bosun-supervised in the MINARD group (fixtures/minard/compose.yml, reload via :3992); startCommand NULL on purpose so bosun serve does not bind the port — this row is the port reservation. WAS `make start`, which backgrounds BOTH the api and a frontend and so was never a lazy-spawn shape: it was the last genuine SDI violation in the fleet, fixed 2026-09-10 by modelling Minard as a group. NB the DuckDB is single-writer — a second api instance dies on the file lock — so the group caps its retries.",
+      "host": "mbp",
+      "tailscaleName": "andrews-macbook-pro",
+      "environment": "native",
+      "id": 191,
+      "projectSlug": "sierra-tango-golf-bravo",
+      "projectName": "minard",
+      "projectId": 35
+    },
+    {
+      "role": "frontend",
+      "port": 3010,
+      "url": "http://localhost:3010",
+      "startCommand": null,
+      "description": "Minard frontend (Halogen bundle.js), served by the prebuilt static-httpd Go binary. Bosun-supervised in the MINARD group; startCommand NULL on purpose — this row is the port reservation. MOVED to 3010 on 2026-09-10: Minard's documented frontend port 3001 had been reassigned to Marquetry (and 3002/3003 to PWYF and Selene), so `make start` would have collided. 3010 was freed the same day by retiring psd3-arid-keystone. The page defaults to the API on :3000; if the API ever moves, open it with ?api=N.",
+      "host": "mbp",
+      "tailscaleName": "andrews-macbook-pro",
+      "environment": "native",
+      "id": 192,
+      "projectSlug": "sierra-tango-golf-bravo",
+      "projectName": "minard",
+      "projectId": 35
     }
   ],
-  "count": 52,
+  "count": 53,
   "collisions": {}
 }

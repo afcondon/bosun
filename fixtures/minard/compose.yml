@@ -1,0 +1,63 @@
+# Minard — the code-cartography group (Marginalia: minard, sierra-tango-golf-bravo).
+#
+# Modelled 2026-09-10. It was the LAST genuine SDI violation in the fleet, and
+# for a reason worth stating rather than patching: its registry row ran
+# `make start`, which backgrounds TWO processes. That is not a lazy-spawn shape
+# at all — a router owns one foreground process per route — so the honest fix is
+# a GROUP, which is what this file is.
+#
+# The three ports Minard's docs claim (3001 frontend, 3002 type explorer, 3003
+# site explorer) were reassigned years-of-sessions ago to Marquetry, PWYF and
+# Selene, and `bosun serve` holds all three. So `make start` would today collide
+# with Marquetry on its second line. The frontend moves to :3010 (freed the same
+# day by retiring psd3-arid-keystone) and the API keeps its registered :3000.
+#
+# Deliberately NOT modelled here: `minard-loader` (Rust) and `make bootstrap`.
+# They populate the DuckDB and then exit — build steps, not daemons. Bosun is
+# keep-alive-only, so a one-shot would be relaunched for ever.
+services:
+  minard-api:
+    # THE DATABASE IS AN EXCLUSIVE CLAIM. DuckDB is single-writer: a second
+    # instance dies with `Could not set lock on file ... Conflicting lock is
+    # held ... (PID n)`. Observed while validating this, by starting a second
+    # copy two seconds before the first exited.
+    #
+    # So this is an instrument-tier service in everything but hardware (see
+    # docs/WHO-SPAWNS-WHAT.md), and it gets the instrument-tier treatment:
+    # a bounded retry, because if something else holds the lock, relaunching
+    # cannot take it — the copy just dies again. The TCP probe on :3000 is
+    # already adoption-capable, which covers the common case; the cap covers
+    # the nasty one, where a holder has the DB but not the port.
+    #
+    # 15s minSec because a cold open of a 1.2 GB DuckDB plus the git-HEAD and
+    # default-snapshot reads takes several seconds; retrying faster than it can
+    # start would count healthy boots as failures.
+    restart: on-failure
+    x-bosun:
+      host: mbp
+      restart:
+        minSec: 15
+        maxRetries: 5
+      process:
+        cwd: /Users/afc/work/afc-work/CodeExplorer/minard
+        command: PORT=3000 MINARD_DB=database/ce-unified.duckdb node server/run.js
+      expose:
+        - host: 3000
+
+  minard-frontend:
+    # Static bundle.js + imagery. Served by the PREBUILT static-httpd Go binary,
+    # not `npx serve`: the bosun-daemon contract wants no toolchain as a runtime
+    # dependency, and this is the same server triggerfish-frontend uses.
+    #
+    # The page defaults to the API on :3000, which is where it stays, so no
+    # `?api=` is needed. If the API ever moves, the frontend needs that query
+    # parameter — the Makefile says so and it is easy to forget.
+    depends_on:
+      - minard-api
+    x-bosun:
+      host: mbp
+      process:
+        cwd: /Users/afc/work/afc-work/polyglot/polyglot-deploy/static-httpd
+        command: ./static-httpd -port 3010 -root /Users/afc/work/afc-work/CodeExplorer/minard/frontend/public
+      expose:
+        - host: 3010
