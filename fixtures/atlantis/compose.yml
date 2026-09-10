@@ -20,9 +20,24 @@
 # co-design.
 services:
   es9-daemon:
+    # INSTRUMENT TIER (docs/WHO-SPAWNS-WHAT.md): it opens the ES-9 over
+    # CoreAudio and binds one UDP port, so at most one may run, and a copy that
+    # loses the bind is not a copy that will win it later.
+    #
+    # `probe: exec` rather than `process`, because `process` asks "is the group
+    # I recorded alive" and this daemon is routinely started by hand or by
+    # `deepstar up`. On 2026-09-10 the real one had held udp:57130 on pid 1596
+    # for eight hours while this supervisor read Down and spawned a loser 1,335
+    # times. The check tests the ENDPOINT DECLARED TWO LINES BELOW, so it cannot
+    # drift the way a check naming another file's service id could.
+    restart: on-failure
     x-bosun:
       host: mbp
-      probe: process
+      probe: exec
+      check: lsof -t -iUDP:57130
+      restart:
+        minSec: 30
+        maxRetries: 10
       process:
         cwd: /Users/afc/work/afc-work/music/expert-sleepers/es9-daemon
         command: ./target/release/es9-daemon
@@ -32,9 +47,16 @@ services:
         - host: 57130
 
   link-spike:
+    # Instrument tier: one UDP bind, and it joins an Ableton Link session — two
+    # of these would be two peers claiming to be this machine.
+    restart: on-failure
     x-bosun:
       host: mbp
-      probe: process
+      probe: exec
+      check: lsof -t -iUDP:57122
+      restart:
+        minSec: 30
+        maxRetries: 10
       process:
         cwd: /Users/afc/work/afc-work/music/link-spike
         command: ./target/release/link-spike
@@ -127,9 +149,31 @@ services:
     # NB the browser-side `stellatus-bridge.mjs` (HTTP→UDP relay) is a DEV-AUDITION
     # crutch only — it exists because a browser can't send UDP, and it disappears
     # once the BEAM path lands. It is deliberately NOT modelled here.
+    #
+    # `probe: exec` on the port sclang actually binds, rather than `process`.
+    # The recorded process group is boot-superdirt.sh's; sclang runs in its OWN
+    # group (deliberately — that is how the drain works), so the process probe
+    # was reading the WRAPPER. sclang segfaults rather than draining when memory
+    # is tight, and a segfaulted sclang under a live wrapper reads Running over
+    # complete silence. `lsof -t -iUDP:57120` reads the thing that receives
+    # /dirt/play, which is the only fact that matters.
+    #
+    # Capped, because uncapped is measured: on 2026-08-31 the MBP was unplugged
+    # from the ES-9 overnight, es9/fh2/link failed for ten hours, `fails`
+    # reached ~8,200 and the backoff exponent overflowed the stack, so the tick
+    # never converged and every reconcile relaunched all eleven services —
+    # 6,309 SuperCollider boots and ~1 GB of orphaned scsynth. The exponent
+    # clamp fixed the overflow; this stops the boots even if something else ever
+    # wedges the loop. A SuperDirt that will not boot on the tenth try will not
+    # boot on the six-thousandth.
+    restart: on-failure
     x-bosun:
       host: mbp
-      probe: process
+      probe: exec
+      check: lsof -t -iUDP:57120
+      restart:
+        minSec: 30
+        maxRetries: 10
       process:
         cwd: /Users/afc/work/afc-work/music/live-coding/triggerfish
         command: ./audio/superdirt-core.sh
@@ -188,10 +232,60 @@ services:
       expose:
         - host: 3029
 
-  fh2-daemon:
+  deepstar:
+    # THE RIG DOCTOR, finally a member (Marginalia 191). `deepstar serve` is an
+    # HTTP API on :3027 — the house pattern (Marginalia :3100, the Chair :3022,
+    # Calypso :3060, Amphora :3024): one backend a human curls, an agent calls
+    # and a web surface renders, with one implementation behind all three.
+    #
+    # It was missing from this file for a reason worth writing down rather than
+    # quietly fixing: DeepStar is mostly a COMMAND, not a daemon, and "why is
+    # deepstar not supervised" is half a category error. But `serve` genuinely
+    # is a daemon, and it is the one Quadrat needs — the calibration runner
+    # (`tune`, `sweep`, `latency`) lives behind it, and the pitch-calibration
+    # work in docs/kb/plans/sample-sets.md shells out to exactly this.
+    #
+    # Stage 0: it binds and waits. Its rig lock means at most one may run, which
+    # its own :3027 bind already enforces — a TCP probe is adoption-capable by
+    # construction (it asks "is something listening", never "did I start it"),
+    # so no exec check is needed here. That is the whole reason the TCP services
+    # in this file have never storm-restarted and the process-probed ones have.
+    #
+    # It does NOT supervise anything and must not: supervision was ceded to
+    # Bosun on 2026-07-02, and `deepstar up` survives as the zero-infrastructure
+    # launcher for an Atlantis running on someone else's machine. See
+    # docs/WHO-SPAWNS-WHAT.md.
     x-bosun:
       host: mbp
-      probe: process
+      process:
+        cwd: /Users/afc/work/afc-work/music/live-coding/deepstar
+        command: ./bin/deepstar serve --port 3027
+      expose:
+        - host: 3027
+
+  fh2-daemon:
+    # Instrument tier, and the service that paid for this whole seam. With the
+    # FH-2 powered off, `run-daemon.mjs` prints "FH-2 MIDI port not found" and
+    # exits — with status ZERO, so no exit-code policy in the world would have
+    # caught it. It was relaunched 2,912 times in seven days. The RETRY CAP is
+    # what stops that, and five tries a half-minute apart is plenty to
+    # distinguish "still booting" from "the module is off".
+    #
+    # Giving up is reported (`gaveUp` in /state) and recoverable: power the
+    # module on and POST /control/restart?service=fh2-daemon, which clears the
+    # fail count and hands back the full budget.
+    #
+    # The check tests the socket by OPEN FD, not by existence: a stale socket
+    # file outlives a crashed daemon (DeepStar SPEC failure A7), and `test -S`
+    # would read the corpse as a live service.
+    restart: on-failure
+    x-bosun:
+      host: mbp
+      probe: exec
+      check: lsof -t -- /Users/afc/.fh2/control.sock
+      restart:
+        minSec: 30
+        maxRetries: 5
       process:
         cwd: /Users/afc/work/afc-work/music/expert-sleepers/fh2-config
         # Launch the PREBUILT output, not `spago run` — no compile-at-launch, no
@@ -233,6 +327,12 @@ services:
         command: sh -c 'node scripts/apply-drum-breakout.mjs; exec sleep 2147483647'
 
   continuo:
+    # Instrument tier: it owns a CoreAudio output and creates the "continuo"
+    # virtual CoreMIDI destination, both singletons. Capped because a failure
+    # here is usually a plugin that will not load (an AU that needs online auth,
+    # a scan that crashed), and a plugin that would not load this second will
+    # not load on the two-thousandth attempt either.
+    #
     # The AUDITION VOICE (Marginalia #267, music/continuo). A headless JUCE
     # console daemon hosting one AU/VST3 instrument (Piano One) and playing
     # incoming MIDI to CoreAudio, so the Triggerfish instruments — Vetula
@@ -255,9 +355,14 @@ services:
     # auth at boot; the DLSMusicDevice (AudioUnit:Synths/aumu,dls ,appl) is a
     # self-contained fallback (but its id HAS a space — quote or use LABS/DLS via
     # the `add` socket verb instead).
+    restart: on-failure
     x-bosun:
       host: mbp
-      probe: process
+      probe: exec
+      check: lsof -t -- /Users/afc/.continuo/control.sock
+      restart:
+        minSec: 30
+        maxRetries: 5
       process:
         cwd: /Users/afc/work/afc-work/music/continuo
         command: ./build/continuo_artefacts/continuo --plugin /Library/Audio/Plug-Ins/Components/PianoOne.component --plugin AudioUnit:Synths/aumu,Inst,Splc --gain 0.7
