@@ -51,6 +51,7 @@ module Bosun.Supervisor
   , SuperviseDiff
   , superviseDiff
   , forgetLaunches
+  , clearFails
   , AddressMiss(..)
   , addressService
   ) where
@@ -428,6 +429,24 @@ superviseDiff old new =
 -- | with its new spec; a `removed` one, absent from the new deployment, simply
 -- | stops being observed). Services NOT in the list keep their memory — the
 -- | double-launch guard that `superviseDiff.unchanged` relies on.
+-- | Zero the consecutive-failure count for named services, keeping the rest of
+-- | their launch memory (the cumulative `restarts` badge especially).
+-- |
+-- | What an OPERATOR's restart means, as against a supervisor's. A retry cap
+-- | parks a service that has failed too often — the right answer for a daemon
+-- | whose hardware is unplugged — but "parked" has to be recoverable by the
+-- | obvious gesture, or the cap is a trap. Plug the module back in and press
+-- | restart: the launch fires either way (the control path forces the status),
+-- | but with `fails` still over the line that one attempt is ALL the service
+-- | gets, and if it needs a second it is parked again in silence. The person
+-- | pressing the button asserts the cause is fixed; `fails` is precisely the
+-- | accumulated belief that it is not, so it is what has to go.
+-- |
+-- | `restarts` deliberately survives — it is the historical badge, and a
+-- | service that needed rescuing eleven times should still say so.
+clearFails :: Array ServiceId -> SupState -> SupState
+clearFails ids st = foldr (Map.update (\s -> Just s { fails = 0, suspendedUntil = Nothing })) st ids
+
 forgetLaunches :: Array ServiceId -> SupState -> SupState
 forgetLaunches ids st = foldr Map.delete st ids
 

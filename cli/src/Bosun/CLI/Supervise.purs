@@ -44,7 +44,7 @@ import Bosun.Report (renderAddressMiss, renderCommand, renderReport, renderTeard
 import Bosun.Serve (controlPort)
 import Bosun.Service (Deployment, ValidatedDeployment, deploymentServices, unServiceRef, unValidatedDeployment)
 import Bosun.Substrate (TeardownVerdict, readTeardown, teardownSettled, teardownTag)
-import Bosun.Supervisor (Launch, Policies, SuperviseDiff, SupConfig, SupState, SvcState, addressService, defaultConfig, emptySupState, forgetLaunches, policies, recordLaunches, refine, superviseDiff)
+import Bosun.Supervisor (Launch, Policies, SuperviseDiff, SupConfig, SupState, SvcState, addressService, cfgFor, clearFails, defaultConfig, emptySupState, forgetLaunches, policies, recordLaunches, refine, superviseDiff)
 import Bosun.Target (TargetMap)
 import Bosun.Validate (validate)
 import Bosun.Version (version)
@@ -343,7 +343,8 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
       st <- Ref.read supRef
       phase <- Ref.read phaseRef
       td <- Ref.read teardownRef
-      pure (snapshotBody phase st td)
+      dep <- Ref.read depRef
+      pure (snapshotBody (policiesFor dep) phase st td)
 
     -- =====================================================================
     -- The seam: what the artifact's words mean here
@@ -392,6 +393,15 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
         -- `service-in-group` fact holds, and that fact is this same lookup.
         Left _ -> note ("restart: " <> arg <> " vanished between the guard and the act")
         Right sid -> do
+          -- Give the service its retry BUDGET back before relaunching it. The
+          -- forced `Failed` below means the launch itself would happen either
+          -- way; what would not is any attempt after it. A service parked by
+          -- its cap has `fails` over the line, so one manual launch that did
+          -- not take would park it again immediately, and the operator who
+          -- just fixed the cause would get a single silent try. Pressing
+          -- restart asserts the cause is fixed, and `fails` is exactly the
+          -- accumulated belief that it is not.
+          Ref.modify_ (clearFails [ sid ]) supRef
           enactPlan ("restart " <> arg) now (Map.insert sid Failed observed)
           note ("restart: " <> arg)
 
@@ -596,8 +606,8 @@ reloadSummary d =
 -- | complaint the artifact answers. Keeping the field at all is deliberate: the
 -- | Chair on :3020 reads it, and an additive `/state` means the running Chair
 -- | keeps working untouched while it learns about phases at its own pace.
-snapshotBody :: StateId -> SupState -> Map.Map ServiceId { verdict :: TeardownVerdict, at :: Number } -> String
-snapshotBody phase st td =
+snapshotBody :: Policies -> StateId -> SupState -> Map.Map ServiceId { verdict :: TeardownVerdict, at :: Number } -> String
+snapshotBody ps phase st td =
   "{ \"desired\": \"" <> (if desiredFromPhase phase then "up" else "down") <> "\""
     <> ", \"phase\": \"" <> phaseTag phase <> "\""
     <> ", \"supervised\": true"
@@ -633,7 +643,19 @@ snapshotBody phase st td =
       <> ", \"fails\": " <> show s.fails
       <> ", \"lastTransitionAt\": " <> show s.since
       <> ", \"suspendedUntil\": " <> maybe "null" show s.suspendedUntil
+      <> ", \"retryCap\": " <> maybe "null" show (cfgFor ps sid).maxRetries
+      <> ", \"gaveUp\": " <> (if gaveUp sid s then "true" else "false")
       <> " }"
+
+  -- `in-backoff` covers two states a reader must not confuse: throttled (it
+  -- will come back on its own, wait) and PARKED (it has spent its retry cap and
+  -- nothing further will happen without you). Both NoOp the planner, so the
+  -- status token alone cannot tell them apart, and a rig where the ES-9 daemon
+  -- has quietly given up looks identical to one where it is a second from
+  -- returning. Additive, so every existing decoder ignores it.
+  gaveUp sid s = case (cfgFor ps sid).maxRetries of
+    Just m -> s.fails >= m
+    Nothing -> false
 
 statusToken :: Status -> String
 statusToken = case _ of
