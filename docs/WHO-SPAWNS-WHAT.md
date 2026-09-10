@@ -214,6 +214,16 @@ Two design notes worth having before anyone starts:
 
 ## 7. Known-open
 
+- **Adoption fixed the spawn storm, not the teardown.** A service Bosun adopted
+  (probe says up, but Bosun never launched it) cannot be stopped or restarted by
+  it: the stop signals a recorded process group that does not match, then the
+  start loses the bind to the incumbent and dies. `POST /control/restart`
+  answers `{"ok":true}` and nothing happens. Seen on `friends-of-itajara`
+  2026-09-10; the fix was to kill the orphan by hand and let Bosun spawn one it
+  owns. Two candidate answers: adopt the pid found by the probe into the pid
+  file, or refuse the verb with "this one is not mine" — the second is honest
+  and cheap, the first is what an operator actually wants. Until then, the old
+  rule stands: after asking Bosun to restart anything, check the PID.
 - **A Minard for Bosun** — §6.
 - **The `bosun serve` broker has no spawn lock.** Two connections in the same
   instant spawned two itajaras (74638 and 74644, same second); a third was a
