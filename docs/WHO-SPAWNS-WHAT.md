@@ -231,8 +231,10 @@ Two design notes worth having before anyone starts:
   code. Documented rather than pretended. It would not have helped the case that
   prompted all this — fh2-daemon exits 0 — but a service that exits non-zero
   deserves to be told apart from one that finished.
-- **`fh2-daemon` should exit non-zero** when the FH-2 is absent. One line, in
-  `fh2-config`.
+- ~~`fh2-daemon` should exit non-zero when the FH-2 is absent.~~ **Done, same
+  day** (`fh2-config`, `FH2/Daemon.purs`): it logged and fell off the end of
+  `runDaemon`, exiting 0. Now throws; verified rc=1 with the module off. The cap
+  is no longer the only defence against that storm.
 - ~~The three real SDI violations in §5.~~ **Done, same day.**
   psd3-arid-keystone and The Shavian Review were retired (both dead, neither
   running); Minard became a supervised group on :3992 — see
