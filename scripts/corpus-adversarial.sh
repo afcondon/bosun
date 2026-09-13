@@ -55,7 +55,7 @@ echo "==> huge graph (200 services, no-crash + count)"
 python3 - > /tmp/bosun-huge.json <<'PY'
 import json
 servers = [{
-  "role": "frontend", "projectName": f"svc{i}", "projectSlug": f"svc{i}",
+  "role": "frontend", "projectName": f"svc{i}", "projectId": f"svc{i}",
   "port": 4000 + i, "host": "mbp",
   "startCommand": f"cd /srv/svc{i} && run -p {4000 + i}",
 } for i in range(200)]

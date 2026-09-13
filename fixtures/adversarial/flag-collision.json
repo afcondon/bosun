@@ -1,4 +1,4 @@
 { "servers": [
-  { "role": "api", "projectName": "timeoutapp", "projectSlug": "timeoutapp", "port": 3050, "host": "mbp",
+  { "role": "api", "projectName": "timeoutapp", "projectId": "timeoutapp", "port": 3050, "host": "mbp",
     "startCommand": "cd /srv/app && run --timeout 3050" }
 ] }

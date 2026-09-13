@@ -379,7 +379,7 @@ checked**.
 > one sitting.
 
 ```
-GET http://127.0.0.1:3997/where/<projectSlug>:<role>
+GET http://127.0.0.1:3997/where/<projectId>:<role>
 GET http://127.0.0.1:3997/where?port=<port>
 ```
 

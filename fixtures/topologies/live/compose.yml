@@ -2,7 +2,7 @@
 # SAFE serve fixture (fixtures/serve/registry.json) admits. Paired with the
 # registry facet in ./registry.json: reconcile bridges the two by shared
 # directory basename (compose build-context ↔ registry startCommand cwd), so each
-# pair collapses to ONE node whose canonical id is the registry's projectSlug:role
+# pair collapses to ONE node whose canonical id is the registry's projectId:role
 # — which is exactly the serviceId `bosun serve` keys /state by. That is what lets
 # the Chair's live overlay light a status dot on each graph node.
 #

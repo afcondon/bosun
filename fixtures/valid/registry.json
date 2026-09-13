@@ -1,10 +1,10 @@
 {
   "servers": [
-    { "role": "db", "port": 5432, "host": "mbp", "projectSlug": "shop", "projectName": "shop-db",
+    { "role": "db", "port": 5432, "host": "mbp", "projectId": "shop", "projectName": "shop-db",
       "startCommand": "cd /srv/shop-db && postgres" },
-    { "role": "api", "port": 3000, "host": "mbp", "projectSlug": "shop", "projectName": "shop-api",
+    { "role": "api", "port": 3000, "host": "mbp", "projectId": "shop", "projectName": "shop-api",
       "startCommand": "cd /srv/shop-api && node server.js" },
-    { "role": "frontend", "port": 3001, "host": "mbp", "projectSlug": "shop", "projectName": "shop-frontend",
+    { "role": "frontend", "port": 3001, "host": "mbp", "projectId": "shop", "projectName": "shop-frontend",
       "startCommand": "cd /srv/shop-frontend && npx serve" }
   ],
   "count": 3

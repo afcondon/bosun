@@ -21,7 +21,7 @@ import Affjax.RequestBody as RB
 import Affjax.ResponseFormat as RF
 import Affjax.Web as AX
 import Bosun.View (TopologyEntry, topologyCodec)
-import Data.Argonaut.Core (fromNumber, fromObject, fromString, toArray, toObject, toString)
+import Data.Argonaut.Core (fromNumber, fromObject, fromString, toArray, toNumber, toObject, toString)
 import Data.Array as Array
 import Data.Codec.Argonaut as CA
 import Data.Either (Either(..))
@@ -64,10 +64,17 @@ fetchTopology = do
       Left e -> Left (CA.printJsonDecodeError e)
       Right t -> Right t
 
--- | projectSlug → human projectName, read from chair-server's fleet.json
--- | (`/api/ports`). Both the serve router's `/state` serviceId (`slug:role`) and
--- | the supervise views key by slug, so a slug→name map makes every surface
--- | (landing fleet, cockpit tables) show a readable name, not a NATO callsign.
+-- | projectId → human projectName, read from chair-server's fleet.json
+-- | (`/api/ports`). Both the serve router's `/state` serviceId
+-- | (`<projectId>:<role>`) and the supervise views key by project id, so this
+-- | map is what lets every surface (landing fleet, cockpit tables) show a
+-- | readable name instead of a bare number. It replaced a projectSlug→name map
+-- | on 2026-09-13, when the slugs went; the number is no more legible than the
+-- | NATO callsign was, so the lookup matters exactly as much as it did.
+-- |
+-- | The key is the id AS TEXT, because that is the form it appears in inside a
+-- | serviceId. `projectId` arrives as a JSON number, so it is rendered here
+-- | once and compared as a string everywhere after.
 fetchFleetNames :: Aff (Map String String)
 fetchFleetNames = do
   res <- AX.get RF.json (analyzeBase <> "/api/ports")
@@ -80,6 +87,6 @@ fetchFleetNames = do
   where
   rowKV j = do
     o <- toObject j
-    slug <- toString =<< FO.lookup "projectSlug" o
+    pid <- show <<< Int.round <$> (toNumber =<< FO.lookup "projectId" o)
     n <- toString =<< FO.lookup "projectName" o
-    pure (Tuple slug n)
+    pure (Tuple pid n)

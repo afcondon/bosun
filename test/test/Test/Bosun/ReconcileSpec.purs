@@ -1,5 +1,5 @@
 -- | The reconcile facet model (DECISIONS D-E3/E2) against the *real* §7 case:
--- | the registry's tilted-radio (`uniform-romeo-romeo-juliet:frontend`, mbp,
+-- | the registry's tilted-radio (`82:frontend`, mbp,
 -- | native) and compose's `tidal-frontend` (macmini, container) are ONE
 -- | logical service with TWO facets — that is divergence (informational), not
 -- | a conflict. A within-facet port disagreement IS a conflict (B9). A
@@ -8,7 +8,7 @@ module Test.Bosun.ReconcileSpec where
 
 import Prelude
 
-import Bosun.Atoms (AbsPath, Port, RoutePath, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkRoutePath, mkServiceId)
+import Bosun.Atoms (AbsPath, Port, RoutePath, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectId, mkRoutePath, mkServiceId)
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Reachability (hostPort, noNetwork)
 import Bosun.Health (BaseRestart(..), Probe(..))
@@ -58,11 +58,11 @@ buildCtx ctx = Container (ContainerSpec { source: Right (BuildContext { context:
 
 -- ── the §7 fixtures ─────────────────────────────────────────────────────────
 
--- registry: tilted-radio, slug uniform-romeo-romeo-juliet, mbp-native @3013
+-- registry: tilted-radio, Marginalia project 82, mbp-native @3013
 tiltedRegistry :: ServiceInstance
 tiltedRegistry = inst
   { source = FromRegistry
-  , project = Just (mkProjectSlug "uniform-romeo-romeo-juliet")
+  , project = Just (mkProjectId "82")
   , localName = "psd3-tilted-radio"
   , role = mkRole "frontend"
   , host = Just (mkHost "mbp")
@@ -84,7 +84,7 @@ tiltedCompose = inst
 
 -- the alias bridges compose's name to the registry-derived id
 aliases :: Map.Map String ServiceId
-aliases = Map.singleton "tidal-frontend" (mkServiceId "uniform-romeo-romeo-juliet:frontend")
+aliases = Map.singleton "tidal-frontend" (mkServiceId "82:frontend")
 
 spec :: Spec Unit
 spec = describe "Bosun.Reconcile" do
@@ -103,7 +103,7 @@ spec = describe "Bosun.Reconcile" do
     let
       webNative = inst
         { source = FromRegistry
-        , project = Just (mkProjectSlug "poly")
+        , project = Just (mkProjectId "poly")
         , localName = "polyglot-website"
         , role = mkRole "website"
         , host = Just (mkHost "mbp")
@@ -166,14 +166,14 @@ spec = describe "Bosun.Reconcile" do
 
   it "B9 within-facet port disagreement => 1 conflict, 0 divergences" do
     let
-      a = inst { source = FromRegistry, project = Just (mkProjectSlug "p"), role = mkRole "api", reachability = hostPort (port_ 3013) }
-      b = inst { source = FromCompose, project = Just (mkProjectSlug "p"), role = mkRole "api", reachability = hostPort (port_ 3014) }
+      a = inst { source = FromRegistry, project = Just (mkProjectId "p"), role = mkRole "api", reachability = hostPort (port_ 3013) }
+      b = inst { source = FromCompose, project = Just (mkProjectId "p"), role = mkRole "api", reachability = hostPort (port_ 3014) }
       r = reconcile Map.empty [ a, b ]
     length r.conflicts `shouldEqual` 1
     length r.divergences `shouldEqual` 0
 
   it "single-facet service is quiet (D-E2: absence is not drift)" do
-    let r = reconcile Map.empty [ inst { project = Just (mkProjectSlug "solo"), role = mkRole "api" } ]
+    let r = reconcile Map.empty [ inst { project = Just (mkProjectId "solo"), role = mkRole "api" } ]
     length r.conflicts `shouldEqual` 0
     length r.divergences `shouldEqual` 0
 
@@ -183,12 +183,12 @@ spec = describe "Bosun.Reconcile" do
         r = reconcile aliases [ tiltedRegistry, tiltedCompose ]
         out = renderReport { conflicts: r.conflicts, divergences: r.divergences } []
       contains (Pattern "FACET DIVERGENCE") out `shouldEqual` true
-      contains (Pattern "uniform-romeo-romeo-juliet:frontend has 2") out `shouldEqual` true
+      contains (Pattern "82:frontend has 2") out `shouldEqual` true
 
     it "renders a within-facet conflict under CONFLICTS" do
       let
-        a = inst { project = Just (mkProjectSlug "p"), role = mkRole "api", reachability = hostPort (port_ 3013) }
-        b = inst { source = FromCompose, project = Just (mkProjectSlug "p"), role = mkRole "api", reachability = hostPort (port_ 3014) }
+        a = inst { project = Just (mkProjectId "p"), role = mkRole "api", reachability = hostPort (port_ 3013) }
+        b = inst { source = FromCompose, project = Just (mkProjectId "p"), role = mkRole "api", reachability = hostPort (port_ 3014) }
         r = reconcile Map.empty [ a, b ]
         out = renderReport { conflicts: r.conflicts, divergences: r.divergences } []
       contains (Pattern "CONFLICTS") out `shouldEqual` true

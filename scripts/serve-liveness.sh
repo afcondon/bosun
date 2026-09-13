@@ -87,10 +87,10 @@ rm -rf "$WORK"; mkdir -p "$WORK"
 echo "<!doctype html><title>liveness</title><h1>ok</h1>" > "$WORK/index.html"
 cat > "$REG" <<JSON
 { "servers": [
-  { "id": 1, "projectSlug": "liveness", "projectName": "liveness", "role": "adopted",
+  { "id": 1, "projectId": "liveness", "projectName": "liveness", "role": "adopted",
     "port": $PORT_A, "host": "mbp", "environment": "native",
     "startCommand": "cd $WORK && python3 -m http.server $PORT_A --bind 127.0.0.1" },
-  { "id": 2, "projectSlug": "liveness", "projectName": "liveness", "role": "orphan",
+  { "id": 2, "projectId": "liveness", "projectName": "liveness", "role": "orphan",
     "port": $PORT_B, "host": "mbp", "environment": "native",
     "startCommand": "cd $WORK && python3 -m http.server $PORT_B --bind 127.0.0.1" }
 ], "count": 2 }

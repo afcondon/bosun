@@ -23,7 +23,7 @@ module Bosun.Conformance.ServeMain where
 
 import Prelude
 
-import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkHost, mkPort, mkProjectSlug)
+import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkHost, mkPort, mkProjectId)
 import Bosun.Executor (Executor(..))
 import Bosun.Reachability (hostPort)
 import Bosun.Health (BaseRestart(..), Probe(..))
@@ -63,7 +63,7 @@ helloFixture = [ server "serve-go-site" "site" 8775 ]
 server :: String -> String -> Int -> ServiceInstance
 server name role port =
   { source: FromRegistry
-  , project: Just (mkProjectSlug "servego")
+  , project: Just (mkProjectId "servego")
   , localName: name
   , role: mkRole role
   , host: Just (mkHost "mbp")

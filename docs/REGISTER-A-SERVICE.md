@@ -9,7 +9,7 @@ model behind it is `MARGINALIA-SEAM.md`, the router itself is `BOSUN-SERVE.md`.
 
 To add a service to the running `bosun serve` router, **POST one request to the
 chair-server on `:3022`**. It assigns the id, denormalises the project
-name/slug from Marginalia, atomically writes `registry/fleet.json`, asks the
+name from Marginalia, atomically writes `registry/fleet.json`, asks the
 router to re-admit the new route immediately — and **tells you whether that
 worked**.
 
@@ -42,7 +42,7 @@ exposes over an HTTP API shape-compatible with Marginalia's old `/api/ports`.
 
 Marginalia is still in the loop for **project identity**: the chair-server POST
 looks up the Marginalia project by id to denormalise `projectName` +
-`projectSlug` into the row. So the project must exist in Marginalia (intent),
+`projectName` into the row. So the project must exist in Marginalia (intent),
 but its *server* row lives in Bosun (ops).
 
 > **Gotcha that bites:** `GET :3100/api/ports/suggest` (Marginalia's DB) and
@@ -76,7 +76,7 @@ The `POST` body mirrors the old Marginalia server shape:
   "environment": "native" }
 ```
 
-`id`, `projectId`, `projectName`, `projectSlug` are filled in by the server —
+`id`, `projectId`, `projectName` are filled in by the server —
 don't send them.
 
 ## Procedure
@@ -137,8 +137,8 @@ don't send them.
    `.brokered`, not `.routes`, and the public port answers `307` rather than
    the service:
    ```sh
-   curl -s :3997/state | jq '.brokered[] | select(.serviceId=="<slug>:<role>")'
-   curl -s :3997/where/<slug>:<role> | jq       # starts it, then says where it is
+   curl -s :3997/state | jq '.brokered[] | select(.serviceId=="<projectId>:<role>")'
+   curl -s :3997/where/<projectId>:<role> | jq  # starts it, then says where it is
    ```
 
 ## Worked example — a static site (liquid-purescript docs, 2026-07-05)
@@ -173,7 +173,7 @@ is the zero-dependency alternative).
 `registry/fleet.json` is git-tracked — its history is the audit trail. By
 **decision D-G1** (`DECISIONS.md`), the write-owner commits: chair-server
 git-adds and commits `fleet.json` right after each write, one commit per
-registration, message `registry: <verb> <role> <slug> @<port>`, local, no push.
+registration, message `registry: <verb> <role> <projectId> @<port>`, local, no push.
 
 **Until that lands in chair-server, commit by hand with the same format:**
 
@@ -229,7 +229,7 @@ partially done, which this doc is part of):
 
 ## Stopping and starting one route (verified 2026-08-19, extended 2026-08-24)
 
-The router's control verbs take a **public port**. `?service=<projectSlug:role>`
+The router's control verbs take a **public port**. `?service=<projectId:role>`
 is now accepted beside it — it used to answer `no proxy route on :0`, which is
 easy to misread as the service being absent when the id is right there in
 `/state`. It is also the only way to address a **brokered** daemon that holds no

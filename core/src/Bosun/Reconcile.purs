@@ -38,7 +38,7 @@ import Prelude
 
 import Bosun.Artifact (Artifact, ArtifactConsensus(..), artifactConsensus, artifactOf)
 import Control.Alt ((<|>))
-import Bosun.Atoms (Host, RoutePath, ServiceId, mkServiceId, unAbsPath, unDomain, unPort, unProjectSlug, unRoutePath)
+import Bosun.Atoms (Host, RoutePath, ServiceId, mkServiceId, unAbsPath, unDomain, unPort, unProjectId, unRoutePath)
 import Bosun.Error (DeployError(..))
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ExecutorMechanism, mechanism)
 import Bosun.Exposure (Exposure(..))
@@ -61,9 +61,9 @@ import Data.String (Pattern(..))
 import Data.String as String
 import Data.Tuple (Tuple(..), fst, snd, uncurry)
 
--- | localName (or registry slug) → the canonical `ServiceId` it belongs to.
+-- | localName (or registry project name) → the canonical `ServiceId` it belongs to.
 -- | The cross-source bridge: compose's `tidal-frontend` and the registry's
--- | `uniform-romeo-romeo-juliet:frontend` only group via an alias entry.
+-- | `82:frontend` only group via an alias entry.
 type AliasMap = Map String ServiceId
 
 type FacetKey = { host :: Maybe Host, mechanism :: ExecutorMechanism }
@@ -143,11 +143,23 @@ reconcile aliases insts =
       (Map.toUnfoldable byFacet :: Array (Tuple FacetKey (Array ServiceInstance)))
         # A.mapMaybe (\(Tuple _ fis) -> A.head fis >>= artifactFor)
 
+-- | The identity a loose instance is filed under: an alias if one canonicalises
+-- | it, else `<project>:<role>`, else the bare `localName`.
+-- |
+-- | That last fallback is the hazard the whole field exists around, and it was
+-- | the one thing the 2026-09-13 slug→id migration had to not trip over. It is
+-- | not an error path — an instance with no project is legitimately keyed by
+-- | its own name (a compose-only group does exactly this) — so a source that
+-- | STOPS supplying the project field does not fail here. It quietly re-keys
+-- | every one of its services into a second namespace, and reconcile then sees
+-- | two unrelated sets of ids where it used to see facets of one service. No
+-- | diagnostic anywhere says so. The defence is upstream, in the adapter: read
+-- | one field name, never fall back to another.
 identityOf :: AliasMap -> ServiceInstance -> ServiceId
 identityOf aliases si = case Map.lookup si.localName aliases of
   Just canonical -> canonical
   Nothing -> case si.project of
-    Just slug -> mkServiceId (unProjectSlug slug <> ":" <> unRole si.role)
+    Just pid -> mkServiceId (unProjectId pid <> ":" <> unRole si.role)
     Nothing -> mkServiceId si.localName
 
 facetKeyOf :: ServiceInstance -> FacetKey
@@ -267,7 +279,7 @@ buildAliases insts =
 
 canonId :: ServiceInstance -> ServiceId
 canonId si = case si.project of
-  Just slug -> mkServiceId (unProjectSlug slug <> ":" <> unRole si.role)
+  Just pid -> mkServiceId (unProjectId pid <> ":" <> unRole si.role)
   Nothing -> mkServiceId si.localName
 
 dirKey :: ServiceInstance -> Maybe String

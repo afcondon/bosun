@@ -1,4 +1,4 @@
 { "servers": [
-  { "role": "frontend", "projectName": "café-señor", "projectSlug": "café-🚀", "port": 3070, "host": "mbp",
+  { "role": "frontend", "projectName": "café-señor", "projectId": "café-🚀", "port": 3070, "host": "mbp",
     "startCommand": "cd /srv/u && run -p 3070" }
 ] }

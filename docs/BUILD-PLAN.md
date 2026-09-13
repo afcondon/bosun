@@ -68,7 +68,7 @@ test suite.
 **Goal:** the type design from `DESIGN.md §3` as compiling code — no logic yet.
 
 - Atoms with smart ctors: `Port`, `AbsPath`, `Host` (opaque!), `Domain`,
-  `RoutePath`, `EnvVar`, `ProjectSlug`, `ServiceId`.
+  `RoutePath`, `EnvVar`, `ProjectId`, `ServiceId`.
 - The closed ADTs: `Executor` (+`ContainerSpec`), `Exposure`, the **edge
   product** (`Ordering` ⟂ `Requirement` + `Provenance`), `Gate`, `Probe`,
   `Health`, `RestartPolicy`, `Selector`, `Source` (incl. `FromOverlay`).

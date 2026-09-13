@@ -8,7 +8,7 @@
 -- | migration moves /api/ports + write APIs here. `readFleet` / `writeFleet`
 -- | are the file-edge; `reloadBosunServe` nudges :3997 to re-admit; the
 -- | Marginalia project lookup is the one runtime cross-link Bosun keeps to
--- | denormalise projectName/projectSlug into fleet.json rows at POST time.
+-- | denormalise projectName into fleet.json rows at POST time.
 module Bosun.ChairServer.IO
   ( readYamlFile
   , readJsonFile

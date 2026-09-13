@@ -8,7 +8,7 @@
 -- |   #/ingestion              → the MISU ingestion ladder (pillar 1)
 -- |   #/cockpit                → the serve route table (pillar 0)
 -- |
--- | `GraphR` carries a project KEY (a url slug like `atlantis`), so a deep link
+-- | `GraphR` carries a project KEY (a url token like `atlantis`), so a deep link
 -- | lands straight on a chosen deployment — a test affordance and a real user
 -- | feature both.
 module Chair.Routes

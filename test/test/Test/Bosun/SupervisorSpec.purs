@@ -288,7 +288,7 @@ spec = describe "Bosun.Supervisor" do
     it "the exact canonical id is what the surface acts on" do
       addressService group "itajara:worker" `shouldEqual` Right (sid "itajara:worker")
 
-    it "a port is the ROUTER's key and can never be a service id" do
+    it "a number no service here answers to is the ROUTER's key, not a service id" do
       -- The trap itself: `?service=3028` on a group.
       addressService group "3028" `shouldEqual` Left (LooksLikePort 3028)
 
@@ -296,18 +296,35 @@ spec = describe "Bosun.Supervisor" do
       -- It used to land in the same sentence, with empty backticks.
       addressService group "" `shouldEqual` Left Unnamed
 
-    it "a bare slug where the group holds `slug:role` is a near miss, and is NAMED" do
+    it "a bare project where the group holds `<project>:<role>` is a near miss, and is NAMED" do
       addressService group "itajara" `shouldEqual` Left (NearMiss (sid "itajara:worker"))
 
-    it "and a `slug:role` where the group holds the bare compose name, the other way" do
+    it "and a `<project>:<role>` where the group holds the bare compose name, the other way" do
       addressService group "ticker:worker" `shouldEqual` Left (NearMiss (sid "ticker"))
+
+    -- Since 2026-09-13 a Marginalia-fed group keys on the numeric project id
+    -- (`35:frontend`), so the bare-project spelling an operator reaches for is
+    -- itself a number — and the port check used to swallow it before near-miss
+    -- matching ever ran. A number the group can account for is now read as the
+    -- project; only a number nothing here answers to is read as a port.
+    it "a bare project id is a near miss, not a port, when the group holds it" do
+      let numeric = [ sid "35:api", sid "82:frontend" ]
+      addressService numeric "82" `shouldEqual` Left (NearMiss (sid "82:frontend"))
+
+    it "and a number the group cannot account for is still read as a port" do
+      let numeric = [ sid "35:api", sid "82:frontend" ]
+      addressService numeric "3028" `shouldEqual` Left (LooksLikePort 3028)
+
+    it "an exact numeric id is acted on, not diagnosed" do
+      let numeric = [ sid "35:api", sid "82:frontend" ]
+      addressService numeric "35:api" `shouldEqual` Right (sid "35:api")
 
     it "a near miss is REPORTED, never acted on — no Right comes back from one" do
       -- A control surface that restarts something other than what it was asked
       -- for is the habit these refusals exist to prevent.
       addressService group "itajara" `shouldNotEqual` Right (sid "itajara:worker")
 
-    it "two services under one slug is a different answer again: name which" do
+    it "two services under one project is a different answer again: name which" do
       let two = [ sid "polyglot:site", sid "polyglot:api" ]
       addressService two "polyglot" `shouldEqual` Left (Ambiguous [ sid "polyglot:site", sid "polyglot:api" ])
 

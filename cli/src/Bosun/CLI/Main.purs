@@ -40,7 +40,7 @@ import Bosun.Adapters.Registry (ingestRegistry)
 import Bosun.Adapters.Targets (ingestTargets)
 import Bosun.Apply (Command(..), StagedCommand, applyScript, downScript)
 import Bosun.Target (TargetMap, defaultTargets)
-import Bosun.Atoms (AbsPath, Port, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkServiceId, unServiceId)
+import Bosun.Atoms (AbsPath, Port, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectId, mkServiceId, unServiceId)
 import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (argv, readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeSnapshot)
@@ -414,7 +414,7 @@ runDemo = do
   log ("bosun " <> version <> " — check (built-in §7 fixture)")
   log ""
   let
-    aliases = Map.singleton "tidal-frontend" (mkServiceId "uniform-romeo-romeo-juliet:frontend")
+    aliases = Map.singleton "tidal-frontend" (mkServiceId "82:frontend")
     r = reconcile aliases fixture
     vErrors = either identity (const []) (toEither (validate r.deployment))
   log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
@@ -423,7 +423,7 @@ fixture :: Array ServiceInstance
 fixture =
   [ inst
       { source = FromRegistry
-      , project = Just (mkProjectSlug "uniform-romeo-romeo-juliet")
+      , project = Just (mkProjectId "82")
       , localName = "psd3-tilted-radio"
       , host = Just (mkHost "mbp")
       , executor = Process { cwd: absPath "/Users/afc/work/afc-work/purescript-hylograph-showcases/psd3-tilted-radio", command: "npx serve", env: [] }
@@ -438,7 +438,7 @@ fixture =
       }
   , inst
       { source = FromRegistry
-      , project = Just (mkProjectSlug "minard")
+      , project = Just (mkProjectId "35")
       , localName = "minard-backend"
       , role = mkRole "api"
       , host = Just (mkHost "mbp")
@@ -446,11 +446,11 @@ fixture =
       }
   , inst
       { source = FromRegistry
-      , project = Just (mkProjectSlug "minard")
+      , project = Just (mkProjectId "35")
       , localName = "minard-frontend"
       , host = Just (mkHost "mbp")
       , reachability = hostPort (port_ 3001)
-      , rawDeps = [ { to: "minard:api", ordering: Nothing, requirement: Just (Requires OnHealthy) } ]
+      , rawDeps = [ { to: "35:api", ordering: Nothing, requirement: Just (Requires OnHealthy) } ]
       }
   ]
 

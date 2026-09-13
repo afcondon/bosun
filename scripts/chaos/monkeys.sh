@@ -35,14 +35,14 @@ flunk() { echo "  ✗ $1"; fail=1; }
 writeReg() {  # $1 = include the "extra" flapping service?
   cat > "$REG" <<JSON
 { "servers": [
-  { "role": "web", "projectName": "good-svc", "projectSlug": "good-svc", "port": $GOOD, "host": "mbp",
+  { "role": "web", "projectName": "good-svc", "projectId": "good-svc", "port": $GOOD, "host": "mbp",
     "startCommand": "cd /tmp && python3 -m http.server $GOOD" },
-  { "role": "web", "projectName": "slow-svc", "projectSlug": "slow-svc", "port": $SLOW, "host": "mbp",
+  { "role": "web", "projectName": "slow-svc", "projectId": "slow-svc", "port": $SLOW, "host": "mbp",
     "startCommand": "cd $BOSUN && python3 scripts/chaos/slow-backend.py $SLOW" },
-  { "role": "web", "projectName": "die-svc", "projectSlug": "die-svc", "port": $DIE, "host": "mbp",
+  { "role": "web", "projectName": "die-svc", "projectId": "die-svc", "port": $DIE, "host": "mbp",
     "startCommand": "cd $BOSUN && python3 scripts/chaos/die-backend.py $DIE" }$(
   [ "${1:-}" = "extra" ] && echo ',
-  { "role": "web", "projectName": "extra-svc", "projectSlug": "extra-svc", "port": 8213, "host": "mbp",
+  { "role": "web", "projectName": "extra-svc", "projectId": "extra-svc", "port": 8213, "host": "mbp",
     "startCommand": "cd /tmp && python3 -m http.server 8213" }')
 ] }
 JSON

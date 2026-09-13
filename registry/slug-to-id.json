@@ -1,0 +1,1767 @@
+{
+  "_note": [
+    "Marginalia project slug -> numeric project id, captured 2026-09-13 from",
+    "GET http://andrews-mac-mini:3100/api/projects immediately BEFORE the slug",
+    "column was dropped. This file is the only remaining record of that mapping:",
+    "the tracker no longer stores slugs and no API can resolve one.",
+    "",
+    "Bosun keyed every ServiceId on <projectSlug>:<role> until this date and now",
+    "keys on <projectId>:<role>. To read any pre-2026-09-13 Bosun output, log",
+    "line, golden file or worklog entry that names a service, translate through",
+    "this table. To reverse the migration, translate the other way.",
+    "",
+    "'appearedIn' marks the slugs that were actually written down inside this",
+    "repo: 'fleet' = registry/fleet.json, 'corpus-2026-06-14' = the frozen",
+    "snapshot fixture (which still carries its slugs verbatim, now read by",
+    "nothing). The rest are here because the mapping is only useful whole."
+  ],
+  "capturedAt": "2026-09-13",
+  "source": "http://andrews-mac-mini:3100/api/projects",
+  "count": 272,
+  "slugsInRepoWithNoLiveProject": [],
+  "mappings": [
+    {
+      "slug": "kilo-alpha-tango-zulu",
+      "projectId": 1,
+      "name": "Release Plan 2026",
+      "appearedIn": []
+    },
+    {
+      "slug": "zulu-golf-bravo-november",
+      "projectId": 2,
+      "name": "ShapedSteer Intensive",
+      "appearedIn": []
+    },
+    {
+      "slug": "lima-lima-zulu-november",
+      "projectId": 3,
+      "name": "ShapedSteer Pre-work",
+      "appearedIn": []
+    },
+    {
+      "slug": "uniform-golf-echo-hotel",
+      "projectId": 5,
+      "name": "Infovore Data Sources",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "uniform-foxtrot-alpha-uniform",
+      "projectId": 6,
+      "name": "Minard Architectural Enforcement",
+      "appearedIn": []
+    },
+    {
+      "slug": "papa-uniform-echo-quebec",
+      "projectId": 7,
+      "name": "Code Explorer Evolution",
+      "appearedIn": []
+    },
+    {
+      "slug": "hotel-delta-uniform-sierra",
+      "projectId": 8,
+      "name": "CE2 Scene Development",
+      "appearedIn": []
+    },
+    {
+      "slug": "delta-whiskey-victor-lima",
+      "projectId": 9,
+      "name": "CE2 State Machine Refactor",
+      "appearedIn": []
+    },
+    {
+      "slug": "victor-echo-tango-victor",
+      "projectId": 10,
+      "name": "Minard AI Collaboration",
+      "appearedIn": []
+    },
+    {
+      "slug": "bravo-kilo-sierra-delta",
+      "projectId": 12,
+      "name": "D3 Dependency Reduction",
+      "appearedIn": []
+    },
+    {
+      "slug": "hotel-alpha-echo-mike",
+      "projectId": 13,
+      "name": "D3 Migration Audit",
+      "appearedIn": []
+    },
+    {
+      "slug": "kilo-uniform-zulu-echo",
+      "projectId": 14,
+      "name": "Kernel Separation Phase 2",
+      "appearedIn": []
+    },
+    {
+      "slug": "india-yankee-delta-quebec",
+      "projectId": 16,
+      "name": "Principled AST Design v2",
+      "appearedIn": []
+    },
+    {
+      "slug": "hotel-bravo-uniform-charlie",
+      "projectId": 17,
+      "name": "Finally-Tagless AST",
+      "appearedIn": []
+    },
+    {
+      "slug": "romeo-romeo-tango-romeo",
+      "projectId": 19,
+      "name": "WASM Canvas Enhancement",
+      "appearedIn": []
+    },
+    {
+      "slug": "sierra-mike-tango-victor",
+      "projectId": 22,
+      "name": "Hylograph Tour Structures",
+      "appearedIn": []
+    },
+    {
+      "slug": "delta-sierra-xray-foxtrot",
+      "projectId": 23,
+      "name": "Type Explorer",
+      "appearedIn": []
+    },
+    {
+      "slug": "mike-alpha-november-quebec",
+      "projectId": 24,
+      "name": "Unified DAG Vision",
+      "appearedIn": []
+    },
+    {
+      "slug": "xray-foxtrot-juliet-uniform",
+      "projectId": 25,
+      "name": "MVP Verticals",
+      "appearedIn": []
+    },
+    {
+      "slug": "uniform-delta-quebec-foxtrot",
+      "projectId": 26,
+      "name": "Functional Spreadsheet",
+      "appearedIn": []
+    },
+    {
+      "slug": "echo-india-quebec-echo",
+      "projectId": 27,
+      "name": "Typed Cells Design",
+      "appearedIn": []
+    },
+    {
+      "slug": "charlie-november-uniform-tango",
+      "projectId": 28,
+      "name": "Async Evaluation Architecture",
+      "appearedIn": []
+    },
+    {
+      "slug": "foxtrot-echo-tango-zulu",
+      "projectId": 29,
+      "name": "Unified Data DSL",
+      "appearedIn": []
+    },
+    {
+      "slug": "romeo-charlie-echo-delta",
+      "projectId": 30,
+      "name": "MC6 SysEx Programming",
+      "appearedIn": []
+    },
+    {
+      "slug": "india-juliet-kilo-victor",
+      "projectId": 32,
+      "name": "Beads Viz Showcase",
+      "appearedIn": []
+    },
+    {
+      "slug": "oscar-uniform-sierra-bravo",
+      "projectId": 33,
+      "name": "Claude Code PureScript skills",
+      "appearedIn": []
+    },
+    {
+      "slug": "papa-xray-alpha-kilo",
+      "projectId": 34,
+      "name": "L-Systems Visualization",
+      "appearedIn": []
+    },
+    {
+      "slug": "sierra-tango-golf-bravo",
+      "projectId": 35,
+      "name": "minard",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "charlie-hotel-victor-alpha",
+      "projectId": 36,
+      "name": "minard-06dee49",
+      "appearedIn": []
+    },
+    {
+      "slug": "mike-alpha-alpha-bravo",
+      "projectId": 37,
+      "name": "pausanias",
+      "appearedIn": []
+    },
+    {
+      "slug": "alpha-hotel-echo-zulu",
+      "projectId": 43,
+      "name": "purescript-html-parser-halogen",
+      "appearedIn": []
+    },
+    {
+      "slug": "whiskey-foxtrot-zulu-hotel",
+      "projectId": 46,
+      "name": "HeresiarchHalogen",
+      "appearedIn": []
+    },
+    {
+      "slug": "yankee-echo-foxtrot-charlie",
+      "projectId": 47,
+      "name": "PSD3-Repos",
+      "appearedIn": []
+    },
+    {
+      "slug": "mike-victor-bravo-uniform",
+      "projectId": 48,
+      "name": "PureScript Tagless D3 2025",
+      "appearedIn": []
+    },
+    {
+      "slug": "romeo-delta-delta-kilo",
+      "projectId": 49,
+      "name": "codex",
+      "appearedIn": []
+    },
+    {
+      "slug": "mike-november-uniform-papa",
+      "projectId": 50,
+      "name": "purescript-d3-tagless-II",
+      "appearedIn": []
+    },
+    {
+      "slug": "romeo-yankee-whiskey-sierra",
+      "projectId": 51,
+      "name": "hylograph-howto",
+      "appearedIn": []
+    },
+    {
+      "slug": "india-xray-delta-mike",
+      "projectId": 52,
+      "name": "cloudflare-sites",
+      "appearedIn": []
+    },
+    {
+      "slug": "oscar-victor-golf-quebec",
+      "projectId": 53,
+      "name": "mattermost-tailscale",
+      "appearedIn": []
+    },
+    {
+      "slug": "quebec-echo-lima-zulu",
+      "projectId": 54,
+      "name": "nextcloud-mutual-backup",
+      "appearedIn": []
+    },
+    {
+      "slug": "tango-hotel-victor-victor",
+      "projectId": 55,
+      "name": "polyglot-deploy",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "zulu-quebec-bravo-victor",
+      "projectId": 56,
+      "name": "Pythia",
+      "appearedIn": []
+    },
+    {
+      "slug": "golf-foxtrot-bravo-november",
+      "projectId": 57,
+      "name": "purescript-hylograph-canvas",
+      "appearedIn": []
+    },
+    {
+      "slug": "xray-uniform-hotel-bravo",
+      "projectId": 58,
+      "name": "purescript-hylograph-d3-kernel",
+      "appearedIn": []
+    },
+    {
+      "slug": "victor-alpha-juliet-delta",
+      "projectId": 59,
+      "name": "purescript-hylograph-graph",
+      "appearedIn": []
+    },
+    {
+      "slug": "uniform-november-yankee-uniform",
+      "projectId": 60,
+      "name": "purescript-hylograph-layout",
+      "appearedIn": []
+    },
+    {
+      "slug": "xray-sierra-quebec-lima",
+      "projectId": 61,
+      "name": "purescript-hylograph-music",
+      "appearedIn": []
+    },
+    {
+      "slug": "juliet-lima-sierra-uniform",
+      "projectId": 62,
+      "name": "purescript-hylograph-optics",
+      "appearedIn": []
+    },
+    {
+      "slug": "zulu-juliet-hotel-kilo",
+      "projectId": 63,
+      "name": "purescript-hylograph-selection",
+      "appearedIn": []
+    },
+    {
+      "slug": "tango-xray-yankee-quebec",
+      "projectId": 64,
+      "name": "purescript-hylograph-simulation",
+      "appearedIn": []
+    },
+    {
+      "slug": "alpha-lima-hotel-alpha",
+      "projectId": 65,
+      "name": "purescript-hylograph-simulation-core",
+      "appearedIn": []
+    },
+    {
+      "slug": "tango-quebec-echo-quebec",
+      "projectId": 66,
+      "name": "purescript-hylograph-simulation-halogen",
+      "appearedIn": []
+    },
+    {
+      "slug": "whiskey-xray-bravo-uniform",
+      "projectId": 67,
+      "name": "purescript-hylograph-transitions",
+      "appearedIn": []
+    },
+    {
+      "slug": "india-alpha-india-kilo",
+      "projectId": 68,
+      "name": "purescript-hylograph-wasm-kernel",
+      "appearedIn": []
+    },
+    {
+      "slug": "echo-mike-delta-golf",
+      "projectId": 69,
+      "name": "purescript-sigil",
+      "appearedIn": []
+    },
+    {
+      "slug": "quebec-golf-oscar-lima",
+      "projectId": 70,
+      "name": "purescript-sigil-hats",
+      "appearedIn": []
+    },
+    {
+      "slug": "yankee-golf-hotel-oscar",
+      "projectId": 71,
+      "name": "allergy-outlay",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "papa-zulu-sierra-november",
+      "projectId": 72,
+      "name": "chimera-bestiary",
+      "appearedIn": []
+    },
+    {
+      "slug": "golf-romeo-victor-golf",
+      "projectId": 73,
+      "name": "emptier-coinage",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "romeo-oscar-echo-golf",
+      "projectId": 74,
+      "name": "halogen-spider",
+      "appearedIn": []
+    },
+    {
+      "slug": "bravo-sierra-charlie-foxtrot",
+      "projectId": 75,
+      "name": "hylograph-app",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "victor-golf-tango-sierra",
+      "projectId": 76,
+      "name": "hylograph-guide",
+      "appearedIn": []
+    },
+    {
+      "slug": "zulu-victor-hotel-india",
+      "projectId": 77,
+      "name": "hylograph-nn",
+      "appearedIn": []
+    },
+    {
+      "slug": "juliet-bravo-juliet-mike",
+      "projectId": 78,
+      "name": "polyglot-pythia-showcases",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "zulu-mike-november-quebec",
+      "projectId": 79,
+      "name": "psd3-arid-keystone",
+      "appearedIn": [
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "whiskey-yankee-juliet-kilo",
+      "projectId": 80,
+      "name": "psd3-lorenz-attractor",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "november-yankee-tango-uniform",
+      "projectId": 81,
+      "name": "The Morphism Zoo",
+      "appearedIn": []
+    },
+    {
+      "slug": "uniform-romeo-romeo-juliet",
+      "projectId": 82,
+      "name": "psd3-tilted-radio",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "sierra-lima-romeo-kilo",
+      "projectId": 83,
+      "name": "psd3-topics",
+      "appearedIn": []
+    },
+    {
+      "slug": "november-echo-papa-india",
+      "projectId": 84,
+      "name": "purescript-eco-saw",
+      "appearedIn": []
+    },
+    {
+      "slug": "whiskey-victor-uniform-november",
+      "projectId": 85,
+      "name": "purescript-makefile-parser",
+      "appearedIn": []
+    },
+    {
+      "slug": "uniform-whiskey-alpha-golf",
+      "projectId": 86,
+      "name": "scuppered-ligature",
+      "appearedIn": []
+    },
+    {
+      "slug": "victor-tango-november-zulu",
+      "projectId": 87,
+      "name": "simpsons-paradox",
+      "appearedIn": []
+    },
+    {
+      "slug": "alpha-papa-tango-victor",
+      "projectId": 88,
+      "name": "wasm-force-demo",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "oscar-golf-charlie-lima",
+      "projectId": 89,
+      "name": "beads-purs",
+      "appearedIn": []
+    },
+    {
+      "slug": "quebec-sierra-yankee-echo",
+      "projectId": 90,
+      "name": "purerl-tidal",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "mike-november-sierra-november",
+      "projectId": 91,
+      "name": "purescript-diagrams",
+      "appearedIn": []
+    },
+    {
+      "slug": "juliet-sierra-kilo-echo",
+      "projectId": 92,
+      "name": "purescript-linear",
+      "appearedIn": []
+    },
+    {
+      "slug": "foxtrot-bravo-victor-kilo",
+      "projectId": 93,
+      "name": "purescript-machines",
+      "appearedIn": []
+    },
+    {
+      "slug": "kilo-zulu-victor-echo",
+      "projectId": 94,
+      "name": "PureScript Registry Dashboard",
+      "appearedIn": []
+    },
+    {
+      "slug": "xray-delta-sierra-bravo",
+      "projectId": 95,
+      "name": "skill-tests",
+      "appearedIn": []
+    },
+    {
+      "slug": "charlie-oscar-lima-victor",
+      "projectId": 96,
+      "name": "worklog-server",
+      "appearedIn": []
+    },
+    {
+      "slug": "window-arch",
+      "projectId": 97,
+      "name": "Window arch",
+      "appearedIn": []
+    },
+    {
+      "slug": "how-about-if-the-front-panel-of-the-greenhouse-became-a-shad",
+      "projectId": 98,
+      "name": "How about if the front panel of the “greenhouse” became a shade for…",
+      "appearedIn": []
+    },
+    {
+      "slug": "torii-gate-plans",
+      "projectId": 99,
+      "name": "Torii Gate plans",
+      "appearedIn": []
+    },
+    {
+      "slug": "house-idea",
+      "projectId": 100,
+      "name": "House idea",
+      "appearedIn": []
+    },
+    {
+      "slug": "in-floor-wine-store",
+      "projectId": 101,
+      "name": "In-floor wine store",
+      "appearedIn": []
+    },
+    {
+      "slug": "furniture-clippings",
+      "projectId": 102,
+      "name": "Furniture clippings",
+      "appearedIn": []
+    },
+    {
+      "slug": "wraparound-balcony",
+      "projectId": 103,
+      "name": "Wraparound balcony",
+      "appearedIn": []
+    },
+    {
+      "slug": "semi-octagon-tiling-idea",
+      "projectId": 104,
+      "name": "Semi-octagon tiling idea",
+      "appearedIn": []
+    },
+    {
+      "slug": "things-for-electrician-to-do",
+      "projectId": 105,
+      "name": "Things for electrician to do",
+      "appearedIn": []
+    },
+    {
+      "slug": "nice-desk",
+      "projectId": 106,
+      "name": "Nice desk",
+      "appearedIn": []
+    },
+    {
+      "slug": "bench-for-downstairs-bathroom",
+      "projectId": 107,
+      "name": "Bench for downstairs bathroom",
+      "appearedIn": []
+    },
+    {
+      "slug": "coat-rack",
+      "projectId": 108,
+      "name": "Coat rack",
+      "appearedIn": []
+    },
+    {
+      "slug": "table-idea-from-kristen-dirksen-video",
+      "projectId": 109,
+      "name": "Table idea from Kristen Dirksen video",
+      "appearedIn": []
+    },
+    {
+      "slug": "polishing-encaustic-tiles",
+      "projectId": 110,
+      "name": "Polishing encaustic tiles",
+      "appearedIn": []
+    },
+    {
+      "slug": "ikea-malm-bed",
+      "projectId": 111,
+      "name": "IKEA malm bed",
+      "appearedIn": []
+    },
+    {
+      "slug": "track-lights",
+      "projectId": 112,
+      "name": "Track lights",
+      "appearedIn": []
+    },
+    {
+      "slug": "measurements-for-plant-stand-project",
+      "projectId": 113,
+      "name": "Measurements for plant stand project",
+      "appearedIn": []
+    },
+    {
+      "slug": "laser-cut-sun-screen-inspo-for-conservatory",
+      "projectId": 114,
+      "name": "Laser cut sun screen inspo for conservatory",
+      "appearedIn": []
+    },
+    {
+      "slug": "sisto-a-simple-piece-of-furniture-with-multiple-configuratio",
+      "projectId": 115,
+      "name": "Sisto: A Simple Piece of Furniture with Multiple Configurations - Core77",
+      "appearedIn": []
+    },
+    {
+      "slug": "designervictormanuel",
+      "projectId": 116,
+      "name": "designervictormanuel",
+      "appearedIn": []
+    },
+    {
+      "slug": "fionn-s-house-notes",
+      "projectId": 117,
+      "name": "Fionn’s house notes",
+      "appearedIn": []
+    },
+    {
+      "slug": "woodworking",
+      "projectId": 118,
+      "name": "Woodworking",
+      "appearedIn": []
+    },
+    {
+      "slug": "sofa-idea-from-youtube",
+      "projectId": 119,
+      "name": "Sofa idea from YouTube",
+      "appearedIn": []
+    },
+    {
+      "slug": "interesting-chair",
+      "projectId": 120,
+      "name": "interesting chair",
+      "appearedIn": []
+    },
+    {
+      "slug": "oscar-romeo-delta-uniform",
+      "projectId": 121,
+      "name": "Marginalia (Project Tracker)",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "glazing-the-corral",
+      "projectId": 122,
+      "name": "Glazing the Corral",
+      "appearedIn": []
+    },
+    {
+      "slug": "delta-charlie-echo-tango",
+      "projectId": 123,
+      "name": "Claude Inbox",
+      "appearedIn": []
+    },
+    {
+      "slug": "charlie-victor-bravo-echo",
+      "projectId": 124,
+      "name": "nodepad",
+      "appearedIn": []
+    },
+    {
+      "slug": "november-echo-delta-yankee",
+      "projectId": 125,
+      "name": "Hylograph",
+      "appearedIn": []
+    },
+    {
+      "slug": "alpha-xray-golf-xray",
+      "projectId": 126,
+      "name": "Hylograph Libraries",
+      "appearedIn": []
+    },
+    {
+      "slug": "uniform-alpha-oscar-juliet",
+      "projectId": 127,
+      "name": "Hylograph Showcases",
+      "appearedIn": []
+    },
+    {
+      "slug": "delta-echo-yankee-juliet",
+      "projectId": 128,
+      "name": "Hylograph Sites & Howto",
+      "appearedIn": []
+    },
+    {
+      "slug": "charlie-alpha-juliet-echo",
+      "projectId": 129,
+      "name": "PureScript Ports",
+      "appearedIn": []
+    },
+    {
+      "slug": "india-quebec-oscar-mike",
+      "projectId": 130,
+      "name": "PureScript Backends",
+      "appearedIn": []
+    },
+    {
+      "slug": "uniform-alpha-romeo-whiskey",
+      "projectId": 132,
+      "name": "ShapedSteer",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "kilo-tango-echo-mike",
+      "projectId": 133,
+      "name": "Humboldt",
+      "appearedIn": []
+    },
+    {
+      "slug": "lima-yankee-bravo-mike",
+      "projectId": 134,
+      "name": "Polyglot",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "tango-alpha-alpha-uniform",
+      "projectId": 135,
+      "name": "Little Snitch rules archive",
+      "appearedIn": []
+    },
+    {
+      "slug": "quebec-papa-oscar-charlie",
+      "projectId": 136,
+      "name": "Personal Infrastructure",
+      "appearedIn": []
+    },
+    {
+      "slug": "three-way-cross-lap-joint",
+      "projectId": 138,
+      "name": "Three-way cross-lap joint",
+      "appearedIn": []
+    },
+    {
+      "slug": "a-frame-tripod-joint",
+      "projectId": 139,
+      "name": "A-frame tripod joint",
+      "appearedIn": []
+    },
+    {
+      "slug": "triangular-dovetail-frame",
+      "projectId": 140,
+      "name": "Triangular dovetail frame",
+      "appearedIn": []
+    },
+    {
+      "slug": "crossed-leg-side-table",
+      "projectId": 141,
+      "name": "Crossed-leg side table",
+      "appearedIn": []
+    },
+    {
+      "slug": "victor-quebec-whiskey-quebec",
+      "projectId": 142,
+      "name": "blog.hylograph.net",
+      "appearedIn": []
+    },
+    {
+      "slug": "echo-romeo-hotel-romeo",
+      "projectId": 143,
+      "name": "Music Making",
+      "appearedIn": []
+    },
+    {
+      "slug": "alpha-victor-echo-kilo",
+      "projectId": 144,
+      "name": "Producing With Your Feet",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "uniform-bravo-delta-victor",
+      "projectId": 145,
+      "name": "ES-config",
+      "appearedIn": []
+    },
+    {
+      "slug": "xray-alpha-charlie-whiskey",
+      "projectId": 146,
+      "name": "NE Alia Firmware",
+      "appearedIn": []
+    },
+    {
+      "slug": "zulu-hotel-november-zulu",
+      "projectId": 147,
+      "name": "msm",
+      "appearedIn": []
+    },
+    {
+      "slug": "mike-whiskey-papa-tango",
+      "projectId": 148,
+      "name": "msm-web",
+      "appearedIn": []
+    },
+    {
+      "slug": "papa-uniform-india-oscar",
+      "projectId": 149,
+      "name": "tarot-music",
+      "appearedIn": []
+    },
+    {
+      "slug": "victor-romeo-charlie-bravo",
+      "projectId": 150,
+      "name": "purescript-hylograph-demos",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "sierra-bravo-alpha-foxtrot",
+      "projectId": 151,
+      "name": "Ableton archive triage",
+      "appearedIn": []
+    },
+    {
+      "slug": "india-uniform-hotel-alpha",
+      "projectId": 152,
+      "name": "hosta-atlas",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "oscar-mike-lima-zulu",
+      "projectId": 153,
+      "name": "Atreus keyboard customization",
+      "appearedIn": []
+    },
+    {
+      "slug": "echo-papa-echo-uniform",
+      "projectId": 154,
+      "name": "Subscription & Payments Tracker",
+      "appearedIn": []
+    },
+    {
+      "slug": "alpha-oscar-golf-juliet",
+      "projectId": 155,
+      "name": "Google sign-ins",
+      "appearedIn": []
+    },
+    {
+      "slug": "hosta-collection",
+      "projectId": 156,
+      "name": "Hosta Collection",
+      "appearedIn": []
+    },
+    {
+      "slug": "foxtrot-quebec-juliet-kilo",
+      "projectId": 157,
+      "name": "The Shavian Review",
+      "appearedIn": [
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "papa-whiskey-uniform-lima",
+      "projectId": 158,
+      "name": "Atelier",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "juliet-echo-lima-xray",
+      "projectId": 159,
+      "name": "hylograph-onion",
+      "appearedIn": []
+    },
+    {
+      "slug": "chair-idea",
+      "projectId": 160,
+      "name": "Chair idea",
+      "appearedIn": []
+    },
+    {
+      "slug": "delta-bravo-delta-uniform",
+      "projectId": 161,
+      "name": "Klapaucius",
+      "appearedIn": []
+    },
+    {
+      "slug": "xray-alpha-xray-alpha",
+      "projectId": 162,
+      "name": "Agent Skills",
+      "appearedIn": []
+    },
+    {
+      "slug": "charlie-bravo-golf-zulu",
+      "projectId": 163,
+      "name": "purescript-agent-skills",
+      "appearedIn": []
+    },
+    {
+      "slug": "tango-romeo-delta-november",
+      "projectId": 164,
+      "name": "duckdb-skills",
+      "appearedIn": []
+    },
+    {
+      "slug": "india-india-sierra-echo",
+      "projectId": 165,
+      "name": "marginalia-skills",
+      "appearedIn": []
+    },
+    {
+      "slug": "kilo-charlie-delta-papa",
+      "projectId": 166,
+      "name": "PWYF presets archive",
+      "appearedIn": []
+    },
+    {
+      "slug": "charlie-delta-tango-oscar",
+      "projectId": 167,
+      "name": "Connector inventory",
+      "appearedIn": []
+    },
+    {
+      "slug": "yankee-hotel-oscar-juliet",
+      "projectId": 168,
+      "name": "psd3-prim-zoo-mosh",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "quebec-charlie-romeo-xray",
+      "projectId": 169,
+      "name": "marginalia-gazetteer",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "november-uniform-hotel-romeo",
+      "projectId": 170,
+      "name": "de-Google, de-Apple, Deee-lite",
+      "appearedIn": []
+    },
+    {
+      "slug": "quebec-romeo-kilo-zulu",
+      "projectId": 171,
+      "name": "Forks & Clones",
+      "appearedIn": []
+    },
+    {
+      "slug": "hotel-charlie-bravo-tango",
+      "projectId": 172,
+      "name": "Archived projects",
+      "appearedIn": []
+    },
+    {
+      "slug": "echo-foxtrot-zulu-lima",
+      "projectId": 173,
+      "name": "World map bubbles",
+      "appearedIn": []
+    },
+    {
+      "slug": "bravo-tango-uniform-xray",
+      "projectId": 174,
+      "name": "Chart library",
+      "appearedIn": []
+    },
+    {
+      "slug": "quebec-alpha-mike-romeo",
+      "projectId": 175,
+      "name": "Hall of Fame website",
+      "appearedIn": []
+    },
+    {
+      "slug": "echo-bravo-victor-xray",
+      "projectId": 176,
+      "name": "Full WASM runtime for HATS",
+      "appearedIn": []
+    },
+    {
+      "slug": "quebec-yankee-delta-lima",
+      "projectId": 177,
+      "name": "atelier-skills",
+      "appearedIn": []
+    },
+    {
+      "slug": "echo-india-sierra-delta",
+      "projectId": 178,
+      "name": "plot-o-mat",
+      "appearedIn": []
+    },
+    {
+      "slug": "delta-yankee-tango-november",
+      "projectId": 179,
+      "name": "Specimen",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "victor-lima-uniform-november",
+      "projectId": 180,
+      "name": "Things programmers believe that are false",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "sierra-lima-tango-xray",
+      "projectId": 181,
+      "name": "State machines status widget",
+      "appearedIn": []
+    },
+    {
+      "slug": "victor-uniform-charlie-charlie",
+      "projectId": 182,
+      "name": "Home compute server",
+      "appearedIn": []
+    },
+    {
+      "slug": "sierra-november-mike-mike",
+      "projectId": 183,
+      "name": "nginx on MBP",
+      "appearedIn": []
+    },
+    {
+      "slug": "oscar-romeo-zulu-whiskey",
+      "projectId": 184,
+      "name": "SDI",
+      "appearedIn": [
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "india-papa-kilo-india",
+      "projectId": 185,
+      "name": "es9-daemon",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "sierra-lima-yankee-charlie",
+      "projectId": 186,
+      "name": "purerl-tidal Link spike (Rust)",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "xray-whiskey-uniform-foxtrot",
+      "projectId": 187,
+      "name": "purerl-tidal ES-9 config (PureScript)",
+      "appearedIn": []
+    },
+    {
+      "slug": "whiskey-oscar-yankee-oscar",
+      "projectId": 188,
+      "name": "Shared human/Claude KB conventions",
+      "appearedIn": []
+    },
+    {
+      "slug": "charlie-uniform-whiskey-zulu",
+      "projectId": 189,
+      "name": "purerl-tidal FH-2 config (PureScript)",
+      "appearedIn": []
+    },
+    {
+      "slug": "bravo-golf-delta-foxtrot",
+      "projectId": 190,
+      "name": "Modular rig control surface",
+      "appearedIn": []
+    },
+    {
+      "slug": "charlie-india-charlie-november",
+      "projectId": 191,
+      "name": "DeepStar",
+      "appearedIn": [
+        "fleet"
+      ]
+    },
+    {
+      "slug": "romeo-sierra-yankee-uniform",
+      "projectId": 192,
+      "name": "Calypso",
+      "appearedIn": []
+    },
+    {
+      "slug": "oscar-yankee-juliet-mike",
+      "projectId": 193,
+      "name": "Raker",
+      "appearedIn": []
+    },
+    {
+      "slug": "vichy-lights",
+      "projectId": 194,
+      "name": "Vichy lights",
+      "appearedIn": []
+    },
+    {
+      "slug": "foxtrot-yankee-india-hotel",
+      "projectId": 195,
+      "name": "The Elements of PureScript Style",
+      "appearedIn": []
+    },
+    {
+      "slug": "golf-kilo-india-papa",
+      "projectId": 196,
+      "name": "The Prelude",
+      "appearedIn": []
+    },
+    {
+      "slug": "wooden-nas-stand",
+      "projectId": 197,
+      "name": "Wooden NAS Stand",
+      "appearedIn": []
+    },
+    {
+      "slug": "uniform-victor-echo-oscar",
+      "projectId": 198,
+      "name": "Culler",
+      "appearedIn": []
+    },
+    {
+      "slug": "alpha-whiskey-whiskey-quebec",
+      "projectId": 199,
+      "name": "THis is a project",
+      "appearedIn": []
+    },
+    {
+      "slug": "charlie-alpha-bravo-charlie",
+      "projectId": 200,
+      "name": "Music-HATS — hylomorphic AST as live-coding DSL",
+      "appearedIn": []
+    },
+    {
+      "slug": "juliet-juliet-november-alpha",
+      "projectId": 201,
+      "name": "Narrow-grant file daemon for Infovore-served files",
+      "appearedIn": []
+    },
+    {
+      "slug": "lima-oscar-romeo-uniform",
+      "projectId": 202,
+      "name": "Multi-host topology — schema + tooling",
+      "appearedIn": []
+    },
+    {
+      "slug": "yankee-kilo-xray-victor",
+      "projectId": 203,
+      "name": "Marginalia migration to MacMini (in-place replace demo)",
+      "appearedIn": []
+    },
+    {
+      "slug": "november-tango-november-alpha",
+      "projectId": 204,
+      "name": "Sell Pedals and Modules",
+      "appearedIn": []
+    },
+    {
+      "slug": "quebec-echo-alpha-whiskey",
+      "projectId": 205,
+      "name": "PureScript machine",
+      "appearedIn": []
+    },
+    {
+      "slug": "xray-victor-charlie-mike",
+      "projectId": 206,
+      "name": "Investigate MCT",
+      "appearedIn": []
+    },
+    {
+      "slug": "juliet-tango-papa-november",
+      "projectId": 207,
+      "name": "fh2-measure",
+      "appearedIn": []
+    },
+    {
+      "slug": "lima-papa-alpha-quebec",
+      "projectId": 208,
+      "name": "purerl-leaf-edit-benchmark",
+      "appearedIn": []
+    },
+    {
+      "slug": "bravo-golf-foxtrot-victor",
+      "projectId": 209,
+      "name": "atlantis-site",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "echo-yankee-uniform-alpha",
+      "projectId": 210,
+      "name": "Virtual modules commercial spin-out",
+      "appearedIn": []
+    },
+    {
+      "slug": "november-victor-lima-whiskey",
+      "projectId": 211,
+      "name": "Portolan",
+      "appearedIn": []
+    },
+    {
+      "slug": "alpha-india-yankee-november",
+      "projectId": 212,
+      "name": "Minard Family",
+      "appearedIn": []
+    },
+    {
+      "slug": "foxtrot-xray-charlie-romeo",
+      "projectId": 213,
+      "name": "Minard-Rust",
+      "appearedIn": []
+    },
+    {
+      "slug": "oscar-charlie-xray-kilo",
+      "projectId": 214,
+      "name": "Minard-Python",
+      "appearedIn": []
+    },
+    {
+      "slug": "zulu-sierra-sierra-yankee",
+      "projectId": 215,
+      "name": "Minard-Node",
+      "appearedIn": []
+    },
+    {
+      "slug": "bravo-uniform-victor-oscar",
+      "projectId": 216,
+      "name": "Notothenia",
+      "appearedIn": []
+    },
+    {
+      "slug": "alpha-mike-juliet-yankee",
+      "projectId": 217,
+      "name": "Ariadne",
+      "appearedIn": []
+    },
+    {
+      "slug": "yankee-mike-bravo-bravo",
+      "projectId": 218,
+      "name": "PureScript Petri Nets",
+      "appearedIn": []
+    },
+    {
+      "slug": "xray-november-uniform-foxtrot",
+      "projectId": 219,
+      "name": "Jurist",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "echo-tango-juliet-charlie",
+      "projectId": 220,
+      "name": "PureScript backends comparison site",
+      "appearedIn": []
+    },
+    {
+      "slug": "bravo-juliet-echo-quebec",
+      "projectId": 222,
+      "name": "Plimsoll",
+      "appearedIn": []
+    },
+    {
+      "slug": "oscar-quebec-echo-xray",
+      "projectId": 223,
+      "name": "Atlantis",
+      "appearedIn": []
+    },
+    {
+      "slug": "delta-echo-romeo-quebec",
+      "projectId": 224,
+      "name": "MacMini service supervision",
+      "appearedIn": []
+    },
+    {
+      "slug": "juliet-quebec-mike-zulu",
+      "projectId": 225,
+      "name": "purescript-backend-wasm",
+      "appearedIn": []
+    },
+    {
+      "slug": "oscar-xray-kilo-delta",
+      "projectId": 226,
+      "name": "signal-box",
+      "appearedIn": [
+        "fleet",
+        "corpus-2026-06-14"
+      ]
+    },
+    {
+      "slug": "papa-sierra-oscar-papa",
+      "projectId": 227,
+      "name": "Bosun",
+      "appearedIn": [
+        "fleet"
+      ]
+    },
+    {
+      "slug": "lima-hotel-hotel-whiskey",
+      "projectId": 228,
+      "name": "Websites",
+      "appearedIn": []
+    },
+    {
+      "slug": "foxtrot-golf-romeo-hotel",
+      "projectId": 229,
+      "name": "GitHub Pages",
+      "appearedIn": []
+    },
+    {
+      "slug": "delta-tango-uniform-charlie",
+      "projectId": 230,
+      "name": "hylograph.net",
+      "appearedIn": []
+    },
+    {
+      "slug": "hotel-sierra-uniform-juliet",
+      "projectId": 231,
+      "name": "polyglot.hylograph.net",
+      "appearedIn": []
+    },
+    {
+      "slug": "india-quebec-foxtrot-whiskey",
+      "projectId": 232,
+      "name": "andrewcondon.com",
+      "appearedIn": []
+    },
+    {
+      "slug": "tango-golf-oscar-hotel",
+      "projectId": 233,
+      "name": "heresiarch.com",
+      "appearedIn": []
+    },
+    {
+      "slug": "alpha-victor-yankee-lima",
+      "projectId": 234,
+      "name": "signal-box.hylograph.net",
+      "appearedIn": []
+    },
+    {
+      "slug": "sierra-november-kilo-kilo",
+      "projectId": 235,
+      "name": "Minard for Marginalia",
+      "appearedIn": []
+    },
+    {
+      "slug": "kilo-tango-victor-foxtrot",
+      "projectId": 236,
+      "name": "Bosun's Chair",
+      "appearedIn": [
+        "fleet"
+      ]
+    },
+    {
+      "slug": "india-uniform-whiskey-lima",
+      "projectId": 237,
+      "name": "Slug removal (Marginalia + Bosun)",
+      "appearedIn": []
+    },
+    {
+      "slug": "oscar-mike-xray-yankee",
+      "projectId": 238,
+      "name": "Quartermaster",
+      "appearedIn": []
+    },
+    {
+      "slug": "hotel-golf-victor-romeo",
+      "projectId": 239,
+      "name": "Polyglot Template",
+      "appearedIn": []
+    },
+    {
+      "slug": "victor-alpha-romeo-victor",
+      "projectId": 240,
+      "name": "Triggerfish",
+      "appearedIn": [
+        "fleet"
+      ]
+    },
+    {
+      "slug": "echo-lima-yankee-quebec",
+      "projectId": 241,
+      "name": "Binnacle",
+      "appearedIn": []
+    },
+    {
+      "slug": "whiskey-golf-oscar-lima",
+      "projectId": 242,
+      "name": "Hylograph Halogen UI",
+      "appearedIn": [
+        "fleet"
+      ]
+    },
+    {
+      "slug": "delta-alpha-bravo-xray",
+      "projectId": 243,
+      "name": "Vetula",
+      "appearedIn": []
+    },
+    {
+      "slug": "zulu-oscar-kilo-juliet",
+      "projectId": 244,
+      "name": "widgets.hylograph.net",
+      "appearedIn": []
+    },
+    {
+      "slug": "mike-november-juliet-lima",
+      "projectId": 245,
+      "name": "Sufflamen",
+      "appearedIn": []
+    },
+    {
+      "slug": "juliet-whiskey-papa-juliet",
+      "projectId": 246,
+      "name": "liquid-purescript",
+      "appearedIn": [
+        "fleet"
+      ]
+    },
+    {
+      "slug": "india-mike-november-delta",
+      "projectId": 247,
+      "name": "liquid-purescript.hylograph.net",
+      "appearedIn": []
+    },
+    {
+      "slug": "lima-zulu-sierra-oscar",
+      "projectId": 248,
+      "name": "Stellatus",
+      "appearedIn": []
+    },
+    {
+      "slug": "foxtrot-charlie-alpha-india",
+      "projectId": 249,
+      "name": "Stateless MacBook",
+      "appearedIn": []
+    },
+    {
+      "slug": "whiskey-sierra-zulu-echo",
+      "projectId": 250,
+      "name": "Amphora",
+      "appearedIn": [
+        "fleet"
+      ]
+    },
+    {
+      "slug": "kilo-papa-zulu-delta",
+      "projectId": 251,
+      "name": "kibitzer",
+      "appearedIn": [
+        "fleet"
+      ]
+    },
+    {
+      "slug": "quebec-tango-zulu-romeo",
+      "projectId": 252,
+      "name": "Harmonia",
+      "appearedIn": []
+    },
+    {
+      "slug": "uniform-november-whiskey-kilo",
+      "projectId": 253,
+      "name": "Baskerville",
+      "appearedIn": []
+    },
+    {
+      "slug": "echo-papa-mike-india",
+      "projectId": 254,
+      "name": "Waxseal",
+      "appearedIn": []
+    },
+    {
+      "slug": "charlie-quebec-charlie-juliet",
+      "projectId": 255,
+      "name": "jtms-make",
+      "appearedIn": []
+    },
+    {
+      "slug": "charlie-echo-kilo-mike",
+      "projectId": 256,
+      "name": "Native UI vessel evaluation",
+      "appearedIn": []
+    },
+    {
+      "slug": "bravo-hotel-bravo-uniform",
+      "projectId": 257,
+      "name": "purescript-order-theory",
+      "appearedIn": []
+    },
+    {
+      "slug": "romeo-zulu-india-yankee",
+      "projectId": 258,
+      "name": "warrant",
+      "appearedIn": []
+    },
+    {
+      "slug": "xray-tango-juliet-kilo",
+      "projectId": 259,
+      "name": "Nyx",
+      "appearedIn": []
+    },
+    {
+      "slug": "hotel-tango-papa-tango",
+      "projectId": 260,
+      "name": "Levantine",
+      "appearedIn": []
+    },
+    {
+      "slug": "charlie-bravo-sierra-foxtrot",
+      "projectId": 261,
+      "name": "Minard for Nix",
+      "appearedIn": []
+    },
+    {
+      "slug": "quebec-whiskey-uniform-charlie",
+      "projectId": 262,
+      "name": "Marquetry",
+      "appearedIn": [
+        "fleet"
+      ]
+    },
+    {
+      "slug": "lima-charlie-oscar-delta",
+      "projectId": 263,
+      "name": "propagator-economics",
+      "appearedIn": []
+    },
+    {
+      "slug": "xray-hotel-alpha-sierra",
+      "projectId": 264,
+      "name": "Pursuit docgen — finish registry-docgen",
+      "appearedIn": []
+    },
+    {
+      "slug": "juliet-echo-charlie-delta",
+      "projectId": 265,
+      "name": "Large-format print workflow",
+      "appearedIn": []
+    },
+    {
+      "slug": "hotel-alpha-hotel-sierra",
+      "projectId": 266,
+      "name": "zoo.hylograph.net",
+      "appearedIn": []
+    },
+    {
+      "slug": "india-alpha-mike-delta",
+      "projectId": 267,
+      "name": "Continuo",
+      "appearedIn": []
+    },
+    {
+      "slug": "mike-xray-tango-whiskey",
+      "projectId": 268,
+      "name": "Gnomon",
+      "appearedIn": []
+    },
+    {
+      "slug": "echo-charlie-oscar-victor",
+      "projectId": 269,
+      "name": "Commonplace",
+      "appearedIn": []
+    },
+    {
+      "slug": "quebec-oscar-echo-delta",
+      "projectId": 270,
+      "name": "Stating the vision",
+      "appearedIn": []
+    },
+    {
+      "slug": "whiskey-romeo-romeo-india",
+      "projectId": 271,
+      "name": "Mycroft",
+      "appearedIn": []
+    },
+    {
+      "slug": "quebec-romeo-tango-zulu",
+      "projectId": 272,
+      "name": "Selene",
+      "appearedIn": [
+        "fleet"
+      ]
+    },
+    {
+      "slug": "uniform-charlie-lima-xray",
+      "projectId": 273,
+      "name": "MI Compendium",
+      "appearedIn": []
+    },
+    {
+      "slug": "echo-charlie-papa-mike",
+      "projectId": 274,
+      "name": "Glassbox",
+      "appearedIn": []
+    },
+    {
+      "slug": "romeo-uniform-xray-yankee",
+      "projectId": 275,
+      "name": "Bertin",
+      "appearedIn": []
+    },
+    {
+      "slug": "hotel-tango-kilo-oscar",
+      "projectId": 276,
+      "name": "Conduit",
+      "appearedIn": []
+    },
+    {
+      "slug": "india-kilo-romeo-zulu",
+      "projectId": 277,
+      "name": "Brunel",
+      "appearedIn": []
+    },
+    {
+      "slug": "kilo-whiskey-oscar-india",
+      "projectId": 278,
+      "name": "hylograph-components",
+      "appearedIn": []
+    },
+    {
+      "slug": "whiskey-whiskey-echo-yankee",
+      "projectId": 279,
+      "name": "Specimen for Glassbox",
+      "appearedIn": []
+    },
+    {
+      "slug": "mike-papa-papa-delta",
+      "projectId": 280,
+      "name": "Specimen for Baskerville",
+      "appearedIn": []
+    },
+    {
+      "slug": "victor-india-charlie-juliet",
+      "projectId": 281,
+      "name": "Off-site ZFS replication with Newton",
+      "appearedIn": []
+    },
+    {
+      "slug": "kilo-mike-alpha-delta",
+      "projectId": 282,
+      "name": "The Computing Substrate",
+      "appearedIn": []
+    },
+    {
+      "slug": "india-quebec-sierra-xray",
+      "projectId": 283,
+      "name": "Declarative Modes",
+      "appearedIn": []
+    },
+    {
+      "slug": "victor-juliet-romeo-tango",
+      "projectId": 284,
+      "name": "Substrate system calls",
+      "appearedIn": []
+    },
+    {
+      "slug": "lima-zulu-india-hotel",
+      "projectId": 285,
+      "name": "Valentia",
+      "appearedIn": [
+        "fleet"
+      ]
+    },
+    {
+      "slug": "echo-mike-whiskey-whiskey",
+      "projectId": 286,
+      "name": "Itajara",
+      "appearedIn": []
+    },
+    {
+      "slug": "juliet-hotel-november-alpha",
+      "projectId": 287,
+      "name": "Friends of Itajara",
+      "appearedIn": [
+        "fleet"
+      ]
+    },
+    {
+      "slug": "bravo-xray-lima-victor",
+      "projectId": 288,
+      "name": "Rample as an instrument",
+      "appearedIn": []
+    },
+    {
+      "slug": "papa-echo-oscar-bravo",
+      "projectId": 289,
+      "name": "Quadrat",
+      "appearedIn": []
+    }
+  ]
+}

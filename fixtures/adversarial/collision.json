@@ -1,6 +1,6 @@
 { "servers": [
-  { "role": "a", "projectName": "svc-a", "projectSlug": "svc-a", "port": 3050, "host": "mbp",
+  { "role": "a", "projectName": "svc-a", "projectId": "svc-a", "port": 3050, "host": "mbp",
     "startCommand": "cd /srv/a && run -p 3050" },
-  { "role": "b", "projectName": "svc-b", "projectSlug": "svc-b", "port": 3050, "host": "mbp",
+  { "role": "b", "projectName": "svc-b", "projectId": "svc-b", "port": 3050, "host": "mbp",
     "startCommand": "cd /srv/b && run -p 3050" }
 ] }

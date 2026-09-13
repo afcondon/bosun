@@ -7,12 +7,17 @@
 -- | JSON file/endpoint happens in the CLI, keeping the no-Aff seam. Decoding is
 -- | lenient — the registry shape is known and stable; a row missing its `role`
 -- | is skipped rather than failing the whole ingest.
+-- |
+-- | 2026-09-13: a row's project is read from `projectId`, not the retired
+-- | `projectSlug`. Three functions here build the same `<project>:<role>` key
+-- | and all three go through `projectRef`, so the identity cannot drift between
+-- | what reconcile files a row under and what the claim/hint passes name.
 module Bosun.Adapters.Registry (ingestRegistry, RegistryClaim, registryClaims, registryHints) where
 
 import Prelude
 
 import Bosun.Adapters.StartCommand (parseStartCommand)
-import Bosun.Atoms (AbsPath, mkAbsPath, mkHost, mkPort, mkProjectSlug)
+import Bosun.Atoms (AbsPath, mkAbsPath, mkHost, mkPort, mkProjectId)
 import Bosun.Reachability (BindScope(..), hostPort, listening, noNetwork, unixSocket)
 import Bosun.Health (BaseRestart(..), Probe(..), defaultRestart)
 import Bosun.Serve (ServeHint, readMediation)
@@ -56,7 +61,7 @@ decodeRow j = do
       Nothing -> fromMaybe noNetwork (map unixSocket (socketPathOf =<< str o "url"))
   pure
     { source: FromRegistry
-    , project: map mkProjectSlug (str o "projectSlug")
+    , project: map mkProjectId (projectRef o)
     , localName: fromMaybe role (str o "projectName")
     , role: mkRole role
     , host: hostM
@@ -83,9 +88,11 @@ type RegistryClaim = { serviceId :: String, publicPort :: Int }
 -- | before `servePlan` judges.
 -- |
 -- | `ingestRegistry` cannot answer this question. Reconcile keys services by
--- | canonical `projectSlug:role`, so two rows sharing that pair collapse into
+-- | canonical `projectId:role`, so two rows sharing that pair collapse into
 -- | ONE service and the loser vanishes with no diagnostic anywhere. On the live
--- | fleet (2026-08-17) that is 53 rows → 50 services. The drift check compares
+-- | fleet (53 rows → 50 services) this is unchanged by the slug→id migration:
+-- | the mapping is one-to-one, so the same three rows collapse either way. The
+-- | drift check compares
 -- | against these claims, which is what lets it say "the registry declares
 -- | :3033 and nothing in the plan accounts for it" instead of silently agreeing.
 -- |
@@ -102,8 +109,8 @@ registryClaims json = fromMaybe [] do
     role <- str o "role"
     port <- int o "port"
     -- the canonical id reconcile will file this row under (see Reconcile);
-    -- a slug-less row is keyed by its bare role, as there.
-    pure { serviceId: maybe role (\slug -> slug <> ":" <> role) (str o "projectSlug"), publicPort: port }
+    -- a project-less row is keyed by its bare role, as there.
+    pure { serviceId: maybe role (\pid -> pid <> ":" <> role) (projectRef o), publicPort: port }
 
 -- | The router-facing hints one registry ROW carries: whether Bosun should be in
 -- | this service's data path at all (`serveMode`), and the scheme of its `url`.
@@ -128,7 +135,7 @@ registryHints json = fromMaybe [] do
     o <- toObject j
     role <- str o "role"
     pure
-      { serviceId: maybe role (\slug -> slug <> ":" <> role) (str o "projectSlug")
+      { serviceId: maybe role (\pid -> pid <> ":" <> role) (projectRef o)
       , mediation: readMediation (fromMaybe "" (str o "serveMode"))
       , scheme: str o "url" >>= schemeOf
       }
@@ -146,6 +153,27 @@ schemeOf url = case String.indexOf (String.Pattern "://") url of
 -- rather than a string somebody has to resolve.
 socketPathOf :: String -> Maybe AbsPath
 socketPathOf url = String.stripPrefix (String.Pattern "unix://") url >>= mkAbsPath
+
+-- | The project half of a row's canonical `<project>:<role>` identity, read
+-- | from `projectId`.
+-- |
+-- | Marginalia writes a JSON *number* (`"projectId": 55`); a registry written
+-- | by hand or by a tool with no Marginalia behind it (the fixtures, and
+-- | anything a third party registers) writes a *string*. Both are accepted and
+-- | rendered as text, because the identity is a token, not an arithmetic
+-- | quantity — nothing downstream ever adds two of these together.
+-- |
+-- | `Nothing` is the one answer with teeth: reconcile falls back to the row's
+-- | `localName`, which is a DIFFERENT namespace, silently. That is precisely
+-- | how the retired `projectSlug` would have failed had this field kept its old
+-- | name while Marginalia stopped sending it, so the rename is made here, once,
+-- | and the old name is not read as a fallback. A row with no project is a row
+-- | that genuinely belongs to no project.
+projectRef :: Object Json -> Maybe String
+projectRef o = FO.lookup "projectId" o >>= \j ->
+  case toString j of
+    Just s -> Just s
+    Nothing -> show <<< round <$> toNumber j
 
 str :: Object Json -> String -> Maybe String
 str o k = FO.lookup k o >>= toString

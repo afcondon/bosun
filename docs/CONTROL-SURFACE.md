@@ -12,7 +12,7 @@ Work is split across two Claude sessions; they meet at the serve HTTP contract.
   (decoded in `chair/src/Chair/State.purs`).
 - `POST :3997/control/spawn?port=N` · `/control/stop?port=N` · `/control/reload`
   (already called by the Cockpit; restart = stop then spawn). Both verbs also
-  take `?service=<projectSlug:role>` — the only way to address a **brokered**
+  take `?service=<projectId:role>` — the only way to address a **brokered**
   daemon that holds no port at all (es9-daemon on a unix socket), and the key
   `/state` and `/where` already print. See "Brokered services" below.
 - **Correlation:** `/state` keys by canonical `serviceId`; graph nodes key by
@@ -39,7 +39,7 @@ Work is split across two Claude sessions; they meet at the serve HTTP contract.
    status dot — green up / red (pulsing) down / indigo redirect (421) / **nothing**
    for unknown, so the overlay is silent on non-serve fixtures (truly modeless, no
    toggle). Composes with every layout (deps/host/pack) and every other channel.
-   - **Correlation:** node id = `localName`; /state keys by `projectSlug:role`.
+   - **Correlation:** node id = `localName`; /state keys by `projectId:role`.
      `reconcile.aliases` (ingested → canonical) bridges merged compose+registry;
      where there's no alias, the instance's own `project:role` is the canonical id.
 2. **Blast-from-down:** ✅ DONE. Any node serve reports `down` auto-drives the
@@ -212,7 +212,7 @@ port we stepped aside from has no other event that could tell us the holder left
 `/control/*` contract and CORS live in `cli/src/Bosun/CLI/Serve.js`; the
 observe/control seam abstraction (Docker-on-Node now, BEAM observer later) is
 specced in `BEAM-OBSERVER.md`. Correlation reminder for the overlay: `/state`
-keys by canonical `serviceId` (`projectSlug:role`), graph nodes key by
+keys by canonical `serviceId` (`projectId:role`), graph nodes key by
 `localName` — map through `reconcile.aliases` from `AnalyzeResult`.
 
 ## `supervise` control surface + hot-reload (2026-07-07, note #397)
@@ -254,7 +254,7 @@ POST :8789/control/restart?service=itajara
 Note it points at the router's `stop`, not `restart`: the router has no restart
 verb, and sending an operator to one that would 404 would undo the sentence. The
 other three refusals — no `?service=` at all, one candidate id under a different
-spelling, several candidates under one slug — are in the findings doc's table. A
+spelling, several candidates under one project — are in the findings doc's table. A
 near miss is named, never acted on.
 
 **Hot-reload (`/control/reload`).** Before this, the compose was captured once at
@@ -337,10 +337,19 @@ source, where there is no stamp and a check costs a curl.
 
 **A live finding on the first run (2026-08-17):** ports **3031, 3032, 3034** —
 three `polyglot-pythia-showcases` rows — are `unaccounted`. Five rows share two
-`projectSlug:role` pairs (`juliet-bravo-juliet-mike:api` ×2,
-`:frontend` ×3), so reconcile keeps one of each and the other three are dropped
-with no diagnostic anywhere. They hold ports in the registry and are served by
-nothing. Fixing them means giving each row a distinct `role`.
+`projectId:role` pairs (`78:api` ×2, `78:frontend` ×3), so reconcile keeps one
+of each and the other three are dropped with no diagnostic anywhere. They hold
+ports in the registry and are served by nothing. Fixing them means giving each
+row a distinct `role`.
+
+*(Re-measured 2026-09-13, when the slugs became ids: **the duplicate situation
+is unchanged**. Keying on `projectId` collapses 53 rows to the same 50 services
+that `projectSlug` collapsed them to, and the three lost rows are the same
+three. It could have gone either way — a many-to-one slug→id mapping would have
+created new collisions, a many-to-one id→slug mapping would have resolved some —
+but the mapping was one-to-one across all 39 projects the fleet names, so the
+migration neither exposed nor resolved a single collision. These three rows were
+always about two rows sharing a role, and that is still what they are.)*
 
 **`POST /control/reload`** now also returns `routes[]`, `redirects[]`,
 `rejected[]` and `drift[]` — the post-reload verdict on *every* port, not just

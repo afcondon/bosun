@@ -29,8 +29,28 @@ stale `anscombe`, routes-in-a-comment) on top of this baseline.
   This is why `bosun plan`/`apply` correctly *refuse* to deploy the rig as-is.
 - **15 facet divergences** (informational) — services deployed two ways:
   `(mbp, MechProcess)` native + `(macmini, MechContainer)` containerised. This
-  is the §7 story, including `uniform-romeo-romeo-juliet:frontend`
-  (tilted-radio). Divergence is *expected*, not drift (D-E2/E3).
+  is the §7 story, including `82:frontend` (tilted-radio). Divergence is
+  *expected*, not drift (D-E2/E3).
+
+## The identities changed once, on 2026-09-13
+
+The findings above used to be named with Marginalia's four-word NATO slugs
+(`uniform-romeo-romeo-juliet:frontend`). Marginalia retired the slugs in favour
+of its numeric project ids, so `bosun check` now keys services on
+`<projectId>:<role>` and the golden was regenerated to match.
+
+`registry.json` itself is untouched, and is still the verbatim capture: every
+row already carried `projectId` alongside `projectSlug`, so the adapter had the
+number all along. The `projectSlug` field is still sitting in this file and is
+now **read by nothing** — left in place because a verbatim snapshot that gets
+tidied is no longer a verbatim snapshot.
+
+The migration is provably identity-preserving on this corpus: translating the
+old golden through the corpus's own slug→id mapping reproduces the new one
+line-for-line, with the single exception of the collision line, where the two
+claimants swap places because they are printed in sort order and `55` sorts
+before `edge` where `tango-hotel-victor-victor` sorted after it. Same two
+claimants, same finding.
 
 ## Do not renumber this fixture (note added 2026-08-02)
 

@@ -18,7 +18,7 @@ disagreements are *bugs*.
 
 | Tier | Fields | Rule |
 |---|---|---|
-| **Identity** (the grouping key) | `(ProjectSlug, Role)` | cannot differ — it's how instances are grouped into one `ServiceId` |
+| **Identity** (the grouping key) | `(ProjectId, Role)` | cannot differ — it's how instances are grouped into one `ServiceId` |
 | **Facet key** (defines a facet) | `(Host, ExecutorMechanism)` | *legitimately* differs across facets — "the two ways we deploy this" |
 | **Facet-local** | exposure/port, restart, env, exact probe wiring | may differ freely *between* facets; must agree *within* a facet |
 | **Must-agree across facets** | the **dependency shape** (the set of `(target, requirement-kind)` edges) + the service contract | disagreement = `CrossSourceDrift` (a real conflict) |
@@ -280,7 +280,7 @@ atomic `writeFleet` + router reload, **chair-server git-adds and commits
 `registry/fleet.json`** with a one-line message:
 
 ```
-registry: <verb> <role> <slug> @<port>
+registry: <verb> <role> <projectId> @<port>
 # e.g.  registry: add frontend juliet-whiskey-papa-juliet @3021
 #       registry: rm  frontend juliet-whiskey-papa-juliet @3021
 ```
@@ -364,6 +364,6 @@ publish into the node≡backend-go conformance.
   kinds survive/collapse/drop per target). The richer `Requirement` gradient
   (D-2) means we now know *what* to tabulate; building the table is a
   per-adapter task at implementation time.
-- The reconciliation **identity fallback** when no `ProjectSlug` exists
+- The reconciliation **identity fallback** when no `ProjectId` exists
   (`DESIGN.md §10`): a hand-maintained alias map vs interactive
   propose-merge. Leaning alias-map for MVP; revisit if it gets unwieldy.

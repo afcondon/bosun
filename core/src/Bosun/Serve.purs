@@ -760,7 +760,7 @@ data DriftKind
   | Departed     -- the router holds a verdict for a port nothing claims any more: reload
   -- The registry still claims this port and NO plan accounts for it. A reload
   -- cannot help: the row is being dropped before admission — two rows sharing a
-  -- `projectSlug:role` (reconcile keeps one), or a row with no `role` at all.
+  -- `projectId:role` (reconcile keeps one), or a row with no `role` at all.
   -- Only visible by comparing against the raw rows, which is why `planDrift`
   -- takes the claims and not just the two plans.
   | Unaccounted
@@ -788,7 +788,7 @@ type PortClaim = { serviceId :: String, publicPort :: Int }
 -- | Three inputs, not two, and the third earns its place: `claims` is the raw
 -- | registry rows (`Bosun.Adapters.Registry.registryClaims`). Without it, a row
 -- | that never became a service at all — two rows colliding on one
--- | `projectSlug:role`, a row with no role — is absent from BOTH plans and so
+-- | `projectId:role`, a row with no role — is absent from BOTH plans and so
 -- | looks exactly like agreement. That is the same "registered and invisible"
 -- | failure one level lower down, and it needs a different remedy (`Unaccounted`
 -- | ⇒ fix the row; the others ⇒ reload).

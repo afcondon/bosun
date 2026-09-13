@@ -92,10 +92,10 @@ export const reloadBosunServeImpl = () => {
 };
 
 // EffectFn1(Int → Json): fetch a Marginalia project record. Called at POST
-// /api/projects/:id/servers time only, to denormalise projectName + projectSlug
+// /api/projects/:id/servers time only, to denormalise projectName
 // into the fleet.json row. Reads stay independent.
 // `-f` so a 404 (no such project) THROWS. Without it, Marginalia's error body
-// parsed cleanly, the row was denormalised with null projectName/projectSlug,
+// parsed cleanly, the row was denormalised with a null projectName,
 // and the registration answered success — a permanently mis-linked row created
 // by a lookup that had in fact failed.
 export const fetchMarginaliaProjectImpl = (id) =>

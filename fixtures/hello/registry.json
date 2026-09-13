@@ -1,10 +1,10 @@
 {
   "servers": [
     { "role": "greeter", "port": 8771, "host": "mbp",
-      "projectSlug": "hello", "projectName": "hello-greeter",
+      "projectId": "hello", "projectName": "hello-greeter",
       "startCommand": "cd /tmp/bosun-hello && nohup python3 -m http.server 8771 >greeter.log 2>&1 &" },
     { "role": "echoer", "port": 8772, "host": "mbp",
-      "projectSlug": "hello", "projectName": "hello-echoer",
+      "projectId": "hello", "projectName": "hello-echoer",
       "startCommand": "cd /tmp/bosun-hello && nohup python3 -m http.server 8772 >echoer.log 2>&1 &" }
   ],
   "count": 2

@@ -20,7 +20,7 @@ module Bosun.View (module Bosun.View, module Bosun.Protocol) where
 
 import Prelude
 
-import Bosun.Atoms (mkServiceId, unAbsPath, unDomain, unEnvVar, unGitWorkdir, unHost, unPort, unProjectSlug, unRoutePath, unServiceId, unUrl)
+import Bosun.Atoms (mkServiceId, unAbsPath, unDomain, unEnvVar, unGitWorkdir, unHost, unPort, unProjectId, unRoutePath, unServiceId, unUrl)
 import Bosun.Edge (DepOrdering(..), Gate(..), Requirement(..))
 import Bosun.Error (DeployError(..), SdiViolation(..))
 import Bosun.Executor (BuildContext(..), ContainerSpec(..), Executor(..), ExecutorMechanism(..), ImageRef(..), RemoteVia(..), SystemdScope(..), mechanism)
@@ -173,7 +173,7 @@ reachabilityView r = map addressView (Set.toUnfoldable (addresses r) :: Array Ad
 serviceInstanceView :: ServiceInstance -> ServiceInstanceView
 serviceInstanceView si =
   { source: sourceLabel si.source
-  , project: map unProjectSlug si.project
+  , project: map unProjectId si.project
   , localName: si.localName
   , role: unRole si.role
   , host: map unHost si.host

@@ -13,7 +13,7 @@ module Bosun.Atoms
   , GitWorkdir, mkGitWorkdir, unGitWorkdir
   , RoutePath, mkRoutePath, unRoutePath
   , EnvVar, mkEnvVar, unEnvVar
-  , ProjectSlug, mkProjectSlug, unProjectSlug
+  , ProjectId, mkProjectId, unProjectId
   , ServiceId, mkServiceId, unServiceId
   , Host, mkHost, unHost
   ) where
@@ -119,17 +119,28 @@ mkEnvVar = EnvVar
 unEnvVar :: EnvVar -> String
 unEnvVar (EnvVar s) = s
 
--- | A stable inventory id that survives renames (e.g. a Marginalia slug).
-newtype ProjectSlug = ProjectSlug String
-derive newtype instance Eq ProjectSlug
-derive newtype instance Ord ProjectSlug
-derive newtype instance Show ProjectSlug
+-- | A stable inventory id that survives renames — the first half of a
+-- | `ServiceId` (§5 reconcile). It was `ProjectSlug` until 2026-09-13, holding
+-- | Marginalia's four-word NATO callsign; Marginalia retired those, and a
+-- | registry row now carries its numeric `projectId` instead.
+-- |
+-- | Still opaque and still a `String`, deliberately. What this atom needs from
+-- | an inventory is that the token be STABLE, not that it be a number: a
+-- | registry with no Marginalia behind it (`fixtures/portable-example`) names
+-- | its own projects, and the recompile test (§3.1) says a general tool does
+-- | not bake one inventory's id scheme into a core type. `Bosun.Adapters.
+-- | Registry` is where the numbers come from — it reads `projectId` and never
+-- | invents one, so a Marginalia-fed fleet keys on decimal ids throughout.
+newtype ProjectId = ProjectId String
+derive newtype instance Eq ProjectId
+derive newtype instance Ord ProjectId
+derive newtype instance Show ProjectId
 
-mkProjectSlug :: String -> ProjectSlug
-mkProjectSlug = ProjectSlug
+mkProjectId :: String -> ProjectId
+mkProjectId = ProjectId
 
-unProjectSlug :: ProjectSlug -> String
-unProjectSlug (ProjectSlug s) = s
+unProjectId :: ProjectId -> String
+unProjectId (ProjectId s) = s
 
 -- | Bosun's stable logical identity for a service (see §5 reconcile).
 newtype ServiceId = ServiceId String

@@ -80,7 +80,7 @@ fixturesDir = "fixtures"
 
 -- | A Project is the unit you pick and operate on: a validated deployment (with
 -- | a `supervise` daemon you can drive) or a study fixture (view-only). `key` is
--- | the url slug used in `#/graph/<key>`. `supervise` is the daemon's status/
+-- | the url token used in `#/graph/<key>`. `supervise` is the daemon's status/
 -- | control port — `Just` ⇒ controllable; `Nothing` ⇒ no control surface.
 type Project =
   { key :: String
@@ -142,7 +142,7 @@ type State =
   -- name→status map polled from every group's /state (the live overlay).
   , topo :: Array TopologyEntry
   , topoStatus :: FO.Object String
-  , fleetNames :: Map String String   -- projectSlug → human projectName (fleet.json)
+  , fleetNames :: Map String String   -- projectId (as text) → human projectName (fleet.json)
   }
 
 -- one node's position transition (interpolating a 2D Point through the engine)
@@ -799,8 +799,9 @@ statusDotClass = case _ of
   _ -> "unknown"
 
 -- one lazy-spawn serve route: a status dot (up ⇒ a backend is live), the human
--- project NAME (from fleet.json, keyed by port — the router only knows the
--- slug:role serviceId), its role, and its public port. Click opens the Cockpit.
+-- project NAME (from fleet.json — the router only knows the
+-- <projectId>:<role> serviceId), its role, and its public port. Click opens the
+-- Cockpit.
 fleetRow :: forall m. Map String String -> RouteStatus -> H.ComponentHTML Action () m
 fleetRow names r =
   HH.button [ cls "fleet-row", HE.onClick \_ -> NavTo CockpitR ]
@@ -812,13 +813,15 @@ fleetRow names r =
     , HH.span [ cls "fleet-port" ] [ HH.text (":" <> show r.publicPort) ]
     ]
 
--- a serve/supervise id is "slug:role". Resolve the slug to a human name (from
--- fleet.json; fallback = the id itself), split out the role, or a combined label.
+-- a serve/supervise id is "<projectId>:<role>". Resolve the project id to a
+-- human name (from fleet.json; fallback = the id itself), split out the role, or
+-- a combined label. The fallback is now a bare number rather than a callsign, so
+-- an unresolved name reads as obviously unresolved — which it always was.
 serviceName :: Map String String -> String -> String
-serviceName names sid = fromMaybe sid (Map.lookup (slugOf sid) names)
+serviceName names sid = fromMaybe sid (Map.lookup (projectOf sid) names)
 
-slugOf :: String -> String
-slugOf sid = fromMaybe sid (Array.head (String.split (String.Pattern ":") sid))
+projectOf :: String -> String
+projectOf sid = fromMaybe sid (Array.head (String.split (String.Pattern ":") sid))
 
 roleOf :: String -> String
 roleOf sid = case String.split (String.Pattern ":") sid of
@@ -1129,7 +1132,7 @@ renderIngestion s =
 -- ── live overlay: correlate serve /state to graph nodes ──────────────────────
 
 -- | Map each graph node id (an instance's `localName`) to its runtime status.
--- | The bridge: /state keys by canonical `projectSlug:role`; nodes key by
+-- | The bridge: /state keys by canonical `projectId:role`; nodes key by
 -- | localName. `reconcile.aliases` (ingested name → canonical) carries the
 -- | cross-source merge (compose's `gallery-web` ↔ registry's `gallery:frontend`);
 -- | where there's no alias (single-source registry), the instance's own
@@ -1167,7 +1170,7 @@ controlMap sv a =
   entry i = map (\p -> i.localName /\ p) (Map.lookup (canonOf a i) portByCanon)
 
 -- | The canonical serviceId for an instance — node `localName` bridged to the
--- | `projectSlug:role` the daemons key by, via `reconcile.aliases` (else the
+-- | `projectId:role` the daemons key by, via `reconcile.aliases` (else the
 -- | instance's own `project:role`). Shared by every correlation map.
 canonOf :: AnalyzeResult -> ServiceInstanceView -> String
 canonOf a i =

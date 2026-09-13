@@ -10,7 +10,7 @@ module Bosun.Conformance.Main where
 
 import Prelude
 
-import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkHost, mkPort, mkProjectSlug, mkServiceId)
+import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkHost, mkPort, mkProjectId, mkServiceId)
 import Bosun.Edge (Gate(..), Requirement(..))
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Reachability (hostPort, noNetwork)
@@ -34,7 +34,7 @@ import Partial.Unsafe (unsafePartial)
 main :: Effect Unit
 main = do
   let
-    aliases = Map.singleton "tidal-frontend" (mkServiceId "uniform-romeo-romeo-juliet:frontend")
+    aliases = Map.singleton "tidal-frontend" (mkServiceId "82:frontend")
     r = reconcile aliases fixture
     vErrors = either identity (const []) (toEither (validate r.deployment))
   log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
@@ -78,7 +78,7 @@ planFixture :: Array ServiceInstance
 planFixture =
   [ inst
       { source = FromRegistry
-      , project = Just (mkProjectSlug "store")
+      , project = Just (mkProjectId "store")
       , localName = "store-db"
       , role = mkRole "db"
       , reachability = hostPort (port_ 5432)
@@ -87,7 +87,7 @@ planFixture =
       }
   , inst
       { source = FromRegistry
-      , project = Just (mkProjectSlug "store")
+      , project = Just (mkProjectId "store")
       , localName = "store-api"
       , role = mkRole "api"
       , reachability = hostPort (port_ 3000)
@@ -97,7 +97,7 @@ planFixture =
       }
   , inst
       { source = FromRegistry
-      , project = Just (mkProjectSlug "store")
+      , project = Just (mkProjectId "store")
       , localName = "store-worker"
       , role = mkRole "worker"
       , reachability = noNetwork
@@ -110,7 +110,7 @@ fixture :: Array ServiceInstance
 fixture =
   [ inst
       { source = FromRegistry
-      , project = Just (mkProjectSlug "uniform-romeo-romeo-juliet")
+      , project = Just (mkProjectId "82")
       , localName = "psd3-tilted-radio"
       , host = Just (mkHost "mbp")
       , executor = Process { cwd: absPath "/Users/afc/work/afc-work/purescript-hylograph-showcases/psd3-tilted-radio", command: "npx serve", env: [] }
@@ -125,7 +125,7 @@ fixture =
       }
   , inst
       { source = FromRegistry
-      , project = Just (mkProjectSlug "minard")
+      , project = Just (mkProjectId "35")
       , localName = "minard-backend"
       , role = mkRole "api"
       , host = Just (mkHost "mbp")
@@ -133,11 +133,11 @@ fixture =
       }
   , inst
       { source = FromRegistry
-      , project = Just (mkProjectSlug "minard")
+      , project = Just (mkProjectId "35")
       , localName = "minard-frontend"
       , host = Just (mkHost "mbp")
       , reachability = hostPort (port_ 3001)
-      , rawDeps = [ { to: "minard:api", ordering: Nothing, requirement: Just (Requires OnHealthy) } ]
+      , rawDeps = [ { to: "35:api", ordering: Nothing, requirement: Just (Requires OnHealthy) } ]
       }
   ]
 

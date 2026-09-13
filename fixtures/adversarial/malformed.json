@@ -1,5 +1,5 @@
 { "servers": [
-  { "role": "x", "projectName": "no-cmd", "projectSlug": "no-cmd", "port": 3060, "host": "mbp", "startCommand": "" },
-  { "role": "y", "projectName": "no-port", "projectSlug": "no-port", "host": "mbp", "startCommand": "cd /srv/y && run" },
-  { "projectName": "no-role", "projectSlug": "no-role", "port": 3062, "host": "mbp", "startCommand": "cd /srv/z && run -p 3062" }
+  { "role": "x", "projectName": "no-cmd", "projectId": "no-cmd", "port": 3060, "host": "mbp", "startCommand": "" },
+  { "role": "y", "projectName": "no-port", "projectId": "no-port", "host": "mbp", "startCommand": "cd /srv/y && run" },
+  { "projectName": "no-role", "projectId": "no-role", "port": 3062, "host": "mbp", "startCommand": "cd /srv/z && run -p 3062" }
 ] }

@@ -1,3 +1,3 @@
 { "servers": [
-  { "role": "pidtest", "projectSlug": "pidtest", "projectName": "pidtest", "port": 8799, "host": "mbp", "startCommand": "cd /tmp && python3 -m http.server 8799" }
+  { "role": "pidtest", "projectId": "pidtest", "projectName": "pidtest", "port": 8799, "host": "mbp", "startCommand": "cd /tmp && python3 -m http.server 8799" }
 ], "count": 1 }

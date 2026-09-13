@@ -1,4 +1,4 @@
 { "servers": [
-  { "role": "frontend", "projectName": "app", "projectSlug": "app", "port": 3050, "host": "mbp",
+  { "role": "frontend", "projectName": "app", "projectId": "app", "port": 3050, "host": "mbp",
     "startCommand": "cd /srv/app3050 && run" }
 ] }

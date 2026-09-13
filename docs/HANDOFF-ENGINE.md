@@ -10,7 +10,7 @@ the engine session for the *autonomous* behaviours the manual surface can't fake
 On `main` @ `659c7eb`:
 
 - **Live overlay** — polls `GET :3997/state` every 1.5 s, correlates each route
-  to its graph node (`serviceId = projectSlug:role` ↔ node `localName`, bridged
+  to its graph node (`serviceId = projectId:role` ↔ node `localName`, bridged
   by `reconcile.aliases`), draws a status dot, and washes the transitive
   dependents of any `down` node in blast-amber. Modeless, always on.
 - **Armed control** — toggling the `⚠ control` channel arms the main view:

@@ -433,7 +433,7 @@ runReload mport = do
 -- | `POST /control/reload`. DeepStar's pre-flight is the same client written in
 -- | Go — which is why the answer is flat JSON with no client library in it.
 -- |
--- | The argument is a service id (`slug:role`) or a public port; ports are
+-- | The argument is a service id (`<project>:<role>`) or a public port; ports are
 -- | identity everywhere else in the router, so they are identity here too.
 runWhere :: Maybe Int -> String -> Effect Unit
 runWhere mport key = do

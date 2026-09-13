@@ -327,7 +327,7 @@ renderDriftKind = case _ of
   Departed -> "no longer in the registry — the router is still holding this port"
   Unaccounted ->
     "declared by the registry but accounted for by NO plan verdict — the row is dropped \
-    \before admission (another row shares its projectSlug:role, or it has no role). \
+    \before admission (another row shares its projectId:role, or it has no role). \
     \A reload will not help; fix the row."
 
 -- ── small label helpers (display, not Show) ──────────────────────────────────

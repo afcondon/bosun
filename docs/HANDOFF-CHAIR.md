@@ -41,7 +41,7 @@ second host swimlane), and 2 rejections. Ports `8190-8197`.
 
 ## Correlation rule for the overlay
 
-`/state` keys by canonical `serviceId` (`projectSlug:role`); your graph nodes
+`/state` keys by canonical `serviceId` (`projectId:role`); your graph nodes
 key by `localName`. Map through `reconcile.aliases` from the `AnalyzeResult`
 you already get from `/analyze`. Note `/state` is the *status* source only —
 graph structure (deps for blast-radius, host for swimlanes) still comes from

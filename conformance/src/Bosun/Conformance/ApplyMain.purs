@@ -17,7 +17,7 @@ import Prelude
 
 import Bosun.Apply (Command(..), StagedCommand, applyScript)
 import Bosun.Target (defaultTargets)
-import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkHost, mkPort, mkProjectSlug)
+import Bosun.Atoms (AbsPath, Port, mkAbsPath, mkHost, mkPort, mkProjectId)
 import Bosun.Executor (Executor(..))
 import Bosun.Reachability (hostPort)
 import Bosun.Health (BaseRestart(..), Probe(..))
@@ -73,7 +73,7 @@ helloFixture =
 server :: String -> String -> Int -> ServiceInstance
 server name role port =
   { source: FromRegistry
-  , project: Just (mkProjectSlug "hellogo")
+  , project: Just (mkProjectId "hellogo")
   , localName: name
   , role: mkRole role
   , host: Just (mkHost "mbp")

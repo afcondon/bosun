@@ -18,7 +18,7 @@ module Bosun.Service.Internal where
 import Prelude
 
 import Bosun.Artifact (Artifact)
-import Bosun.Atoms (Host, ProjectSlug, RoutePath, ServiceId)
+import Bosun.Atoms (Host, ProjectId, RoutePath, ServiceId)
 import Bosun.Edge (DepOrdering, Requirement)
 import Bosun.Executor (Executor)
 import Bosun.Reachability (Reachability)
@@ -75,7 +75,7 @@ type LaunchSpec = { executor :: Executor, localName :: String, artifact :: Maybe
 -- | preserves the byte-identical round-trip. Consumed by `reconcile` (Phase 3).
 type ServiceInstance =
   { source    :: Source
-  , project   :: Maybe ProjectSlug
+  , project   :: Maybe ProjectId
   , localName :: String
   , role      :: Role
   , host      :: Maybe Host

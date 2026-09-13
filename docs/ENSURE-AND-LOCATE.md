@@ -45,7 +45,7 @@ GET http://127.0.0.1:3997/where/<serviceId>
 GET http://127.0.0.1:3997/where?port=<publicPort>
 ```
 
-`<serviceId>` is the canonical `projectSlug:role` — the same key `/state` uses.
+`<serviceId>` is the canonical `projectId:role` — the same key `/state` uses.
 Ports are identity everywhere else in the router, so `?port=` works too.
 
 ```json
@@ -200,8 +200,8 @@ and a misdiagnosis in one sentence, about a service the router had itself
 started. Both verbs now reach brokers.
 
 ```
-POST :3997/control/spawn?port=<registered|actual>   ·  ?service=<projectSlug:role>
-POST :3997/control/stop?port=<registered|actual>    ·  ?service=<projectSlug:role>
+POST :3997/control/spawn?port=<registered|actual>   ·  ?service=<projectId:role>
+POST :3997/control/stop?port=<registered|actual>    ·  ?service=<projectId:role>
 ```
 
 `?service=` matters here more than it does for a proxy route: half of these

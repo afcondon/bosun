@@ -5,11 +5,11 @@ module Test.Bosun.AdapterSpec where
 import Prelude
 
 import Bosun.Adapters.Compose (ingestCompose)
-import Bosun.Adapters.Registry (ingestRegistry)
+import Bosun.Adapters.Registry (ingestRegistry, registryClaims, registryHints)
 import Bosun.Adapters.StartCommand (parseStartCommand)
 import Bosun.Adapters.Targets (ingestTargets)
 import Bosun.Artifact (Artifact(..), ArtifactRef(..))
-import Bosun.Atoms (mkEnvVar, mkHost, unAbsPath)
+import Bosun.Atoms (mkEnvVar, mkHost, unAbsPath, unProjectId)
 import Bosun.Executor (Executor(..), ExecutorMechanism(..), mechanism)
 import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Reachability (classify)
@@ -52,10 +52,13 @@ spec = describe "Bosun.Adapters" do
 
   describe "ingestRegistry" do
     let
+      -- Marginalia writes `projectId` as a JSON NUMBER; a hand-written registry
+      -- (the fixtures, anything with no Marginalia behind it) writes a string.
+      -- Both shapes are in here on purpose — see the identity tests below.
       fixture =
         """{"servers":[
-          {"role":"frontend","projectSlug":"urj","projectName":"tilted-radio","port":3013,"host":"mbp","startCommand":"cd /x && npx serve"},
-          {"role":"api","projectSlug":"minard","projectName":"minard","port":3000,"host":"mbp","startCommand":""}
+          {"role":"frontend","projectId":82,"projectName":"tilted-radio","port":3013,"host":"mbp","startCommand":"cd /x && npx serve"},
+          {"role":"api","projectId":"minard","projectName":"minard","port":3000,"host":"mbp","startCommand":""}
         ]}"""
 
     it "decodes each server row into a ServiceInstance" do
@@ -67,6 +70,44 @@ spec = describe "Bosun.Adapters" do
           map _.localName svcs `shouldEqual` [ "tilted-radio", "minard" ]
           map (exposureLabel <<< classify <<< _.reachability) svcs `shouldEqual` [ "host:3013", "host:3000" ]
           map (mechanism <<< _.executor) svcs `shouldEqual` [ MechProcess, MechUnmanaged ]
+
+    -- The identity guard (added with the 2026-09-13 slug→id migration). None of
+    -- the assertions above look at `project`, which is why the field could have
+    -- been renamed out from under the adapter with every test still green: an
+    -- unread project is `Nothing`, `Nothing` is a legal value, and reconcile
+    -- then re-keys the whole registry under localName with no complaint
+    -- anywhere. So the project a row belongs to is now asserted directly.
+    it "reads a row's project from projectId — a number, rendered as its digits" do
+      case jsonParser fixture of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j ->
+          map (map unProjectId <<< _.project) (ingestRegistry j)
+            `shouldEqual` [ Just "82", Just "minard" ]
+
+    it "a row with no projectId has no project, and reconcile keys it by name" do
+      case jsonParser """{"servers":[{"role":"api","projectName":"orphan","port":3999,"host":"mbp","startCommand":"cd /x && run"}]}""" of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j ->
+          map (map unProjectId <<< _.project) (ingestRegistry j) `shouldEqual` [ Nothing ]
+
+    it "the retired projectSlug is NOT read as a fallback" do
+      -- Reading both would have made the migration invisible, and invisible is
+      -- the failure mode: a fleet half-keyed on slugs and half on ids looks
+      -- exactly like a fleet that is fine.
+      case jsonParser """{"servers":[{"role":"api","projectSlug":"sierra-tango-golf-bravo","projectName":"minard","port":3000,"host":"mbp","startCommand":"cd /x && run"}]}""" of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j ->
+          map (map unProjectId <<< _.project) (ingestRegistry j) `shouldEqual` [ Nothing ]
+
+    it "claims and hints key on the same identity ingest files a row under" do
+      -- Three functions in the adapter build `<project>:<role>` separately; if
+      -- they ever disagree the serve drift check compares a plan against claims
+      -- for services that do not exist, and reports phantom drift.
+      case jsonParser fixture of
+        Left e -> fail ("fixture did not parse: " <> e)
+        Right j -> do
+          map _.serviceId (registryClaims j) `shouldEqual` [ "82:frontend", "minard:api" ]
+          map _.serviceId (registryHints j) `shouldEqual` [ "82:frontend", "minard:api" ]
 
   describe "ingestCompose" do
     let

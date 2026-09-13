@@ -19,8 +19,8 @@
 -- | `GET /health`. CORS open for the :3020 Chair frontend.
 -- |
 -- | Reads (the hot path) are fully independent — they touch only fleet.json.
--- | Writes synchronously fetch the Marginalia project record for projectName +
--- | projectSlug denormalisation, and POST `:3997/control/reload` so bosun-serve
+-- | Writes synchronously fetch the Marginalia project record for projectName
+-- | denormalisation, and POST `:3997/control/reload` so bosun-serve
 -- | re-admits the new row immediately.
 -- |
 -- | A write has TWO halves and they can part company: fleet.json is durable and
@@ -266,7 +266,7 @@ handleProjectServers pid = do
       in ok' jsonCors (stringify (J.fromArray matches))
 
 -- | POST /api/projects/:id/servers — body shape mirrors Marginalia.
--- | Look up project name/slug from Marginalia (the only write-time runtime
+-- | Look up the project name from Marginalia (the only write-time runtime
 -- | link), assign a fresh id, atomic-write fleet.json, then ask bosun-serve to
 -- | re-admit and REPORT what it said. 200 when the row is routed; 202 when it
 -- | persisted but is not routed (with the reason in `routing.note`).
@@ -521,21 +521,26 @@ claimant s =
 ----------------------------------------------------------------------
 
 -- | Build a complete fleet row from the request body. Required fields are
--- | taken from the body; projectName + projectSlug are denormalised from the
--- | freshly-fetched Marginalia project record. Any unknown body fields are
--- | preserved (forward-compat with Marginalia adding fields).
+-- | taken from the body; `projectName` is denormalised from the freshly-fetched
+-- | Marginalia project record. Any unknown body fields are preserved
+-- | (forward-compat with Marginalia adding fields).
+-- |
+-- | `projectSlug` was denormalised here too until 2026-09-13. It is gone, along
+-- | with the slugs themselves: `projectId` is the row's identity and it comes
+-- | from the URL, not from the lookup. The lookup still happens, and must —
+-- | it is what proves the project EXISTS before a row claims to belong to it
+-- | (see `fetchMarginaliaProjectImpl`'s `curl -f`), and it is where the human
+-- | name comes from.
 buildServerRow :: Int -> Int -> Json -> Json -> Json
 buildServerRow newId pid project body =
   let
     bodyObj = fromMaybe FO.empty (J.toObject body)
     projectObj = fromMaybe FO.empty (J.toObject project)
     projectName = fromMaybe jsonNull (FO.lookup "name" projectObj)
-    projectSlug = fromMaybe jsonNull (FO.lookup "slug" projectObj)
     -- Start with the body (preserves arbitrary extra fields), then overwrite
     -- the server-assigned + denormalised fields.
     withAssigned = FO.insert "id" (J.fromNumber (Int.toNumber newId)) bodyObj
     withProject = FO.insert "projectId" (J.fromNumber (Int.toNumber pid))
-      (FO.insert "projectName" projectName
-        (FO.insert "projectSlug" projectSlug withAssigned))
+      (FO.insert "projectName" projectName withAssigned)
   in J.fromObject withProject
 

@@ -154,7 +154,7 @@ newtype AbsPath     = AbsPath String      -- mkAbsPath :: String -> Maybe AbsPat
 newtype Domain      = Domain String       -- hylograph.net
 newtype RoutePath   = RoutePath String    -- "/code", "/ee/api"
 newtype EnvVar      = EnvVar String
-newtype ProjectSlug = ProjectSlug String  -- a stable inventory id that survives renames (optional)
+newtype ProjectId   = ProjectId String    -- a stable inventory id that survives renames (optional)
 newtype ServiceId   = ServiceId String    -- Bosun's stable logical identity (see §5 reconcile)
 
 newtype Host = Host String   -- OPAQUE runtime identity, verbatim from the user's inventory
@@ -171,7 +171,7 @@ newtype Host = Host String   -- OPAQUE runtime identity, verbatim from the user'
 > logic enumerates and exhaustively handles** (source formats, executor kinds,
 > edge kinds, error kinds — adding one *is* a code change). **Opaque newtypes
 > are for identifiers that arrive as user data** (host names, service names,
-> project slugs). The test: *if extending the set would force the **user** to
+> project ids). The test: *if extending the set would force the **user** to
 > recompile, it's modelled wrong.* Host names fail that test, so `Host` is an
 > opaque string.
 >
@@ -384,7 +384,7 @@ data Source = FromCompose | FromRegistry | FromPlist | FromSystemd | FromK8s
 -- IR pretending to understand `networks`/`volumes`/`deploy.resources`/labels.
 type ServiceInstance =
   { source    :: Source
-  , project   :: Maybe ProjectSlug
+  , project   :: Maybe ProjectId
   , localName :: String                 -- "tidal-frontend" or "psd3-tilted-radio"
   , role      :: Role
   , host      :: Maybe Host
@@ -512,17 +512,34 @@ service appears more than once under different names* (§7). Reconciliation
 groups instances into logical `Service`s and checks the facets agree.
 
 **Identity.** `ServiceId` is derived from the stable, rename-surviving
-signal — `(ProjectSlug, Role)` when a Marginalia project is known, falling
+signal — `(ProjectId, Role)` when a Marginalia project is known, falling
 back to a normalized name. The compose `tidal-frontend` and the registry
-`psd3-tilted-radio` both resolve to the same `ServiceId` because both carry
-project `psd3-tilted-radio` and role `frontend`.
+`psd3-tilted-radio` both resolve to the same `ServiceId` (`82:frontend`)
+because both carry project 82 and role `frontend`.
+
+> **What the project half is, and what changed on 2026-09-13.** Marginalia used
+> to give every project a four-word NATO callsign, and that slug was what a
+> `ServiceId` was keyed on. The slugs are gone; the numeric project id took
+> their place, so ids now read `82:frontend` rather than
+> `uniform-romeo-romeo-juliet:frontend`. The reason is that a slug could not be
+> resolved by anything — no route was keyed by it, no search indexed it, and
+> `GET /api/projects/<slug>` was a 404 — so a token named to a person was a
+> token neither the person nor the API could look up. The id is stable,
+> monotonic and never reused, which is the whole requirement.
+>
+> The atom stayed a `String` through the change. The requirement on it is
+> STABILITY, not numerality; a registry with no Marginalia behind it names its
+> own projects, and the recompile test above applies to id schemes as much as to
+> host names. The numbers enter at the adapter, which reads `projectId` and
+> invents nothing. `registry/slug-to-id.json` records the old mapping, because
+> after the migration nothing else can.
 
 **Facets (resolved in `DECISIONS.md` D-E3/E2).** One logical `Service` may
 have several **deployment facets** — *(mbp, native, SDI-spawned)* and
 *(macmini, container, behind edge)* are two legitimate ways to deploy the same
 thing. The fields sort into three tiers:
 
-- **Identity** `(ProjectSlug, Role)` — the grouping key; cannot differ.
+- **Identity** `(ProjectId, Role)` — the grouping key; cannot differ.
 - **Facet key** `(Host, ExecutorMechanism)` — *legitimately* differs across
   facets; it is *what a facet is*.
 - **Facet-local** (port/exposure, restart, env, probe wiring) — differs freely
@@ -774,7 +791,7 @@ in-process PureScript evaluator) is a nicety, **not** an MVP requirement.
   `frontend`, `worker`) arrive as *user data* from the inventory, so a closed
   `data Role = Api | …` would fail the same way `Host` did. The core never
   branches on a role semantically — it's only an identity discriminator in
-  `(ProjectSlug, Role)` — so `Role` should be **opaque** (`newtype Role =
+  `(ProjectId, Role)` — so `Role` should be **opaque** (`newtype Role =
   Role String`), or at most `WellKnown … | Other String` if a known-set buys
   nicer rendering. Leaning opaque.
 - **The `.deploy` overlay — RESOLVED (see §1).** Not a source of truth that

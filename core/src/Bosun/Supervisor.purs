@@ -468,7 +468,7 @@ forgetLaunches ids st = foldr Map.delete st ids
 -- | to be in there: `LooksLikePort` is the trap itself, and `Unnamed` is the
 -- | missing query parameter the old code commented on as landing in the same
 -- | message. `NearMiss` and `Ambiguous` are the ones nobody had named — ids here
--- | are usually `slug:role`, so asking for `itajara` is overwhelmingly a
+-- | are usually `<project>:<role>`, so asking for `itajara` is overwhelmingly a
 -- | spelling rather than an absence, and whether the group can tell WHICH
 -- | service was meant is a different answer again.
 -- |
@@ -505,23 +505,35 @@ addressService ids asked = case A.find (\sid -> unServiceId sid == asked) ids of
   where
   miss
     | asked == "" = Unnamed
-    -- Ports before spellings: a port-shaped string can never BE a service id, so
-    -- no amount of near-miss matching would help, and the answer wanted is about
-    -- the addressing scheme rather than about how the name was typed.
-    | otherwise = case Int.fromString asked of
-        Just p -> LooksLikePort p
-        Nothing -> case near of
-          [ sid ] -> NearMiss sid
-          [] -> NotInGroup
-          several -> Ambiguous several
+    -- Spellings before ports, since 2026-09-13 — and it used to be the other
+    -- way round, on the reasoning that "a port-shaped string can never BE a
+    -- service id". Project slugs retired in favour of Marginalia's numeric
+    -- project ids, so ids are now `35:frontend`, the bare-project spelling an
+    -- operator reaches for is `35`, and that sentence stopped being true: the
+    -- near-miss path this function exists to serve was answering `that is a
+    -- port` to the single most likely thing anyone would type.
+    --
+    -- The two readings genuinely overlap (`80` is both a port and Marginalia
+    -- project 80), so the tie is broken on evidence rather than on shape: if
+    -- this group actually holds a service under that project, the operator
+    -- meant the project. Nothing in the group answers to it ⇒ the number can
+    -- only have been a port, and that is the more useful thing to be told.
+    | otherwise = case near of
+        [ sid ] -> NearMiss sid
+        [] -> portOrNothing
+        several -> Ambiguous several
 
-  -- Case-insensitive, and matching either way across the `slug:role` colon: the
-  -- two spellings an operator actually produces are the bare slug of a
-  -- `slug:role` id, and a `slug:role` for a group whose ids are bare (a
-  -- compose-only group keys by the compose service name).
+  portOrNothing = case Int.fromString asked of
+    Just p -> LooksLikePort p
+    Nothing -> NotInGroup
+
+  -- Case-insensitive, and matching either way across the `<project>:<role>`
+  -- colon: the two spellings an operator actually produces are the bare project
+  -- of a `<project>:<role>` id, and a `<project>:<role>` for a group whose ids
+  -- are bare (a compose-only group keys by the compose service name).
   key = String.toLower asked
-  slugOf = String.toLower <<< fromMaybe "" <<< A.head <<< String.split (Pattern ":")
+  projectOf = String.toLower <<< fromMaybe "" <<< A.head <<< String.split (Pattern ":")
   near = A.filter candidate ids
   candidate sid =
     let full = String.toLower (unServiceId sid)
-    in full == key || slugOf (unServiceId sid) == key || full == slugOf asked
+    in full == key || projectOf (unServiceId sid) == key || full == projectOf asked
