@@ -13,12 +13,21 @@
 #                   public port → ADMITTED, and the textual rewrite WILL rewrite
 #                   the flag too (a known limitation; the hazard is in the
 #                   launchCommand, not the report). Documented, not fixed.
-#   collision       two services on the same host:port → BOTH admitted. serve
-#                   does not dedup; PortCollision is `bosun check`'s job, not the
-#                   router's. Separation of concerns, made explicit.
-#   malformed       empty startCommand → NoAbsoluteCwd; missing port →
-#                   NoHostPort; missing `role` → silently ingest-skipped (absent
-#                   from every bucket).
+#   collision       two services on the same host:port → the FIRST is admitted
+#                   and the second is rejected `PortClaimed`. The router holds
+#                   the public port, so it can only ever bind one of them;
+#                   admitting both would promise a route it cannot make. (This
+#                   golden said "BOTH admitted, dedup is `bosun check`'s job"
+#                   until 2026-09-13; the single-binder guarantee has been the
+#                   behaviour since 7518749 and is pinned by the ServeSpec case
+#                   "two services on the same public port: first wins".)
+#   malformed       empty startCommand → Reserved; missing port → NoHostPort;
+#                   missing `role` → silently ingest-skipped (absent from every
+#                   bucket). A row with no start command is the documented way
+#                   to reserve a port for another launcher, so it is not the
+#                   NoAbsoluteCwd contract violation this golden claimed until
+#                   2026-09-13 — see b1b64a6, where filing the deliberate case
+#                   under the mistake's heading hid three real violations.
 #   unicode         emoji/accented service id classified + rendered without
 #                   crashing.
 #

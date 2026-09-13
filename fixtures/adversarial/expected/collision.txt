@@ -1,3 +1,5 @@
-ADMITTED — 2 routable service(s):
+ADMITTED — 1 routable service(s):
   - 3050 → svc-a:a (backend on 23050)
-  - 3050 → svc-b:b (backend on 23050)
+
+REJECTED — 1 not routable:
+  - svc-b:b: public port 3050 is already claimed by another service (collision)

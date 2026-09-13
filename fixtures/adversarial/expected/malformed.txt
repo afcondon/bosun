@@ -1,5 +1,5 @@
 ADMITTED: none — no routable services in this registry.
 
 REJECTED — 2 not routable:
-  - no-cmd:x: SDI contract — start command has no absolute cwd anchor (cd /abs)
+  - no-cmd:x: port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)
   - no-port:y: no host port to bind
