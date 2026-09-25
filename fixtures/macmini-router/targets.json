@@ -1,0 +1,6 @@
+{
+  "_comment": "Mini-side target overrides for federation phase 1a (2026-06-24). When bosun runs ON the mini, host: macmini must resolve to LOCAL execution — not ssh-to-self. Other targets fall through to defaultTargets.",
+  "macmini": {
+    "address": "localhost"
+  }
+}

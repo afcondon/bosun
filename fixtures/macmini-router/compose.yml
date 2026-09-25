@@ -1,0 +1,29 @@
+# The MacMini's root group — what its launchd `bosun supervise` keeps alive.
+#
+# Replaces the untracked mini-side fixtures/router/ that federation phase 1a
+# (2026-06-24) left in a hand-copied, non-git ~/work/bosun on the mini. Moving
+# it into the repo is what lets the mini run a real checkout.
+#
+# chair-frontend is gone. The standalone Chair was deprecated on 2026-07-22
+# (chair/DEPRECATED.md) in favour of Brunel's Chair tab, and the mini was still
+# serving a June-19 bundle of it on :3020 that nothing linked to. Brunel's
+# machine picker (minard-for-nix/docs/chair-machine-selection.md) keeps
+# chair-server local to wherever Brunel runs, so nothing needs a Chair frontend
+# on this box.
+#
+# chair-server stays for now as the group's one member. It keeps the
+# launchd → supervise chain exercised until phase 1b folds the mini's
+# production plists (marginalia, infovore, whisper) in here, and bosun-serve
+# joins once registry/fleet.json is carved by host. See
+# docs/kb/plans/two-machine-infrastructure.md.
+services:
+  chair-server:
+    x-bosun:
+      host: macmini
+      # NO probe: process — TCP readiness on :3022, for the reason given in
+      # fixtures/router/compose.yml (a stale pgid relaunches into EADDRINUSE).
+      process:
+        cwd: ${BOSUN_ROOT}
+        command: BOSUN_CHAIR_SERVER_PORT=3022 node chair-server/run.js
+      expose:
+        - host: 3022

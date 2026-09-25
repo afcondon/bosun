@@ -22,4 +22,13 @@ else
   [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 fi
 cd "$SCRIPT_DIR/../.."   # tools/launchd → the bosun repo root
+# One script, every machine: a host with its own fixtures/<host>-router/ runs
+# that group; everything else runs the MBP's fixtures/router/. The mini also
+# needs --targets, so that `host: macmini` resolves to local execution rather
+# than the ssh-to-self the default targets encode.
+case "$(scutil --get LocalHostName 2>/dev/null | tr '[:upper:]' '[:lower:]')" in
+  *mac-mini*)
+    exec node cli/run.js --targets fixtures/macmini-router/targets.json \
+      supervise --port 3990 fixtures/macmini-router/compose.yml fixtures/macmini-router/registry.json ;;
+esac
 exec node cli/run.js supervise --port 3990 fixtures/router/compose.yml fixtures/router/registry.json
