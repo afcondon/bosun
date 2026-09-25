@@ -28,7 +28,8 @@ import Bosun.Apply (Command(..), StagedCommand, applyScript, downScript)
 import Bosun.Atoms (ServiceId, unServiceId)
 import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (readJsonFile, readYamlFile)
-import Bosun.CLI.Observe (observeSupSnapshot)
+import Bosun.CLI.Observe (observeHolding, observeHoldings, observeSupSnapshot)
+import Bosun.Holding (Holding(..), describeHolder, holdingJson, readReap, reapScript, reapSettled, reapTag, strangers)
 import Bosun.CLI.Resident (Resident, accepted, nowMs, refused, runResident)
 import Bosun.CLI.Supervise.Machine (complaints, desiredFromPhase, evDone, evDown, evRejected, evReload, evReloaded, evRestart, evTick, evUp, phaseTag)
 import Bosun.Machine.SuperviseGroup as SG
@@ -42,7 +43,7 @@ import Bosun.Plan (Change(..), Plan, Status(..), plan, planSteps)
 import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderAddressMiss, renderCommand, renderReport, renderTeardown, renderTeardownSummary)
 import Bosun.Serve (controlPort)
-import Bosun.Service (Deployment, ValidatedDeployment, deploymentServices, unServiceRef, unValidatedDeployment)
+import Bosun.Service (Deployment, LooseService, ValidatedDeployment, deploymentServices, unServiceRef, unValidatedDeployment)
 import Bosun.Substrate (TeardownVerdict, readTeardown, teardownSettled, teardownTag)
 import Bosun.Supervisor (Launch, Policies, SuperviseDiff, SupConfig, SupState, SvcState, addressService, cfgFor, clearFails, defaultConfig, emptySupState, forgetLaunches, policies, recordLaunches, refine, superviseDiff)
 import Bosun.Target (TargetMap)
@@ -176,6 +177,13 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
   -- What the machine did during the fire that is currently running, so the HTTP
   -- reply can report it. Cleared before each verb.
   outRef <- Ref.new emptyOut
+  -- WHOSE process holds the port of the service a `restart` names, read just
+  -- before the machine decides (Bosun.Holding). The machine's
+  -- `port-held-by-foreigner` fact is this, and `restart-one` acts on it: a
+  -- stranger it may claim is stopped first, so the launch that follows binds
+  -- the port instead of dying on EADDRINUSE while the old code keeps
+  -- answering — the 2026-09-25 `ok` that restarted nothing.
+  pendingHolding <- Ref.new (Nothing :: Maybe Holding)
   -- The observation the current pass is working from, so `reconcile` enacts
   -- against what was just seen instead of observing the rig twice in one tick.
   observedRef <- Ref.new Map.empty
@@ -344,13 +352,19 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
       phase <- Ref.read phaseRef
       td <- Ref.read teardownRef
       dep <- Ref.read depRef
-      pure (snapshotBody (policiesFor dep) phase st td)
+      holders <- observeHoldings targets (deploymentServices dep)
+      pure (snapshotBody (policiesFor dep) phase st td holders)
 
     -- =====================================================================
     -- The seam: what the artifact's words mean here
     -- =====================================================================
 
     note msg = when (msg /= "") (Ref.modify_ (\o -> o { notes = A.snoc o.notes msg }) outRef)
+
+    -- A command that ran and did not do what the verb promised. The reply is
+    -- `ok:false` with this sentence: the machine accepted the verb, the world
+    -- did not comply, and an `ok` would be the lie.
+    fail msg = Ref.modify_ (_ { failure = Just msg }) outRef
 
     -- The world the guards read.
     --
@@ -362,11 +376,13 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
     machineWorld = do
       arg <- Ref.read pendingArg
       observed <- Ref.read observedRef
+      holding <- Ref.read pendingHolding
       pure
         ( worldFrom machine
             # setConfig (ConfigId "reload-source") (VBoolean (isJust reloadSource))
             # setFact (FactId "service-in-group")
                 (VBoolean (isRight (addressService (Set.toUnfoldable (Map.keys observed)) arg)))
+            # setFact (FactId "port-held-by-foreigner") (VBoolean (heldByForeigner holding))
         )
 
     -- One reconcile against a FRESH observation.
@@ -402,8 +418,25 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
           -- restart asserts the cause is fixed, and `fails` is exactly the
           -- accumulated belief that it is not.
           Ref.modify_ (clearFails [ sid ]) supRef
-          enactPlan ("restart " <> arg) now (Map.insert sid Failed observed)
-          note ("restart: " <> arg)
+          holding <- Ref.read pendingHolding
+          -- A claimable stranger is stopped BEFORE the launch, because the
+          -- launch cannot do it: its reap reads the pgid this group recorded,
+          -- and the stranger is not in it. If it will not go, nothing is
+          -- launched and the answer says so — a relaunch into a held port is
+          -- the silent success this exists to end.
+          cleared <- case holding of
+            Just (Stranger st) | st.claimable -> do
+              res <- execLine (reapScript st.holders)
+              pure (readReap res.message st.holders)
+            _ -> pure []
+          if A.all (\(Tuple _ v) -> reapSettled v) cleared then do
+            enactPlan ("restart " <> arg) now (Map.insert sid Failed observed)
+            note ("restart: " <> arg <> restartDetail holding)
+          else
+            fail
+              ( "nothing restarted: could not stop what holds its port — "
+                  <> intercalate "; " (map (\(Tuple h v) -> describeHolder h <> ": " <> reapTag v) cleared)
+              )
 
     changedIds p = p.diff.removed <> p.diff.changed
 
@@ -510,9 +543,11 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
       out <- Ref.read outRef
       phase <- Ref.read phaseRef
       let extra = A.filter (_ /= "") out.notes
-      case out.refusal of
-        Just rid -> refused (label <> ": " <> textOfRefusal machine rid)
-        Nothing -> accepted
+      holding <- Ref.read pendingHolding
+      case out.refusal, out.failure of
+        Just rid, _ -> refused (label <> ": " <> textOfRefusal machine rid <> refusalDetail holding)
+        Nothing, Just msg -> refused (label <> ": " <> msg)
+        Nothing, Nothing -> accepted
           ( label <> ": " <> phaseTag phase
               <> (if A.null extra then "" else " — " <> intercalate " " extra)
           )
@@ -550,7 +585,15 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
             case out.refusal of
               Just _ -> refused (renderAddressMiss { verb: "restart", asked: arg, routerPort: controlPort } miss)
               Nothing -> accepted ("restart: " <> arg)
-          Right _ -> fireVerb "restart" evRestart
+          Right sid -> do
+            dep <- Ref.read depRef
+            holding <- case A.find (\sv -> sv.id == sid) (deploymentServices dep) of
+              Just sv -> Just <$> observeHolding targets sv
+              Nothing -> pure Nothing
+            Ref.write holding pendingHolding
+            result <- fireVerb "restart" evRestart
+            Ref.write Nothing pendingHolding
+            pure result
       "reload" -> fireVerb "reload" evReload
       _ -> refused ("unknown control verb: " <> verb)
   -- Enter the artifact's initial state. It is `held` and has no entry commands,
@@ -606,16 +649,30 @@ reloadSummary d =
 -- | complaint the artifact answers. Keeping the field at all is deliberate: the
 -- | Chair on :3020 reads it, and an additive `/state` means the running Chair
 -- | keeps working untouched while it learns about phases at its own pace.
-snapshotBody :: Policies -> StateId -> SupState -> Map.Map ServiceId { verdict :: TeardownVerdict, at :: Number } -> String
-snapshotBody ps phase st td =
+snapshotBody :: Policies -> StateId -> SupState -> Map.Map ServiceId { verdict :: TeardownVerdict, at :: Number } -> Map.Map ServiceId Holding -> String
+snapshotBody ps phase st td holders =
   "{ \"desired\": \"" <> (if desiredFromPhase phase then "up" else "down") <> "\""
     <> ", \"phase\": \"" <> phaseTag phase <> "\""
     <> ", \"supervised\": true"
     <> ", \"services\": { " <> intercalate ", " (map svcEntry entries) <> " }"
     <> ", \"supervision\": { " <> intercalate ", " (map supEntry entries) <> " }"
     <> teardownField
+    <> holdersField
     <> " }"
   where
+  -- WHOSE process each status is about (Bosun.Holding). Additive, like
+  -- `teardown`: `services` keeps its words for every existing decoder, and a
+  -- stranger answering on a service's port no longer reads exactly like a
+  -- process this group owns. Services with no TCP port are left out.
+  holdersField =
+    let hs = A.filter (\(Tuple _ h) -> holdingTagIsPorted h) (Map.toUnfoldable holders :: Array (Tuple ServiceId Holding))
+    in
+      if A.null hs then ""
+      else ", \"holders\": { " <> intercalate ", " (map (\(Tuple sid h) -> "\"" <> unServiceId sid <> "\": " <> holdingJson h) hs) <> " }"
+  holdingTagIsPorted = case _ of
+    NoPort -> false
+    _ -> true
+
   entries = Map.toUnfoldable st :: Array (Tuple ServiceId SvcState)
 
   teardownEntries = Map.toUnfoldable td :: Array (Tuple ServiceId { verdict :: TeardownVerdict, at :: Number })
@@ -672,10 +729,37 @@ statusToken = case _ of
 -- | A refusal and a set of notes, rather than a Boolean and a message: the
 -- | commands that run during a transition each have something to say — a
 -- | teardown summary, a reload diff — and the reply is the sum of them.
-type MachineOut = { refusal :: Maybe RefusalId, notes :: Array String }
+type MachineOut = { refusal :: Maybe RefusalId, notes :: Array String, failure :: Maybe String }
 
 emptyOut :: MachineOut
-emptyOut = { refusal: Nothing, notes: [] }
+emptyOut = { refusal: Nothing, notes: [], failure: Nothing }
+
+-- | The machine's `port-held-by-foreigner` fact: a stranger holds the port and
+-- | is not one this group may claim.
+heldByForeigner :: Maybe Holding -> Boolean
+heldByForeigner = case _ of
+  Just (Stranger st) -> not st.claimable
+  _ -> false
+
+-- | Who was on the port, for a refusal that has to name what it did not touch.
+refusalDetail :: Maybe Holding -> String
+refusalDetail = case _ of
+  Just h@(Stranger _) -> " — " <> intercalate "; " (map describeHolder (strangers h))
+  _ -> ""
+
+-- | What a restart that went ahead replaced, said so the answer is about the
+-- | process and not only the request. Criterion 1 of the findings: never a bare
+-- | `ok` over a process that was not replaced.
+restartDetail :: Maybe Holding -> String
+restartDetail = case _ of
+  Just (Ours hs) -> " — replaced " <> intercalate ", " (map describeHolder hs)
+  Just h@(Stranger st) ->
+    " — replaced " <> intercalate ", " (map describeHolder (strangers h))
+      <> ", which this group had not started"
+      <> (if A.null st.ours then "" else "; and its own " <> intercalate ", " (map describeHolder st.ours))
+  Just Unheld -> " — nothing was listening on its port"
+  Just (Unobservable why) -> " — whose process was replaced is not known: " <> why
+  _ -> ""
 
 showCommand :: CommandId -> String
 showCommand = show

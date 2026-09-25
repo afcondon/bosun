@@ -65,14 +65,16 @@
   ],
 
   "facts": [
-    { "id": "service-in-group", "label": "The named service is in this group" }
+    { "id": "service-in-group", "label": "The named service is in this group" },
+    { "id": "port-held-by-foreigner", "label": "Its port is held by a process this group did not start, running from somewhere else" }
   ],
 
   "refusals": [
     { "id": "not-raised",       "text": "the group is held down" },
     { "id": "no-such-service",  "text": "no service of that name in this group" },
     { "id": "no-reload-source", "text": "this resident has no spec to re-read" },
-    { "id": "busy",             "text": "something is already in flight" }
+    { "id": "busy",             "text": "something is already in flight" },
+    { "id": "held-by-foreigner", "text": "nothing restarted: its port is held by a process this group did not start and that does not run from the service's directory, so it was not touched" }
   ],
 
   "commands": [
@@ -109,7 +111,7 @@
     { "from": "raised", "on": "tick",     "cases": [ { "to": "raised" } ] },
     { "from": "raised", "on": "up",       "cases": [ { "to": "raising" } ] },
     { "from": "raised", "on": "down",     "cases": [ { "to": "lowering" } ] },
-    { "from": "raised", "on": "restart",  "cases": [ { "when": { "fact": "service-in-group" }, "to": "restarting" }, { "refuse": "no-such-service" } ] },
+    { "from": "raised", "on": "restart",  "cases": [ { "when": { "not": { "fact": "service-in-group" } }, "refuse": "no-such-service" }, { "when": { "fact": "port-held-by-foreigner" }, "refuse": "held-by-foreigner" }, { "to": "restarting" } ] },
     { "from": "raised", "on": "reload",   "cases": [ { "when": { "config": "reload-source" }, "to": "reloading" }, { "refuse": "no-reload-source" } ] },
     { "from": "raised", "on": "done",     "cases": [ { "stay": true } ] },
     { "from": "raised", "on": "reloaded", "cases": [ { "stay": true } ] },

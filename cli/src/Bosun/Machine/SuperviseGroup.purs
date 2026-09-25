@@ -94,6 +94,7 @@ type Commands v =
 type Refusals :: Row Type
 type Refusals =
   ( "busy" :: Unit
+  , "held-by-foreigner" :: Unit
   , "no-reload-source" :: Unit
   , "no-such-service" :: Unit
   , "not-raised" :: Unit
@@ -105,6 +106,7 @@ type Refusals =
 type Excuses :: Type -> Row Type
 type Excuses b =
   ( "busy" :: Unit -> b
+  , "held-by-foreigner" :: Unit -> b
   , "no-reload-source" :: Unit -> b
   , "no-such-service" :: Unit -> b
   , "not-raised" :: Unit -> b

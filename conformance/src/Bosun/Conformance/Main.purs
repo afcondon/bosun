@@ -15,6 +15,7 @@ import Bosun.Edge (Gate(..), Requirement(..))
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Reachability (hostPort, noNetwork)
 import Bosun.Health (BaseRestart(..), Probe(..))
+import Bosun.Holding (holdingJson, holdingScript, judgeHolding, readHoldingEvidence, readReap, reapScript, reapTag, strangers)
 import Bosun.Apply (applyScript)
 import Bosun.Target (defaultTargets)
 import Bosun.Plan (Snapshot, Status(..), plan)
@@ -23,9 +24,10 @@ import Bosun.Report (renderPlan, renderReport, renderScript)
 import Bosun.Service (ServiceInstance, Source(..), ValidatedDeployment, mkRole)
 import Bosun.Validate (validate)
 import Data.Either (Either(..), either)
+import Data.Foldable (intercalate)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromJust)
-import Data.Tuple (Tuple(..))
+import Data.Tuple (Tuple(..), snd)
 import Data.Validation.Semigroup (toEither)
 import Effect (Effect)
 import Effect.Console (log)
@@ -44,6 +46,9 @@ main = do
   log ""
   log "--- apply script for the same plan (Phase 6B) ---"
   log applyReport
+  log ""
+  log "--- who holds each port (Bosun.Holding) ---"
+  log holdingReport
 
 -- | The plan column (BUILD-PLAN Phase 5). A clean three-tier deployment that
 -- | validates, against an observed snapshot where the api crashed: the base
@@ -164,3 +169,45 @@ absPath s = unsafePartial (fromJust (mkAbsPath s))
 
 port_ :: Int -> Port
 port_ n = unsafePartial (fromJust (mkPort n))
+
+-- | The ownership column (docs/FINDINGS-restart-ok-on-orphan.md). Evidence
+-- | shaped like what the host printed on 2026-09-25 — the orphan on :3029, an
+-- | owned process, a split bind — parsed, judged, rendered, and the scripts
+-- | that gather and act on it. The Go column is the reference runtime, so the
+-- | verdict that decides whether a restart may stop a process must lower to it
+-- | byte-identically.
+holdingReport :: String
+holdingReport =
+  intercalate "\n"
+    ( map line cases
+        <> [ holdingScript [ hp 3029, hp 3040 ] [ { sid: mkServiceId "friends-of-itajara", cwd: Just dir }, { sid: mkServiceId "a:b", cwd: Nothing } ]
+           , reapScript orphans
+           , intercalate " " (map (reapTag <<< snd) (readReap "bosun-reap:94743:reaped" orphans))
+           ]
+    )
+  where
+  dir = "/Users/afc/work/afc-work/music/friends-of-itajara"
+  hp n = unsafePartial (fromJust (mkPort n))
+  ev = readHoldingEvidence
+    { ran: true
+    , output: intercalate "\n"
+        [ "#listen", "p94743", "n127.0.0.1:3029", "p77387", "n*:3030", "p5001", "n127.0.0.1:3040", "p6002", "n[::1]:3040"
+        , "#ps"
+        , "94743 94743 Sun Sep 20 11:34:15 2026 node server.mjs"
+        , "77387 77380 Fri Sep 25 18:55:32 2026 node \"quoted\" server.mjs"
+        , " 5001  5000 Fri Sep 25 10:00:00 2026 python3 -m http.server 3040"
+        , " 6002  6002 Tue Sep 01 09:00:00 2026 python3 -m http.server 3040"
+        , "#cwd", "p94743", "n" <> dir, "p77387", "n" <> dir, "p5001", "n/srv/site", "p6002", "n/somewhere/else"
+        , "#recorded", "friends-of-itajara\t77380", "friend-b\t77380", "site\t5000", "#end"
+        ]
+    }
+  cases =
+    [ Tuple "orphan, claimable" { sid: mkServiceId "friends-of-itajara", ports: [ hp 3029 ], cwd: Just dir }
+    , Tuple "orphan, foreign" { sid: mkServiceId "friends-of-itajara", ports: [ hp 3029 ], cwd: Just "/elsewhere" }
+    , Tuple "ours" { sid: mkServiceId "friend-b", ports: [ hp 3030 ], cwd: Just dir }
+    , Tuple "split bind" { sid: mkServiceId "site", ports: [ hp 3040 ], cwd: Just "/srv/site" }
+    , Tuple "unheld" { sid: mkServiceId "nobody", ports: [ hp 3999 ], cwd: Nothing }
+    , Tuple "no port" { sid: mkServiceId "nobody", ports: [], cwd: Nothing }
+    ]
+  line (Tuple label svc) = label <> ": " <> holdingJson (judgeHolding ev svc)
+  orphans = strangers (judgeHolding ev { sid: mkServiceId "friends-of-itajara", ports: [ hp 3029 ], cwd: Just dir })

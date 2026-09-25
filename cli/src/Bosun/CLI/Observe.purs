@@ -14,11 +14,17 @@ module Bosun.CLI.Observe
   ( observe
   , observeSnapshot
   , observeSupSnapshot
+  , observeHoldings
+  , observeHolding
   ) where
 
 import Prelude
 
 import Bosun.Atoms (Host, ServiceId, unAbsPath, unHost, unPort)
+import Bosun.CLI.Exec as Exec
+import Bosun.Executor (Executor(..))
+import Bosun.Holding (Holding(..), HoldingEvidence, holdingScript, judgeHolding, readHoldingEvidence, tcpPorts)
+import Bosun.Target (TargetMap, isRemote, resolveTarget)
 import Bosun.Substrate (pidPath)
 import Bosun.Exposure (Exposure(..))
 import Bosun.Reachability (classify)
@@ -144,3 +150,48 @@ httpStatus expect code
   | code == "000" = Down            -- nothing answered the connection
   | code == show expect = Running   -- answered with the expected status
   | otherwise = Failed              -- answered, but the wrong status
+
+-- | WHOSE process holds each service's port (Bosun.Holding) — the reading that
+-- | tells an owned `running` from a stranger answering on our port. One
+-- | evidence script covers every local service with a TCP port; a service on a
+-- | remote host is reported unobservable rather than guessed at, since `lsof`
+-- | here would be describing the wrong machine.
+-- |
+-- | Not part of the tick. Nothing acts on a stranger unasked, so this runs only
+-- | where the answer is read: `/state`, and a `restart` about to act.
+observeHoldings :: TargetMap -> Array LooseService -> Effect (Map ServiceId Holding)
+observeHoldings targets svcs = do
+  let
+    ported = A.filter (\s -> isLocal s && not (A.null (tcpPorts s.reachability))) svcs
+    ports = A.nub (A.concatMap (\s -> tcpPorts s.reachability) ported)
+  ev <-
+    if A.null ported then pure (readHoldingEvidence { ran: false, output: "" })
+    else do
+      res <- Exec.execLine (holdingScript ports (map (\s -> { sid: s.id, cwd: serviceCwd s }) ported))
+      pure (readHoldingEvidence { ran: res.ok, output: res.message })
+  pure (Map.fromFoldable (map (\s -> Tuple s.id (judgeOne ev s)) svcs))
+  where
+  isLocal s = not (isRemote (resolveTarget targets s.host))
+
+  judgeOne :: HoldingEvidence -> LooseService -> Holding
+  judgeOne ev s =
+    if isLocal s then judgeHolding ev { sid: s.id, ports: tcpPorts s.reachability, cwd: serviceCwd s }
+    else Unobservable "the service runs on a remote host"
+
+-- | One service's holding (what `restart` reads just before it acts).
+observeHolding :: TargetMap -> LooseService -> Effect Holding
+observeHolding targets s = do
+  m <- observeHoldings targets [ s ]
+  pure (fromMaybe' m)
+  where
+  fromMaybe' m = case Map.lookup s.id m of
+    Just h -> h
+    Nothing -> Unobservable "no reading"
+
+-- The directory a process service is launched from — what a claimable
+-- stranger must share. Other executors have none, so nothing they hold is
+-- claimable.
+serviceCwd :: LooseService -> Maybe String
+serviceCwd s = case s.launch.executor of
+  Process p -> Just (unAbsPath p.cwd)
+  _ -> Nothing

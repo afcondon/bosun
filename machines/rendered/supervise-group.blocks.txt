@@ -57,13 +57,15 @@ config
   reload-source  = true  "This resident can re-read its spec"
 
 facts
-  service-in-group  "The named service is in this group"
+  service-in-group        "The named service is in this group"
+  port-held-by-foreigner  "Its port is held by a process this group did not start, running from somewhere else"
 
 refusals
-  not-raised        "the group is held down"
-  no-such-service   "no service of that name in this group"
-  no-reload-source  "this resident has no spec to re-read"
-  busy              "something is already in flight"
+  not-raised         "the group is held down"
+  no-such-service    "no service of that name in this group"
+  no-reload-source   "this resident has no spec to re-read"
+  busy               "something is already in flight"
+  held-by-foreigner  "nothing restarted: its port is held by a process this group did not start and that does not run from the service's directory, so it was not touched"
 
 commands
   bring-up                 "Enact the plan from a standing start"
@@ -90,14 +92,15 @@ raising:
 
 raised:
   entry  reconcile
-  tick                                             -> raised
-  up                                               -> raising
-  down                                             -> lowering
-  restart                   when service-in-group  -> restarting
-                            else                   -> refuse no-such-service
-  reload                    when reload-source     -> reloading
-                            else                   -> refuse no-reload-source
-  done, reloaded, rejected                         -> stay
+  tick                                                   -> raised
+  up                                                     -> raising
+  down                                                   -> lowering
+  restart                   when not service-in-group    -> refuse no-such-service
+                            elif port-held-by-foreigner  -> refuse held-by-foreigner
+                            else                         -> restarting
+  reload                    when reload-source           -> reloading
+                            else                         -> refuse no-reload-source
+  done, reloaded, rejected                               -> stay
 
 lowering:
   entry  tear-down, forget-launch-memory

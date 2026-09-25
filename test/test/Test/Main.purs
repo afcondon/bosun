@@ -8,6 +8,7 @@ import Test.Bosun.ApplySpec as ApplySpec
 import Test.Bosun.ArtifactSpec as ArtifactSpec
 import Test.Bosun.AtomsSpec as AtomsSpec
 import Test.Bosun.DockerPsSpec as DockerPsSpec
+import Test.Bosun.HoldingSpec as HoldingSpec
 import Test.Bosun.PBTSpec as PBTSpec
 import Test.Bosun.PlanSpec as PlanSpec
 import Test.Bosun.ReachabilitySpec as ReachabilitySpec
@@ -37,6 +38,7 @@ main = runSpecAndExitProcess [specReporter] do
     PlanSpec.spec
     ApplySpec.spec
     SubstrateSpec.spec
+    HoldingSpec.spec
     ServeSpec.spec
     SupervisorSpec.spec
     ViewSpec.spec

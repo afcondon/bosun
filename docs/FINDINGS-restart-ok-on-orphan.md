@@ -96,3 +96,88 @@ Acceptance, in the terms this failure was found in:
 After any restart, check the port holder's start time. If it is older than
 the restart, kill that pid by hand; Bosun then spawns the registered command,
 and that one responds to later restarts.
+
+---
+
+# Resolution (2026-09-25, branch `restart-truth`)
+
+## What changed
+
+**`Bosun.Holding`** (core, pure; lowers to Go) answers *whose process is on the
+port*. One evidence script collects every TCP listener on the services' ports,
+in both address families. For each listener it gets the pid, process group,
+start time, command and working directory, plus each service's recorded pgid
+and the **physical** form of its registered directory. `judgeHolding` then
+returns one of:
+
+- `ours`: every listener is in the group this supervisor recorded
+- `stranger`: something this group did not start holds the port, with our own
+  listeners (if any) kept beside it, which covers the IPv4/IPv6 split bind
+- `none`, `no-port`, or `unobservable` (a remote host, or `lsof` did not
+  complete; never read as `none`)
+
+A stranger is **claimable** only if it runs from the service's own registered
+directory, compared physically, since `lsof` reports `/private/tmp/x` for a
+`/tmp/x` launch.
+
+**`/state`** gains an additive `holders` map. `services` keeps its words, so
+every existing decoder is unaffected (criterion 3).
+
+**`restart`** reads the holding just before the machine decides:
+
+- a **claimable stranger** is stopped first (TERM on its group, wait up to 5s,
+  then KILL), and then the service is launched. The answer names what was
+  replaced: `replaced pid 94743 (node server.mjs, since …, in …), which this
+  group had not started`. If the stranger would not stop, nothing is launched
+  and the answer is `ok:false`. A stranger in the supervisor's own process group
+  is signalled by pid alone, and pgids 0 and 1 are never signalled.
+- a **foreign stranger** is refused by the machine, through the new
+  `port-held-by-foreigner` fact and `held-by-foreigner` refusal in
+  `machines/supervise-group.json`. The answer is `ok:false`, naming the process
+  and saying it was not touched (criterion 1).
+- **our own process**: as before, but the answer names the pid it replaced
+  (criterion 2 is then true by construction: the old pid is gone before the
+  launch).
+
+The keep-alive tick does **not** act on strangers. Only an operator's restart
+does.
+
+## Verified
+
+- 270 unit tests (new `HoldingSpec`: parsing, every verdict, the split bind,
+  physical paths, reap tokens, JSON escaping).
+- `go-conformance.sh`: the node and Go columns are byte-identical over a new
+  Holding section.
+- Live, on `fixtures/hello` with control ports :3899 (node) and :3898 (Gnomon).
+  - A hand-started orphan in the service's directory was replaced with a pid
+    started at the moment of the request.
+  - A foreign process on `echoer`'s port was refused with `ok:false` and left
+    running.
+
+## The root cause underneath: macOS deletes the pidfiles
+
+The orphan on :3029 was not started by hand. **macOS deleted its pidfile.**
+`com.apple.tmp_cleaner` runs `/usr/libexec/tmp_cleaner` every day at 00:00. It
+removes anything in `/tmp` whose access, modification *and* change times are all
+more than 3 days old. A pidfile is written once, at launch, and this filesystem
+does not keep refreshing access times on read, so the supervisor reading it
+every tick does not save it. **Any service that runs for more than three days
+without a relaunch loses its pidfile at the next midnight, and becomes an orphan
+of its own supervisor.**
+
+Evidence from the MBP on 2026-09-25, 13 days after boot: every router-group
+pidfile (`chair-server`, `bosun-serve`, the sub-supervisors) is gone, and
+`chair-server` (running since 09-12) reads `stranger` in `holders`. The only
+pidfiles left are Atlantis services relaunched in the last three days.
+`friends-of-itajara` had run for five days.
+
+This is also a likely cause of blind-spots finding 2 (link-spike et al.
+relaunched thousands of times against their own orphans). For a `probe:
+process` service, a missing pidfile reads as `Down`, so the supervisor
+relaunches into the port or socket its own untracked process still holds.
+
+**Not fixed here.** The fix is to keep pidfiles somewhere nothing sweeps, such
+as a Bosun state directory under `$HOME`. It changes `pidPath`, which every
+launch, stop and probe uses, and a live rig needs a migration: a new supervisor
+must still find the pids that the old one recorded in `/tmp`. So it is its own
+change.
