@@ -38,3 +38,16 @@ services:
         command: ./.venv/bin/python3 tools/webapp/server.py --host 0.0.0.0 --port 8090
       expose:
         - host: 8090
+
+  marginalia-whisper:
+    x-bosun:
+      host: macmini
+      # Moved from launchd (net.hylograph.marginalia.whisper, now disabled)
+      # 2026-09-26. whisper-server.py loads the model BEFORE it binds :3200, so TCP
+      # readiness really does mean "can transcribe" (rule 4 holds as written).
+      # The venv's python is called directly instead of sourcing activate.
+      process:
+        cwd: /Users/andrew/work/marginalia-demo/project-tracker
+        command: tools/whisper-venv/bin/python3 tools/whisper-server.py --port 3200
+      expose:
+        - host: 3200
