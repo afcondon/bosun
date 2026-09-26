@@ -176,8 +176,22 @@ relaunched thousands of times against their own orphans). For a `probe:
 process` service, a missing pidfile reads as `Down`, so the supervisor
 relaunches into the port or socket its own untracked process still holds.
 
-**Not fixed here.** The fix is to keep pidfiles somewhere nothing sweeps, such
-as a Bosun state directory under `$HOME`. It changes `pidPath`, which every
-launch, stop and probe uses, and a live rig needs a migration: a new supervisor
-must still find the pids that the old one recorded in `/tmp`. So it is its own
-change.
+**Fixed with a lease, not a move (same branch, next commit).** The first
+instinct was to move pidfiles to a state directory under `$HOME`. That would
+have been worse: `/tmp` is cleared at boot, which is exactly the right lifetime
+for a pgid. A persistent directory would keep a pre-reboot pgid and one day
+signal whatever unrelated group inherited the number. What was missing was an
+owner saying the record is still in use. `Substrate.pidLease` runs `touch -c`
+on the pidfile of every group still alive, on the supervisor's first
+observation and every 10 minutes after. `touch -c` refreshes all three
+timestamps the sweep tests and never creates a file, so a service that has gone
+keeps no lease. There is no path change and no migration.
+
+Verified in isolation: supervisor A launched `hello`, then A was stopped and the
+pidfiles backdated to Sep 20. Supervisor B was started `--held`, so it launched
+nothing. On its first observation both pidfiles were renewed, with the same
+listener pids, and `find -atime +3 -mtime +3 -ctime +3` no longer matched them.
+
+A pidfile the sweep already took is not recovered by this. Such a service shows
+as a claimable `stranger` in `holders`, and one `restart` puts it back under
+ownership.

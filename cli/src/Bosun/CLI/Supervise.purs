@@ -44,7 +44,7 @@ import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderAddressMiss, renderCommand, renderReport, renderTeardown, renderTeardownSummary)
 import Bosun.Serve (controlPort)
 import Bosun.Service (Deployment, LooseService, ValidatedDeployment, deploymentServices, unServiceRef, unValidatedDeployment)
-import Bosun.Substrate (TeardownVerdict, readTeardown, teardownSettled, teardownTag)
+import Bosun.Substrate (TeardownVerdict, leaseEveryMs, pidLease, readTeardown, teardownSettled, teardownTag)
 import Bosun.Supervisor (Launch, Policies, SuperviseDiff, SupConfig, SupState, SvcState, addressService, cfgFor, clearFails, defaultConfig, emptySupState, forgetLaunches, policies, recordLaunches, refine, superviseDiff)
 import Bosun.Target (TargetMap)
 import Bosun.Validate (validate)
@@ -56,7 +56,7 @@ import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, isJust, maybe)
 import Data.Set as Set
 import Data.Traversable (traverse)
-import Data.Tuple (Tuple(..))
+import Data.Tuple (Tuple(..), fst)
 import Data.Validation.Semigroup (toEither)
 import Effect (Effect)
 import Effect.Console (log)
@@ -184,6 +184,10 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
   -- the port instead of dying on EADDRINUSE while the old code keeps
   -- answering — the 2026-09-25 `ok` that restarted nothing.
   pendingHolding <- Ref.new (Nothing :: Maybe Holding)
+  -- When the pidfile lease was last renewed (Substrate.pidLease). Zero, so the
+  -- first observation renews at once — a supervisor restarted onto pidfiles
+  -- already two days old must not let them lapse on the third.
+  leaseRef <- Ref.new 0.0
   -- The observation the current pass is working from, so `reconcile` enacts
   -- against what was just seen instead of observing the rig twice in one tick.
   observedRef <- Ref.new Map.empty
@@ -336,7 +340,17 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
       let refined = refine (policiesFor dep) now prev obs
       Ref.write refined.state supRef
       Ref.write refined.snapshot observedRef
+      renewLease now obs
       pure now
+
+    -- Renew the pidfile lease of every group still alive, so macOS's three-day
+    -- `/tmp` sweep never takes the record of a process this group is running.
+    renewLease now obs = do
+      last <- Ref.read leaseRef
+      when (now - last >= leaseEveryMs) do
+        let alive = map fst (A.filter (\(Tuple _ o) -> o.groupAlive) (Map.toUnfoldable obs))
+        unless (A.null alive) (void (execLine (pidLease alive)))
+        Ref.write now leaseRef
 
     -- Refresh only when nothing is about to. `reconcile` observes for itself —
     -- its own label says so — so a raised tick that refreshed here as well

@@ -16,7 +16,7 @@ import Prelude
 
 import Bosun.Atoms (ServiceId, mkServiceId)
 import Bosun.Report (renderTeardown, renderTeardownSummary)
-import Bosun.Substrate (TeardownVerdict(..), allTeardownVerdicts, daemonize, OS(..), pidStop, readTeardown, teardownSettled, teardownTag)
+import Bosun.Substrate (TeardownVerdict(..), allTeardownVerdicts, daemonize, OS(..), pidLease, pidStop, readTeardown, teardownSettled, teardownTag)
 import Data.Array as A
 import Data.String (Pattern(..))
 import Data.String as String
@@ -33,6 +33,14 @@ spoke out = readTeardown { ran: true, output: out }
 
 spec :: Spec Unit
 spec = describe "Bosun.Substrate (teardown)" do
+
+  describe "pidLease" do
+
+    -- The lease refreshes every time the three-day /tmp sweep tests, and must
+    -- never create a pidfile: a group that has gone keeps no record.
+    it "touches each live service's pidfile without creating any" $
+      pidLease [ sid "friends-of-itajara", sid "hello:greeter" ]
+        `shouldEqual` "touch -c /tmp/bosun-apply-friends-of-itajara.pid /tmp/bosun-apply-hello-greeter.pid"
 
   describe "readTeardown" do
 

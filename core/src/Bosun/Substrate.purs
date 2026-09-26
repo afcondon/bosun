@@ -35,6 +35,8 @@ module Bosun.Substrate
   , readTeardown
   , releaseBudgetSecs
   , pidPath
+  , pidLease
+  , leaseEveryMs
   , logPath
   , shellQuote
   ) where
@@ -378,6 +380,31 @@ pidStop sid =
 -- | and the supervisor's liveness probe read it. (Path only — OS-independent.)
 pidPath :: ServiceId -> String
 pidPath sid = "/tmp/bosun-apply-" <> sanitizeId sid <> ".pid"
+
+-- | THE LEASE on a pidfile, renewed by the supervisor that owns it.
+-- |
+-- | macOS's `com.apple.tmp_cleaner` deletes, every midnight, anything in `/tmp`
+-- | whose atime, mtime and ctime are ALL over three days old — and a pidfile is
+-- | written once, at launch, and reading it does not refresh its atime here. So
+-- | a service that ran three days without a relaunch lost its pidfile, and its
+-- | supervisor lost it: `restart` replaced nothing, `down` signalled nothing,
+-- | and a `probe: process` service read Down and was relaunched into its own
+-- | running copy (docs/FINDINGS-restart-ok-on-orphan.md, "the root cause").
+-- |
+-- | `/tmp` itself is RIGHT for a pidfile and stays: it is cleared at boot, so a
+-- | pgid recorded before a reboot can never be trusted after one and signal
+-- | some unrelated group that inherited the number. A persistent directory
+-- | would trade the sweep for that. What was missing is only that the owner
+-- | says, while the group lives, that the record is still in use — `touch -c`
+-- | refreshes all three times and never creates a file, so a service that has
+-- | gone keeps no lease.
+pidLease :: Array ServiceId -> String
+pidLease sids = "touch -c " <> String.joinWith " " (map pidPath sids)
+
+-- | How often the lease is renewed: often enough to be far inside the
+-- | three-day sweep, rarely enough to cost nothing.
+leaseEveryMs :: Number
+leaseEveryMs = 600000.0
 
 logPath :: ServiceId -> String
 logPath sid = "/tmp/bosun-apply-" <> sanitizeId sid <> ".log"
