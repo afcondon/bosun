@@ -15,7 +15,8 @@ import Bosun.Edge (Gate(..), Requirement(..))
 import Bosun.Executor (ContainerSpec(..), Executor(..), ImageRef(..))
 import Bosun.Reachability (hostPort, noNetwork)
 import Bosun.Health (BaseRestart(..), Probe(..))
-import Bosun.Holding (holdingJson, holdingScript, judgeHolding, readHoldingEvidence, readReap, reapScript, reapTag, strangers)
+import Bosun.Holding (ReapVerdict(..), holdingJson, holdingScript, judgeHolding, readHoldingEvidence, readReap, reapScript, reapTag, settleTeardown, strangers)
+import Bosun.Substrate (TeardownVerdict(..), teardownTag)
 import Bosun.Apply (applyScript)
 import Bosun.Target (defaultTargets)
 import Bosun.Plan (Snapshot, Status(..), plan)
@@ -26,7 +27,7 @@ import Bosun.Validate (validate)
 import Data.Either (Either(..), either)
 import Data.Foldable (intercalate)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromJust)
+import Data.Maybe (Maybe(..), fromJust, maybe)
 import Data.Tuple (Tuple(..), snd)
 import Data.Validation.Semigroup (toEither)
 import Effect (Effect)
@@ -183,6 +184,8 @@ holdingReport =
         <> [ holdingScript [ hp 3029, hp 3040 ] [ { sid: mkServiceId "friends-of-itajara", cwd: Just dir }, { sid: mkServiceId "a:b", cwd: Nothing } ]
            , reapScript orphans
            , intercalate " " (map (reapTag <<< snd) (readReap "bosun-reap:94743:reaped" orphans))
+           , settled NoRecord StrangerReaped
+           , settled AlreadyGone StrangerRefused
            ]
     )
   where
@@ -210,4 +213,9 @@ holdingReport =
     , Tuple "no port" { sid: mkServiceId "nobody", ports: [], cwd: Nothing }
     ]
   line (Tuple label svc) = label <> ": " <> holdingJson (judgeHolding ev svc)
+  claimed = judgeHolding ev { sid: mkServiceId "friends-of-itajara", ports: [ hp 3029 ], cwd: Just dir }
+  settled own rv =
+    let r = settleTeardown own claimed (map (\h -> Tuple h rv) (strangers claimed))
+    in "down: " <> teardownTag own <> " + stranger " <> reapTag rv <> " -> " <> teardownTag r.verdict
+         <> maybe "" (" — " <> _) r.note
   orphans = strangers (judgeHolding ev { sid: mkServiceId "friends-of-itajara", ports: [ hp 3029 ], cwd: Just dir })

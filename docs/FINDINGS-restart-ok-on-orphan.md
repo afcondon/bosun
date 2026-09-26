@@ -195,3 +195,24 @@ listener pids, and `find -atime +3 -mtime +3 -ctime +3` no longer matched them.
 A pidfile the sweep already took is not recovered by this. Such a service shows
 as a claimable `stranger` in `holders`, and one `restart` puts it back under
 ownership.
+
+## `down` too (2026-09-26)
+
+`down`, and the partial stop a reload does, now look at the ports after
+stopping the recorded groups (`Holding.settleTeardown`):
+
+- A **claimable stranger** is stopped, and the service's verdict becomes
+  `reaped`. The 09-08 case (`no-record`, orphan still serving) is now a real
+  stop.
+- If the stranger would not stop, the verdict is `refused` or `survived`.
+- A **foreign stranger** is left alone and named in the reply. Its service's
+  own verdict is unchanged, so `no-record` with a foreigner on the port stays
+  unsettled.
+
+`down` is never refused for one port, because it is group-wide: it stops what
+it may and says what it did not.
+
+Verified live on `fixtures/hello`. With two hand-started orphans and no
+records, `down` stopped both (`teardown: reaped`, ports free); before, it
+answered `ok` and killed nothing. With a foreign process on `echoer`'s port,
+`down` named it, left it running, and still stopped `greeter`.

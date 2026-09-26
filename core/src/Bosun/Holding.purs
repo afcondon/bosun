@@ -43,13 +43,14 @@ module Bosun.Holding
   , readReap
   , reapSettled
   , jsonString
+  , settleTeardown
   ) where
 
 import Prelude
 
 import Bosun.Atoms (Port, ServiceId, unPort, unServiceId)
 import Bosun.Reachability (Address(..), Reachability, addresses)
-import Bosun.Substrate (pidPath, shellQuote)
+import Bosun.Substrate (TeardownVerdict(..), pidPath, shellQuote, teardownSettled)
 import Data.Array as A
 import Data.Foldable (all, foldl, intercalate)
 import Data.Int as Int
@@ -418,3 +419,52 @@ readReap output = map (\h -> Tuple h (verdictFor (show (unPid h.pid))))
     Just "refused" -> StrangerRefused
     Just "survived" -> StrangerSurvived
     _ -> ReapUnreadable
+
+-- ── what a teardown did, once the port has been looked at ────────────────────
+
+-- | A teardown's verdict with the port taken into account. `pidStop` can only
+-- | speak for the group this supervisor recorded, so on its own it reported an
+-- | orphan's service as `no-record` (or worse, `already-gone`) while the orphan
+-- | went on serving — `/control/down` answered `ok` and killed nothing (the
+-- | 2026-09-08 and 09-22 incidents in docs/FINDINGS-restart-ok-on-orphan.md).
+-- |
+-- | `down` is group-wide, so unlike `restart` it is never refused for one
+-- | port: it stops what it may and says exactly what it did not.
+-- |
+-- |   * a claimable stranger that was stopped: the service IS down, so the
+-- |     verdict is `Reaped` — unless our own group is the one that would not
+-- |     die, which stays the answer
+-- |   * a claimable stranger that would not stop: `Refused` or `Survived`,
+-- |     whatever the service's own group did
+-- |   * a foreign stranger: untouched, and the verdict is unchanged — a
+-- |     `no-record` with somebody else on the port stays unsettled, which is
+-- |     true; the sentence names who is there
+settleTeardown
+  :: TeardownVerdict
+  -> Holding
+  -> Array (Tuple Holder ReapVerdict)
+  -> { verdict :: TeardownVerdict, note :: Maybe String }
+settleTeardown own holding reaped = case holding of
+  Stranger st
+    | st.claimable ->
+        if A.all (reapSettled <<< snd') reaped && not (A.null reaped) then
+          { verdict: if teardownSettled own || own == NoRecord then Reaped else own
+          , note: Just ("stopped " <> intercalate ", " (map describeHolder st.holders) <> ", which this group had not started")
+          }
+        else
+          { verdict: if A.any ((_ == StrangerRefused) <<< snd') reaped then Refused else Survived
+          , note: Just
+              ( "could not stop what holds its port — "
+                  <> intercalate "; " (map (\(Tuple h v) -> describeHolder h <> ": " <> reapTag v) reaped)
+              )
+          }
+    | otherwise ->
+        { verdict: own
+        , note: Just
+            ( "its port is still held by " <> intercalate ", " (map describeHolder st.holders)
+                <> ", which this group did not start and which does not run from its directory; not touched"
+            )
+        }
+  _ -> { verdict: own, note: Nothing }
+  where
+  snd' (Tuple _ v) = v

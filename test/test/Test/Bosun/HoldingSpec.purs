@@ -9,13 +9,14 @@ module Test.Bosun.HoldingSpec where
 import Prelude
 
 import Bosun.Atoms (Port, ServiceId, mkPort, mkServiceId)
-import Bosun.Holding (Holding(..), ReapVerdict(..), holdingJson, holdingScript, holdingTag, jsonString, judgeHolding, mkPid, readHoldingEvidence, readReap, reapScript, strangers)
+import Bosun.Holding (Holding(..), ReapVerdict(..), holdingJson, holdingScript, holdingTag, jsonString, judgeHolding, mkPid, readHoldingEvidence, readReap, reapScript, settleTeardown, strangers)
+import Bosun.Substrate (TeardownVerdict(..))
 import Data.Array as A
 import Data.Maybe (Maybe(..), fromJust)
 import Partial.Unsafe (unsafePartial)
 import Data.String (Pattern(..))
 import Data.String as String
-import Data.Tuple (snd)
+import Data.Tuple (Tuple(..), snd)
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual)
 
@@ -168,6 +169,38 @@ spec = describe "Bosun.Holding" do
     it "never signals the supervisor's own process group" do
       let s = reapScript (strangers (judge { sid: sid "friends-of-itajara", ports: [ port 3029 ], cwd: Nothing }))
       String.contains (Pattern "!= \"$me\"") s `shouldEqual` true
+
+  describe "settleTeardown (down, with the port looked at)" do
+
+    let
+      orphan = judge { sid: sid "friends-of-itajara", ports: [ port 3029 ], cwd: Just itajaraDir }
+      elsewhere = judge { sid: sid "friends-of-itajara", ports: [ port 3029 ], cwd: Just "/elsewhere" }
+      reapedWith v = map (\h -> Tuple h v) (strangers orphan)
+
+    it "the 09-08 case: no record, a claimable orphan stopped — the service IS down" do
+      (settleTeardown NoRecord orphan (reapedWith StrangerReaped)).verdict `shouldEqual` Reaped
+
+    it "our group reaped and an orphan stopped too is still reaped" do
+      (settleTeardown Reaped orphan (reapedWith StrangerReaped)).verdict `shouldEqual` Reaped
+
+    it "if OUR group would not die, that stays the answer even when the orphan went" do
+      (settleTeardown Survived orphan (reapedWith StrangerReaped)).verdict `shouldEqual` Survived
+
+    it "an orphan the kernel refused to signal makes the service refused" do
+      (settleTeardown AlreadyGone orphan (reapedWith StrangerRefused)).verdict `shouldEqual` Refused
+
+    it "an orphan that outlived TERM and KILL makes the service survived" do
+      (settleTeardown Reaped orphan (reapedWith StrangerSurvived)).verdict `shouldEqual` Survived
+
+    it "a foreign holder is untouched: no-record stays unsettled, and the note names it" do
+      let r = settleTeardown NoRecord elsewhere []
+      r.verdict `shouldEqual` NoRecord
+      map (String.contains (Pattern "not touched")) r.note `shouldEqual` Just true
+
+    it "a free port changes nothing and says nothing" do
+      let r = settleTeardown Reaped Unheld []
+      r.verdict `shouldEqual` Reaped
+      r.note `shouldEqual` Nothing
 
   describe "holdingJson" do
 

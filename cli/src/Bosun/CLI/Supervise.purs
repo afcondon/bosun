@@ -29,7 +29,7 @@ import Bosun.Atoms (ServiceId, unServiceId)
 import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeHolding, observeHoldings, observeSupSnapshot)
-import Bosun.Holding (Holding(..), describeHolder, holdingJson, readReap, reapScript, reapSettled, reapTag, strangers)
+import Bosun.Holding (Holding(..), describeHolder, holdingJson, readReap, reapScript, reapSettled, reapTag, settleTeardown, strangers)
 import Bosun.CLI.Resident (Resident, accepted, nowMs, refused, runResident)
 import Bosun.CLI.Supervise.Machine (complaints, desiredFromPhase, evDone, evDown, evRejected, evReload, evReloaded, evRestart, evTick, evUp, phaseTag)
 import Bosun.Machine.SuperviseGroup as SG
@@ -44,7 +44,7 @@ import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderAddressMiss, renderCommand, renderReport, renderTeardown, renderTeardownSummary)
 import Bosun.Serve (controlPort)
 import Bosun.Service (Deployment, LooseService, ValidatedDeployment, deploymentServices, unServiceRef, unValidatedDeployment)
-import Bosun.Substrate (TeardownVerdict, leaseEveryMs, pidLease, readTeardown, teardownSettled, teardownTag)
+import Bosun.Substrate (TeardownVerdict(..), leaseEveryMs, pidLease, readTeardown, teardownSettled, teardownTag)
 import Bosun.Supervisor (Launch, Policies, SuperviseDiff, SupConfig, SupState, SvcState, addressService, cfgFor, clearFails, defaultConfig, emptySupState, forgetLaunches, policies, recordLaunches, refine, superviseDiff)
 import Bosun.Target (TargetMap)
 import Bosun.Validate (validate)
@@ -304,9 +304,37 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
 
     bringDown = do
       vd <- Ref.read vdRef
-      verdicts <- enactStop "teardown" (downScript targets vd)
-      rememberTeardown verdicts
-      pure verdicts
+      dep <- Ref.read depRef
+      own <- enactStop "teardown" (downScript targets vd)
+      settled <- settleStrangers (deploymentServices dep) own
+      rememberTeardown settled.verdicts
+      pure settled
+
+    -- After the recorded groups are stopped, look at the ports. A stopped
+    -- group says nothing about an orphan of the same service still serving —
+    -- the teardown that answered `ok` and killed nothing. A claimable stranger
+    -- is stopped here; a foreign one is named and left. Each service's verdict
+    -- is then what `Holding.settleTeardown` makes of all three facts.
+    settleStrangers svcs own = do
+      holdings <- observeHoldings targets svcs
+      let ownMap = Map.fromFoldable own
+      results <- traverse (settleOne ownMap) (Map.toUnfoldable holdings :: Array (Tuple ServiceId Holding))
+      let
+        byId = Map.fromFoldable (map (\r -> Tuple r.sid r.verdict) (A.filter _.changed results))
+        merged = map (\(Tuple sid v) -> Tuple sid (fromMaybe v (Map.lookup sid byId))) own
+          <> A.mapMaybe (\r -> if r.changed && not (Map.member r.sid ownMap) then Just (Tuple r.sid r.verdict) else Nothing) results
+      pure { verdicts: merged, notes: A.mapMaybe (\r -> map ((unServiceId r.sid <> ": ") <> _) r.note) results }
+
+    settleOne ownMap (Tuple sid holding) = do
+      let own = fromMaybe NoRecord (Map.lookup sid ownMap)
+      reaped <- case holding of
+        Stranger st | st.claimable -> do
+          res <- execLine (reapScript st.holders)
+          pure (readReap res.message st.holders)
+        _ -> pure []
+      let r = settleTeardown own holding reaped
+      when (isJust r.note) (log ("  · " <> unServiceId sid <> ": " <> fromMaybe "" r.note))
+      pure { sid, verdict: r.verdict, note: r.note, changed: isJust r.note }
 
     rememberTeardown verdicts = do
       now <- nowMs
@@ -323,9 +351,13 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
         only = A.filter (\sc -> Set.member sc.service wanted) (downScript targets theVd)
       in
         do
-          verdicts <- enactStop "reload-stop" only
-          rememberTeardown verdicts
-          pure verdicts
+          dep <- Ref.read depRef
+          own <- enactStop "reload-stop" only
+          -- A stranger on a changed service's port would block its new
+          -- generation's bind exactly as it blocked a restart.
+          settled <- settleStrangers (A.filter (\sv -> Set.member sv.id wanted) (deploymentServices dep)) own
+          rememberTeardown settled.verdicts
+          pure settled
 
     -- Observe and refine, and record BOTH results. This is bookkeeping, not
     -- action: it runs on every tick whatever phase the group is in, because
@@ -467,8 +499,8 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
           reconcileNow
           pure Nothing
       , "tear-down": do
-          verdicts <- bringDown
-          note (renderTeardownSummary verdicts)
+          settled <- bringDown
+          note (renderTeardownSummary settled.verdicts <> strangerNotes settled.notes)
           pure Nothing
       , "forget-launch-memory": do
           Ref.write emptySupState supRef
@@ -501,8 +533,8 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
             Nothing -> pure Nothing
             Just p -> do
               oldVd <- Ref.read vdRef
-              verdicts <- stopSubset oldVd (changedIds p)
-              note (stopNote verdicts)
+              settled <- stopSubset oldVd (changedIds p)
+              note (stopNote settled.verdicts <> strangerNotes settled.notes)
               pure Nothing
       , "forget-changed-launches": do
           mp <- Ref.read pendingReload
@@ -747,6 +779,10 @@ type MachineOut = { refusal :: Maybe RefusalId, notes :: Array String, failure :
 
 emptyOut :: MachineOut
 emptyOut = { refusal: Nothing, notes: [], failure: Nothing }
+
+-- | What a teardown found on the ports, appended to its summary as one clause.
+strangerNotes :: Array String -> String
+strangerNotes ns = if A.null ns then "" else " — " <> intercalate "; " ns
 
 -- | The machine's `port-held-by-foreigner` fact: a stranger holds the port and
 -- | is not one this group may claim.
