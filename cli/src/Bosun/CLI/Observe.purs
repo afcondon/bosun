@@ -179,14 +179,17 @@ observeHoldings targets svcs = do
     else if isLocal s then judgeHolding ev { sid: s.id, ports: tcpPorts s.reachability, cwd: serviceCwd s }
     else Unobservable "the service runs on a remote host"
 
-  -- A `probe: process` service is, by the rule that put it there, one whose
-  -- port is NOT TCP — a UDP/OSC daemon (es9-daemon, link-spike, superdirt).
-  -- A TCP listener lookup would find nobody on its port and report `none`,
-  -- which is false; its ownership is already what the process-group probe
-  -- measures. So it is not judged here at all.
-  tcpJudged s = not (A.null (tcpPorts s.reachability)) && case s.readiness of
-    ProcessAlive -> false
-    _ -> true
+  -- Judged only when the service's STATUS is read through its TCP port — a
+  -- connect or an HTTP GET. Those are exactly the services a stranger on the
+  -- port can pass off as running, which is the failure this reading exists
+  -- for. A service read by `probe: exec`, `process` or a socket (the UDP/OSC
+  -- daemons: es9-daemon, link-spike, superdirt) would find nobody on a TCP
+  -- lookup of its UDP port and report `none`, which is false; its status is
+  -- not about who holds a TCP port, so it is not judged here.
+  tcpJudged s = not (A.null (tcpPorts s.reachability)) && case effectiveProbe s of
+    TcpConnect _ -> true
+    HttpGet _ -> true
+    _ -> false
 
 -- | One service's holding (what `restart` reads just before it acts).
 observeHolding :: TargetMap -> LooseService -> Effect Holding
