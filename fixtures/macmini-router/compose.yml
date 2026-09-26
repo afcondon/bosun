@@ -78,3 +78,21 @@ services:
           MARGINALIA_ATTACHMENTS_PROXY: "http://127.0.0.1:8091/marginalia-attachments"
       expose:
         - host: 3100
+
+  marginalia-frontend:
+    # It reverse-proxies /api/* to :3100 and /transcribe to :3200.
+    # Moved from launchd (net.hylograph.marginalia.frontend, now disabled)
+    # 2026-09-26.
+    depends_on:
+      - marginalia-api
+      - marginalia-whisper
+    x-bosun:
+      host: macmini
+      process:
+        cwd: /Users/andrew/work/marginalia-demo/project-tracker
+        command: MARGINALIA_FRONTEND_PORT=3101 node tools/frontend-server.mjs
+        env:
+          MARGINALIA_ATTACHMENT_STORE: "/Volumes/Crucial4TB/Documents/Notes Attachments/"
+          MARGINALIA_ATTACHMENTS_PROXY: "http://127.0.0.1:8091/marginalia-attachments"
+      expose:
+        - host: 3101
