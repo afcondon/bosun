@@ -51,3 +51,30 @@ services:
         command: tools/whisper-venv/bin/python3 tools/whisper-server.py --port 3200
       expose:
         - host: 3200
+
+  marginalia-api:
+    x-bosun:
+      host: macmini
+      # RULE 1 GAP: the port is hardcoded (`serve { port: 3100 }` in
+      # server/src/Main.purs), so the 3100 below is a statement, not a setting;
+      # Bosun cannot relocate it. Fine for a fixed production port; fix in
+      # Marginalia if it ever has to move.
+      # RULE 3: the per-clone .env the launchd wrapper sources is carried as
+      # typed env instead. Values copied from the Mini's .env on 2026-09-26.
+      # DuckDB is single-writer: never let a second instance start (the
+      # launchd agent must be booted out first, step 2 above).
+      # UNKNOWN: whether it closes DuckDB cleanly on SIGTERM (rule 5). Check
+      # the log after the first `/control/restart`.
+      # Moved from launchd (net.hylograph.marginalia.api, now disabled)
+      # 2026-09-26. KNOWN, NOT BOSUN'S: uploads write straight to the volume
+      # (server/src/API/Agent.js), and the only Removable Volumes grant is
+      # for an nvm node that no longer exists, so uploads have probably failed
+      # since the nvm→Nix switch. See the two-machine plan, Phase 2.
+      process:
+        cwd: /Users/andrew/work/marginalia-demo/project-tracker
+        command: node server/run.js
+        env:
+          MARGINALIA_ATTACHMENT_STORE: "/Volumes/Crucial4TB/Documents/Notes Attachments/"
+          MARGINALIA_ATTACHMENTS_PROXY: "http://127.0.0.1:8091/marginalia-attachments"
+      expose:
+        - host: 3100
