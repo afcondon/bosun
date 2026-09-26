@@ -162,7 +162,7 @@ httpStatus expect code
 observeHoldings :: TargetMap -> Array LooseService -> Effect (Map ServiceId Holding)
 observeHoldings targets svcs = do
   let
-    ported = A.filter (\s -> isLocal s && not (A.null (tcpPorts s.reachability))) svcs
+    ported = A.filter (\s -> isLocal s && tcpJudged s) svcs
     ports = A.nub (A.concatMap (\s -> tcpPorts s.reachability) ported)
   ev <-
     if A.null ported then pure (readHoldingEvidence { ran: false, output: "" })
@@ -175,8 +175,18 @@ observeHoldings targets svcs = do
 
   judgeOne :: HoldingEvidence -> LooseService -> Holding
   judgeOne ev s =
-    if isLocal s then judgeHolding ev { sid: s.id, ports: tcpPorts s.reachability, cwd: serviceCwd s }
+    if not (tcpJudged s) then NoPort
+    else if isLocal s then judgeHolding ev { sid: s.id, ports: tcpPorts s.reachability, cwd: serviceCwd s }
     else Unobservable "the service runs on a remote host"
+
+  -- A `probe: process` service is, by the rule that put it there, one whose
+  -- port is NOT TCP — a UDP/OSC daemon (es9-daemon, link-spike, superdirt).
+  -- A TCP listener lookup would find nobody on its port and report `none`,
+  -- which is false; its ownership is already what the process-group probe
+  -- measures. So it is not judged here at all.
+  tcpJudged s = not (A.null (tcpPorts s.reachability)) && case s.readiness of
+    ProcessAlive -> false
+    _ -> true
 
 -- | One service's holding (what `restart` reads just before it acts).
 observeHolding :: TargetMap -> LooseService -> Effect Holding
