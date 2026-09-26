@@ -25,13 +25,12 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 )
-
-const residentInternalHost = "127.0.0.1"
 
 // serialises ALL PS-callback invocations, so the single-threaded Effect/Ref
 // runtime is never entered concurrently (node-fidelity, see header).
@@ -40,9 +39,14 @@ var residentMu sync.Mutex
 // nowMs :: Effect Number — a `func() any` thunk (wall-clock ms, like Date.now()).
 var Bosun_CLI_Resident_nowMs any = func() any { return float64(time.Now().UnixMilli()) }
 
-// residentImpl :: EffectFn1 Resident Unit — called once; runs forever (resident).
+// residentImpl :: EffectFn3 String (Fn3 String String String Boolean) Resident
+// Unit — called once; runs forever (resident). args[0] is the bind address,
+// args[1] the pure PS admission decision (Bosun.CLI.Resident.admits, an Fn3
+// over peer, method, path), args[2] the Resident record.
 var Bosun_CLI_Resident_residentImpl any = func(args ...any) any {
-	cfg := _force(args[0]).(map[string]any)
+	bindHost := _force(args[0]).(string)
+	admits := _force(args[1]).(func(...any) any)
+	cfg := _force(args[2]).(map[string]any)
 	statusPort := _force(cfg["statusPort"]).(int)
 	intervalMs := _force(cfg["intervalMs"]).(int)
 	tick := _force(cfg["tick"]).(func() any)
@@ -78,6 +82,18 @@ var Bosun_CLI_Resident_residentImpl any = func(args ...any) any {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		cors(w)
+		// Same order as Resident.js: admission before anything else. The peer
+		// is the host part of RemoteAddr, as node's socket.remoteAddress is.
+		peer, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			peer = r.RemoteAddr
+		}
+		if allowed, _ := admits(peer, r.Method, r.URL.Path).(bool); !allowed {
+			w.Header().Set("content-type", "text/plain")
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, "forbidden: /state is tailnet-readable at most; /control is local-only\n")
+			return
+		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -135,11 +151,11 @@ var Bosun_CLI_Resident_residentImpl any = func(args ...any) any {
 	})
 
 	srv := &http.Server{
-		Addr:              fmt.Sprintf("%s:%d", residentInternalHost, statusPort),
+		Addr:              net.JoinHostPort(bindHost, fmt.Sprint(statusPort)),
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	fmt.Printf("  resident: /state + /control on :%d, tick %dms. Ctrl-C to stop.\n", statusPort, intervalMs)
+	fmt.Printf("  resident: /state + /control on %s:%d, tick %dms. Ctrl-C to stop.\n", bindHost, statusPort, intervalMs)
 	if err := srv.ListenAndServe(); err != nil {
 		fmt.Printf("  ✗ resident :%d %v\n", statusPort, err)
 	}

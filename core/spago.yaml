@@ -14,6 +14,7 @@ package:
     - ordered-collections
     - foldable-traversable
     - strings
+    - integers
     - argonaut-core
     - codec
     - codec-argonaut

@@ -157,6 +157,7 @@
             "codec-argonaut",
             "either",
             "foldable-traversable",
+            "integers",
             "maybe",
             "ordered-collections",
             "prelude",

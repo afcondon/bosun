@@ -10,15 +10,16 @@ import http from "node:http";
 // clock; it only receives `now`, so it stays conformance-deterministic).
 export const nowMs = () => Date.now();
 
-const INTERNAL_HOST = "127.0.0.1";
 const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,OPTIONS",
   "access-control-allow-headers": "content-type",
 };
 
-// EffectFn1 Resident Unit — called once; runs forever (resident).
-export const residentImpl = (cfg) => {
+// EffectFn3 String (Fn3 String String String Boolean) Resident Unit — called
+// once; runs forever (resident). `host` is the bind address and `admits` the
+// pure PS admission decision (Bosun.CLI.Resident.admits): peer, method, path.
+export const residentImpl = (host, admits, cfg) => {
   const tick = () => {
     try { cfg.tick(); }
     catch (e) { console.error(`  ✗ tick: ${e && e.message ? e.message : e}`); }
@@ -28,6 +29,11 @@ export const residentImpl = (cfg) => {
 
   const server = http.createServer((req, res) => {
     const u = new URL(req.url, "http://localhost");
+    if (!admits(req.socket.remoteAddress || "", req.method, u.pathname)) {
+      res.writeHead(403, { "content-type": "text/plain", ...CORS });
+      res.end("forbidden: /state is tailnet-readable at most; /control is local-only\n");
+      return;
+    }
     if (req.method === "OPTIONS") { res.writeHead(204, CORS); res.end(); return; }
 
     if (req.method === "GET" && (u.pathname === "/state" || u.pathname === "/")) {
@@ -65,7 +71,7 @@ export const residentImpl = (cfg) => {
 
   server.on("error", (err) =>
     console.error(`  ✗ resident /state :${cfg.statusPort} (${err.code || err.message})`));
-  server.listen(cfg.statusPort, INTERNAL_HOST, () =>
+  server.listen(cfg.statusPort, host, () =>
     console.log(
-      `  resident: /state + /control on :${cfg.statusPort}, tick ${cfg.intervalMs}ms. Ctrl-C to stop.`));
+      `  resident: /state + /control on ${host}:${cfg.statusPort}, tick ${cfg.intervalMs}ms. Ctrl-C to stop.`));
 };

@@ -25,13 +25,16 @@ module Bosun.CLI.Resident
   , accepted
   , refused
   , runResident
+  , runResidentFor
   , nowMs
   ) where
 
 import Prelude
 
+import Bosun.ResidentAccess (Audience(..), admits, bindHost)
+import Data.Function.Uncurried (Fn3, mkFn3)
 import Effect (Effect)
-import Effect.Uncurried (EffectFn1, EffectFn2, runEffectFn1)
+import Effect.Uncurried (EffectFn2, EffectFn3, runEffectFn3)
 
 -- | What a `/control/<verb>` POST did. `ok` is the SUBSTRATE'S OWN verdict, not
 -- | "the callback returned without throwing" — a verb it does not know, a
@@ -68,13 +71,24 @@ type Resident =
   , control :: EffectFn2 String String ControlResult
   }
 
-foreign import residentImpl :: EffectFn1 Resident Unit
+-- | The shim takes the address to bind and the admission decision, so the
+-- | policy is this module's pure `admits`, not two hand-kept copies in
+-- | Resident.js and Resident.go.
+foreign import residentImpl :: EffectFn3 String (Fn3 String String String Boolean) Resident Unit
 
 -- | Wall-clock milliseconds at the seam. Lives in the shim (not the pure core),
 -- | so the decision tier stays deterministic and conformance-byte-identical;
 -- | a substrate only ever *receives* time, never reads it.
 foreign import nowMs :: Effect Number
 
--- | Mount a substrate on its status port and run forever (resident).
+-- | Mount a substrate on its status port and run forever (resident),
+-- | reachable from this machine only.
 runResident :: Resident -> Effect Unit
-runResident = runEffectFn1 residentImpl
+runResident = runResidentFor LocalOnly
+
+-- | Mount a substrate for a given `Audience` (`Bosun.ResidentAccess`): the
+-- | shim binds `bindHost audience` and asks the pure `admits` about every
+-- | request.
+runResidentFor :: Audience -> Resident -> Effect Unit
+runResidentFor audience =
+  runEffectFn3 residentImpl (bindHost audience) (mkFn3 (admits audience))

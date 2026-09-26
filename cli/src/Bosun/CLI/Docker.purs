@@ -31,11 +31,12 @@ import Bosun.Apply (Command(..), applyScript, downScript)
 import Bosun.Atoms (Host, ServiceId, mkServiceId, unAbsPath, unServiceId)
 import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (readJsonFile, readYamlFile)
-import Bosun.CLI.Resident (Resident, accepted, refused, runResident)
+import Bosun.CLI.Resident (Resident, accepted, refused, runResidentFor)
 import Bosun.Executor (ExecutorMechanism(..), mechanism)
 import Bosun.Plan (Status(..), plan)
 import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderAddressMiss, renderCommand, renderReport)
+import Bosun.ResidentAccess (Audience)
 import Bosun.Serve (controlPort)
 import Bosun.Service (ValidatedDeployment, unValidatedDeployment)
 import Bosun.Supervisor (addressService)
@@ -67,9 +68,9 @@ defaultStatusPort = 3997
 intervalMs :: Int
 intervalMs = 5000
 
--- | `bosun docker [--port N] <compose> <registry>`.
-runDocker :: TargetMap -> Maybe Int -> String -> String -> Effect Unit
-runDocker targets mPort composePath registryPath = do
+-- | `bosun docker [--port N] [--tailnet-read] <compose> <registry>`.
+runDocker :: TargetMap -> Maybe Int -> Audience -> String -> String -> Effect Unit
+runDocker targets mPort audience composePath registryPath = do
   composeJson <- readYamlFile composePath
   registryJson <- readJsonFile registryPath
   let
@@ -83,7 +84,7 @@ runDocker targets mPort composePath registryPath = do
       log "cannot drive docker: the deployment does not validate —"
       log ""
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
-    Right vd -> dockerResident targets mPort vd >>= runResident
+    Right vd -> dockerResident targets mPort vd >>= runResidentFor audience
 
 -- | Build the resident Docker substrate from a validated deployment, do the
 -- | initial read-only observe, and return the `Resident` for `runResident` to
