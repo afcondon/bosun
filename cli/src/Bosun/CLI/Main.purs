@@ -46,6 +46,7 @@ import Bosun.CLI.IO (argv, readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeSnapshot)
 import Bosun.CLI.Audit (runAudit)
 import Bosun.CLI.Serve (runReload, runServe, runServeLive, runServePlan, runWhere)
+import Bosun.ResidentAccess (Audience(..))
 import Bosun.CLI.Supervise (runSupervise)
 import Bosun.CLI.Docker (runDocker)
 import Bosun.Edge (Gate(..), Requirement(..))
@@ -82,14 +83,17 @@ main = do
   -- them out so the positional `apply`/`plan`/`supervise` forms below match
   -- unchanged. `--targets` layers a file over the built-in target defaults
   -- (consumed by `apply`); `--port` overrides `supervise`'s status port so you
-  -- can run one supervisor per group on its own port.
+  -- can run one supervisor per group on its own port. `--tailnet-read` lets
+  -- tailnet peers read a resident's `/state` (never `/control`).
   let
     tf = takeFlag "--targets" rawArgs
     pf = takeFlag "--port" tf.rest
     hf = takeBoolFlag "--held" pf.rest
-    args = hf.rest
+    xf = takeBoolFlag "--tailnet-read" hf.rest
+    args = xf.rest
     supPort = pf.value >>= Int.fromString
     startHeld = hf.present
+    audience = if xf.present then TailnetReaders else LocalOnly
   targets <- loadTargets tf.value
   case args of
     [ "check", composePath, registryPath ] -> runCheck composePath registryPath
@@ -112,8 +116,8 @@ main = do
     [ "apply", composePath, registryPath, snapshotPath ] -> runApply targets composePath registryPath (Just snapshotPath)
     [ "down", "--dry-run", composePath, registryPath ] -> runDownDryRun targets composePath registryPath
     [ "down", composePath, registryPath ] -> runDown targets composePath registryPath
-    [ "supervise", composePath, registryPath ] -> runSupervise targets supPort startHeld composePath registryPath
-    [ "docker", composePath, registryPath ] -> runDocker targets supPort composePath registryPath
+    [ "supervise", composePath, registryPath ] -> runSupervise targets supPort startHeld audience composePath registryPath
+    [ "docker", composePath, registryPath ] -> runDocker targets supPort audience composePath registryPath
     _ -> runDemo
 
 -- | Pull an optional `<name> <value>` flag out of the argument vector wherever

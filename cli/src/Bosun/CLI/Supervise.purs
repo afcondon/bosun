@@ -30,7 +30,7 @@ import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeHolding, observeHoldings, observeSupSnapshot)
 import Bosun.Holding (Holding(..), describeHolder, holdingJson, readReap, reapScript, reapSettled, reapTag, settleTeardown, strangers)
-import Bosun.CLI.Resident (Resident, accepted, nowMs, refused, runResident)
+import Bosun.CLI.Resident (Resident, accepted, nowMs, refused, runResidentFor)
 import Bosun.CLI.Supervise.Machine (complaints, desiredFromPhase, evDone, evDown, evRejected, evReload, evReloaded, evRestart, evTick, evUp, phaseTag)
 import Bosun.Machine.SuperviseGroup as SG
 import Bosun.Machine.SuperviseGroupSource (artifactJson)
@@ -42,6 +42,7 @@ import Glassbox.Spec (CommandId, ConfigId(..), EventId, FactId(..), RefusalId, S
 import Bosun.Plan (Change(..), Plan, Status(..), plan, planSteps)
 import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderAddressMiss, renderCommand, renderReport, renderTeardown, renderTeardownSummary)
+import Bosun.ResidentAccess (Audience)
 import Bosun.Serve (controlPort)
 import Bosun.Service (Deployment, LooseService, ValidatedDeployment, deploymentServices, unServiceRef, unValidatedDeployment)
 import Bosun.Substrate (TeardownVerdict(..), leaseEveryMs, pidLease, readTeardown, teardownSettled, teardownTag)
@@ -92,11 +93,13 @@ reIngest composePath registryPath = do
     Left _ -> Left "reloaded spec does not validate — keeping current deployment"
     Right vd -> Right (Tuple dep vd)
 
--- | `bosun supervise [--port N] <compose> <registry>`. The status port defaults
--- | to 3996; pass `--port` to run one supervisor PER GROUP, each on its own port
--- | (a group = one deployment), so the Chair polls/controls each independently.
-runSupervise :: TargetMap -> Maybe Int -> Boolean -> String -> String -> Effect Unit
-runSupervise targets mPort startHeld composePath registryPath = do
+-- | `bosun supervise [--port N] [--tailnet-read] <compose> <registry>`. The
+-- | status port defaults to 3996; pass `--port` to run one supervisor PER GROUP,
+-- | each on its own port (a group = one deployment), so the Chair
+-- | polls/controls each independently. `--tailnet-read` lets tailnet peers read
+-- | `/state` (see `Bosun.ResidentAccess`); `/control` stays local.
+runSupervise :: TargetMap -> Maybe Int -> Boolean -> Audience -> String -> String -> Effect Unit
+runSupervise targets mPort startHeld audience composePath registryPath = do
   composeJson <- readYamlFile composePath
   registryJson <- readJsonFile registryPath
   let
@@ -119,7 +122,7 @@ runSupervise targets mPort startHeld composePath registryPath = do
         log "after editing it: `scripts/machine-vocabulary.sh`."
       Right machine ->
         superviseResident targets mPort startHeld (Just (reIngest composePath registryPath)) machine dep vd
-          >>= runResident
+          >>= runResidentFor audience
 
 -- | The group lifecycle artifact, decoded and checked against what this daemon
 -- | can actually do.
