@@ -1,0 +1,89 @@
+# DRAFT — NOT LOADED. Phase 2 of docs/kb/plans/two-machine-infrastructure.md
+# ("fold the Mini's services under its Bosun"), drafted 2026-09-26 from an
+# audit of the five net.hylograph.* launchd plists on the MacMini against the
+# bosun-daemon skill. Nothing reads this file; the live group is compose.yml.
+#
+# CUTOVER, one service at a time, with Andrew present (the plan's rule: retire
+# a plist only after its service has survived a Mini power cut under Bosun):
+#   1. copy the service's block into compose.yml
+#   2. `launchctl bootout gui/$(id -u)/net.hylograph.<label>` — frees the port
+#      (the plist file stays in ~/Library/LaunchAgents for rollback)
+#   3. `POST :3990/control/reload`, and check /state shows it up
+#   4. pull the plug; confirm it came back; only then move the plist aside
+# Suggested order: infovore (simplest, no deps) → whisper → marginalia-api →
+# marginalia-frontend (it proxies to the other two).
+#
+# NOT INCLUDED: infovore-files. It exists to hold Full Disk Access for
+# /Volumes/Crucial4TB (infovore-larder-db/tools/infovore-files/README.md), and
+# macOS grants that to the process launchd itself starts. Under Bosun it would
+# be a child of the supervisor's node, which has no such grant, and would lose
+# the volume. It stays a launchd agent: a documented exception, not an
+# oversight. (Same caution, untested, for marginalia-api's attachment writes
+# to the volume: after its cutover, upload one attachment and read it back.)
+#
+# What Bosun fixes by taking these over: the launchd wrappers' own backoff
+# (tools/launchd/lib-backoff.sh) resets its failure count only when a service
+# exits after running >= 60 s. A service that runs until a power cut never
+# does, so the count sticks: marginalia-api sits at 3 and waits 40 s before
+# EVERY boot (seen on the 2026-09-26 power-cut test). Bosun owns backoff
+# (skill rule 6), so the wrappers are bypassed, not ported.
+services:
+  infovore:
+    x-bosun:
+      host: macmini
+      # TCP readiness on the exposed :8090. Port is a literal flag (rule 1).
+      process:
+        cwd: /Users/andrew/work/afc-work/infovore-larder-db
+        command: ./.venv/bin/python3 tools/webapp/server.py --host 0.0.0.0 --port 8090
+      expose:
+        - host: 8090
+
+  marginalia-whisper:
+    x-bosun:
+      host: macmini
+      # whisper-server.py loads the model BEFORE it binds :3200, so TCP
+      # readiness really does mean "can transcribe" (rule 4 holds as written).
+      # The venv's python is called directly instead of sourcing activate.
+      process:
+        cwd: /Users/andrew/work/marginalia-demo/project-tracker
+        command: tools/whisper-venv/bin/python3 tools/whisper-server.py --port 3200
+      expose:
+        - host: 3200
+
+  marginalia-api:
+    x-bosun:
+      host: macmini
+      # RULE 1 GAP: the port is hardcoded (`serve { port: 3100 }` in
+      # server/src/Main.purs), so the 3100 below is a statement, not a setting;
+      # Bosun cannot relocate it. Fine for a fixed production port; fix in
+      # Marginalia if it ever has to move.
+      # RULE 3: the per-clone .env the launchd wrapper sources is carried as
+      # typed env instead. Values copied from the Mini's .env on 2026-09-26.
+      # DuckDB is single-writer: never let a second instance start (the
+      # launchd agent must be booted out first, step 2 above).
+      # UNKNOWN: whether it closes DuckDB cleanly on SIGTERM (rule 5). Check
+      # the log after the first `/control/restart`.
+      process:
+        cwd: /Users/andrew/work/marginalia-demo/project-tracker
+        command: node server/run.js
+        env:
+          MARGINALIA_ATTACHMENT_STORE: "/Volumes/Crucial4TB/Documents/Notes Attachments/"
+          MARGINALIA_ATTACHMENTS_PROXY: "http://127.0.0.1:8091/marginalia-attachments"
+      expose:
+        - host: 3100
+
+  marginalia-frontend:
+    # It reverse-proxies /api/* to :3100 and /transcribe to :3200.
+    depends_on:
+      - marginalia-api
+      - marginalia-whisper
+    x-bosun:
+      host: macmini
+      process:
+        cwd: /Users/andrew/work/marginalia-demo/project-tracker
+        command: MARGINALIA_FRONTEND_PORT=3101 node tools/frontend-server.mjs
+        env:
+          MARGINALIA_ATTACHMENT_STORE: "/Volumes/Crucial4TB/Documents/Notes Attachments/"
+          MARGINALIA_ATTACHMENTS_PROXY: "http://127.0.0.1:8091/marginalia-attachments"
+      expose:
+        - host: 3101
