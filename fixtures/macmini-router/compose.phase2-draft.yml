@@ -6,8 +6,11 @@
 # CUTOVER, one service at a time, with Andrew present (the plan's rule: retire
 # a plist only after its service has survived a Mini power cut under Bosun):
 #   1. copy the service's block into compose.yml
-#   2. `launchctl bootout gui/$(id -u)/net.hylograph.<label>` — frees the port
-#      (the plist file stays in ~/Library/LaunchAgents for rollback)
+#   2. `launchctl disable gui/$(id -u)/net.hylograph.<label>` THEN
+#      `launchctl bootout gui/$(id -u)/net.hylograph.<label>`. Bootout alone
+#      lasts only until the next boot: the plist is still in LaunchAgents with
+#      RunAtLoad, so after a power cut launchd AND Bosun would both start it.
+#      `disable` persists; roll back with `enable` + `bootstrap`.
 #   3. `POST :3990/control/reload`, and check /state shows it up
 #   4. pull the plug; confirm it came back; only then move the plist aside
 # Suggested order: infovore (simplest, no deps) → whisper → marginalia-api →
@@ -28,15 +31,7 @@
 # EVERY boot (seen on the 2026-09-26 power-cut test). Bosun owns backoff
 # (skill rule 6), so the wrappers are bypassed, not ported.
 services:
-  infovore:
-    x-bosun:
-      host: macmini
-      # TCP readiness on the exposed :8090. Port is a literal flag (rule 1).
-      process:
-        cwd: /Users/andrew/work/afc-work/infovore-larder-db
-        command: ./.venv/bin/python3 tools/webapp/server.py --host 0.0.0.0 --port 8090
-      expose:
-        - host: 8090
+  # infovore: MOVED to compose.yml (live) on 2026-09-26.
 
   marginalia-whisper:
     x-bosun:

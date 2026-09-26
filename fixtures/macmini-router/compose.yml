@@ -27,3 +27,14 @@ services:
         command: BOSUN_CHAIR_SERVER_PORT=3022 node chair-server/run.js
       expose:
         - host: 3022
+
+  infovore:
+    x-bosun:
+      host: macmini
+      # Moved from launchd (net.hylograph.infovore, now disabled) 2026-09-26.
+      # TCP readiness on the exposed :8090; the port is a literal flag.
+      process:
+        cwd: /Users/andrew/work/afc-work/infovore-larder-db
+        command: ./.venv/bin/python3 tools/webapp/server.py --host 0.0.0.0 --port 8090
+      expose:
+        - host: 8090
