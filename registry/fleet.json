@@ -641,7 +641,7 @@
       "role": "worker",
       "port": 3028,
       "url": "ws://127.0.0.1:3028",
-      "startCommand": "cd /Users/afc/work/afc-work/music/itajara/daemon && ./target/release/itajara loop --device \"ES9 then A4C\" --out-ch AUDIO4c:1 --ws-port 3028 --link --source board=AUDIO4c:1,2 --source di=AUDIO4c:3 --source ipad=AUDIO4c:5,6 --source hits=ES-9:1 --source modular=ES-9:1,2 --layers 6",
+      "startCommand": "cd /Users/afc/work/afc-work/music/itajara/daemon && ./target/release/itajara loop --device \"ES9 then A4C\" --out-ch AUDIO4c:1 --ws-port 3028 --link --source board=AUDIO4c:1,2 --source di=AUDIO4c:3 --source ipad=AUDIO4c:5,6 --source hits=ES-9:1 --source modular=ES-9:1,2 --layers 6 --max-secs 120",
       "description": "Itajara — the looper engine (Epinephelus itajara, the goliath grouper, which booms). Rust/cpal daemon holding the Audio4c directly: record, overdub as layers, undo, two kinds of multiply (dense, and spread/shift/dense for sparse placement), and a 60s pre-roll so the past can be claimed after the fact. Serves a WebSocket the PWYF app connects to (Looper tab) — command strings in, a 30 Hz state snapshot out. Opens NO MIDI port by design: the app is the MIDI hub, so exactly one process talks to the MC6. Needs the Audio4c connected. Residual latency is NOT set here on purpose: the daemon reads ~/.itajara/calibration.conf, which `deepstar latency measure --write` curates from Amphora's audio-latency collection, and falls back to a compiled 252 while saying out loud that it is guessing. The residual moves when another client opens the device (252 Ableton-quit, 301 with Ableton, 275 once continuo joined), so run `deepstar latency check` before a session — it needs no cable and says whether the stored number still applies.\n\nINPUTS (2026-08-29): the engine is stereo end to end and a loop chooses its input. `--source board=1,2` is the stereo pedalboard, verified on those channels with `itajara levels`; `--source di=3` is the raw guitar going out to MIDI Guitar on the iPad (wanted post-compressor eventually). `--source ipad=5,6` is the iPad over the Audio4c's second USB host port, measured with `itajara levels --device AUDIO4c` on 2026-08-29: Xynthesizr arrived on host channels 5+6 (Auracle \"USB2 Channels 1&2\"), while 7+8 still read digital zero — not routed. Monitoring the iPad is a separate matter and is NOT done here: the Audio4c's own matrix sends the same stream to the analog monitor mix with no latency, which is strictly better than the daemon's `m`. Without any --source, --in-ch becomes one mono source called `in`.\n\nAGGREGATE (2026-09-08): moved from the bare AUDIO4c to the `ES9 then A4C` aggregate so the ES-9's inputs are reachable — `hits=ES-9:1` is the mono drum-hit input a conducted capture session records from. Every channel is now written as INTERFACE:jack rather than as an absolute number, and resolved at start against kAudioAggregateDevicePropertyFullSubDeviceList. That is not tidiness: an aggregate's channel order is a property of the aggregate as it currently stands, not of its name, so a power cycle or a re-plug can move channel 17 — and an absolute number that has moved still parses, still meters, and records a whole session off the wrong input. Named, a missing interface is a refusal to start. Note `--out-ch AUDIO4c:1`: bare `--out-ch 0` on this aggregate is ES-9 output 1, which would send loop playback and the click into the modular instead of to the monitors. Run `itajara sources --device ... --source ...` before a session to see where everything lands; it opens nothing.",
       "host": "mbp",
       "tailscaleName": "andrews-macbook-pro",
@@ -715,8 +715,21 @@
       "id": 192,
       "projectName": "minard",
       "projectId": 35
+    },
+    {
+      "role": "frontend",
+      "port": 3011,
+      "url": "http://localhost:3011",
+      "startCommand": null,
+      "description": "Conspicillum module page (Halogen on reef's Reef.Conspicillum.*). Static public/ served by the prebuilt static-httpd; Bosun-supervised in the Atlantis group (fixtures/atlantis/compose.yml), a rig WS client of purerl-tidal :3012. startCommand null for the same reason as triggerfish-frontend: supervised, not a serve lazy-spawn target.",
+      "host": "mbp",
+      "tailscaleName": "andrews-macbook-pro",
+      "environment": "native",
+      "id": 193,
+      "projectName": "Conspicillum",
+      "projectId": 296
     }
   ],
-  "count": 53,
+  "count": 54,
   "collisions": {}
 }

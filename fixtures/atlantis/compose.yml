@@ -127,6 +127,22 @@ services:
       expose:
         - host: 3023
 
+  conspicillum-frontend:
+    # The Conspicillum module page (Halogen on reef's Reef.Conspicillum.*),
+    # split out of triggerfish's module.html prototype 2026-09-27. Same shape as
+    # triggerfish-frontend: static public/ by the prebuilt static-httpd, a rig WS
+    # client of purerl-tidal :3012 (it pushes conspicillum-scene), so stage 2.
+    # Port 3011 is reserved in fleet.json (server #193, project 296).
+    depends_on:
+      - purerl-tidal
+    x-bosun:
+      host: mbp
+      process:
+        cwd: /Users/afc/work/afc-work/polyglot/polyglot-deploy/static-httpd
+        command: ./static-httpd -port 3011 -root /Users/afc/work/afc-work/music/live-coding/conspicillum/public
+      expose:
+        - host: 3011
+
   superdirt:
     # The rig's sample-playback sound engine (SuperCollider + SuperDirt). Stage 0
     # — no deps; it just binds UDP and waits for /dirt/play. The SHIPPING path is
