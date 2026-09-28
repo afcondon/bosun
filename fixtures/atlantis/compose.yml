@@ -339,12 +339,22 @@ services:
     # persist to the FH-2's flash, run the script by hand with --save.
     depends_on:
       - fh2-daemon
+    # `&&`, not `;`: the apply exits 1 when any gate fails (FH-2 off, daemon not
+    # up yet), and with `;` the service went on to sleep and read "running" with
+    # the gates unarmed (2026-09-28). Now a failed apply is a failed service,
+    # retried like fh2-daemon, and `gaveUp` in /state if the module stays off. A
+    # power cycle of the FH-2 AFTER a good apply still loses the config unseen:
+    # restart this service after one.
+    restart: on-failure
     x-bosun:
       host: mbp
       probe: process
+      restart:
+        minSec: 30
+        maxRetries: 5
       process:
         cwd: /Users/afc/work/afc-work/music/expert-sleepers/fh2-config
-        command: sh -c 'node scripts/apply-drum-breakout.mjs; exec sleep 2147483647'
+        command: sh -c 'node scripts/apply-drum-breakout.mjs && exec sleep 2147483647'
 
   continuo:
     # Instrument tier: it owns a CoreAudio output and creates the "continuo"
