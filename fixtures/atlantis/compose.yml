@@ -123,7 +123,13 @@ services:
       # TCP probe mis-reads a UDP socket. The distinction is protocol, not taste.)
       process:
         cwd: /Users/afc/work/afc-work/polyglot/polyglot-deploy/static-httpd
-        command: ./static-httpd -port 3023 -root /Users/afc/work/afc-work/music/live-coding/triggerfish/public
+        # THE ONE ORIGIN (2026-09-29). Tabs share localStorage and
+        # BroadcastChannel only within one origin, and the port is part of it,
+        # so the dashboard needs every Atlantis page on :3023. Conspicillum is
+        # mounted under /conspicillum/; Quadrat's page and its absolute /api/*
+        # calls pass through to the Friends server on :3029, which still owns
+        # them. Triggerfish keeps the root, so its stored presets stay put.
+        command: ./static-httpd -port 3023 -root /Users/afc/work/afc-work/music/live-coding/triggerfish/public -mount /conspicillum/=/Users/afc/work/afc-work/music/live-coding/conspicillum/public -proxy /api/=http://localhost:3029 -proxy /quadrat.=http://localhost:3029
       expose:
         - host: 3023
 
