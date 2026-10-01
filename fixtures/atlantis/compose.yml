@@ -258,6 +258,24 @@ services:
       expose:
         - host: 3029
 
+  limulus:
+    # LIMULUS (Marginalia 301): text in, sound out. One editor in front of two
+    # engines, Haskell Tidal and purerl-tidal, to show they are the same. Its
+    # server.mjs (Node, zero deps) serves the page and boots GHCi with Tidal
+    # 1.10.1 (ghc-tidal, a nix-built symlink in the repo, made once; ~120 MB),
+    # which plays SuperDirt on :57120, joins Link, and listens for Tidal's
+    # external controls on UDP :6010. Stage 0: the page reaches purerl-tidal
+    # itself over ws://:3012 and reconnects, and GHCi boots without SuperDirt.
+    # TCP HTTP on :3036 → default TcpConnect readiness. Port-from-env (PORT),
+    # prebuilt public/app.js, drains on TERM (kills GHCi).
+    x-bosun:
+      host: mbp
+      process:
+        cwd: /Users/afc/work/afc-work/music/live-coding/limulus
+        command: PORT=3036 node server.mjs
+      expose:
+        - host: 3036
+
   deepstar:
     # THE RIG DOCTOR, finally a member (Marginalia 191). `deepstar serve` is an
     # HTTP API on :3027 — the house pattern (Marginalia :3100, the Chair :3022,
