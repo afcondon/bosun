@@ -678,32 +678,6 @@
       "projectId": 301
     },
     {
-      "role": "api",
-      "port": 3060,
-      "url": "http://localhost:3060",
-      "startCommand": null,
-      "description": "Calypso API (HTTPurple, node server/run.js, BACKEND_PORT=3060). Supervised in the Atlantis group (bosun supervise :3994); reservation row only, not routed.",
-      "host": "mbp",
-      "tailscaleName": "andrews-macbook-pro",
-      "environment": "native",
-      "id": 195,
-      "projectName": "Calypso",
-      "projectId": 192
-    },
-    {
-      "role": "frontend",
-      "port": 3061,
-      "url": "http://localhost:3061",
-      "startCommand": null,
-      "description": "Calypso frontend (http-server frontend/public -p 3061). Supervised in the Atlantis group (bosun supervise :3994); reservation row only, not routed.",
-      "host": "mbp",
-      "tailscaleName": "andrews-macbook-pro",
-      "environment": "native",
-      "id": 196,
-      "projectName": "Calypso",
-      "projectId": 192
-    },
-    {
       "role": "supervise-minard",
       "port": 3992,
       "url": "http://localhost:3992",
@@ -912,6 +886,6 @@
       "projectId": 78
     }
   ],
-  "count": 68,
+  "count": 66,
   "collisions": {}
 }

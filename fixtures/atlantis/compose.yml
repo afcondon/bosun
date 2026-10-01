@@ -8,8 +8,10 @@
 # Boot order falls out of depends_on:
 #   stage 0: es9-daemon, link-spike, fh2-daemon   (no deps)
 #   stage 1: purerl-tidal        (needs es9-daemon + link-spike)
-#   stage 2: calypso-server      (needs purerl-tidal)
-#   stage 3: calypso-frontend    (needs calypso-server)
+#   stage 2: the pages that are rig WS clients of purerl-tidal
+#
+# Calypso (calypso-server :3060, calypso-frontend :3061) was a member until
+# 2026-10-01, when it was retired (Marginalia 192).
 #
 # NB the OSC ports are UDP; the Address model has no protocol axis yet, so they
 # ride as plain listening ports — the UDP/process-existence probe is Stage-2
@@ -83,32 +85,10 @@ services:
       expose:
         - host: 3012
 
-  calypso-server:
-    depends_on:
-      - purerl-tidal
-    x-bosun:
-      host: mbp
-      process:
-        cwd: /Users/afc/work/afc-work/music/live-coding/calypso
-        command: BACKEND_PORT=3060 node server/run.js
-      expose:
-        - host: 3060
-
-  calypso-frontend:
-    depends_on:
-      - calypso-server
-    x-bosun:
-      host: mbp
-      process:
-        cwd: /Users/afc/work/afc-work/music/live-coding/calypso
-        command: npx http-server frontend/public -p 3061 -c-1 --cors
-      expose:
-        - host: 3061
-
   triggerfish-frontend:
     # The Triggerfish instrument suite (Halogen: Odonus/Balistes/Sufflamen/
     # Stellatus + Vetula). A rig WS client of purerl-tidal :3012 (Binnacle
-    # transport + Stellatus scene push), so it sits at stage 2 like calypso-server.
+    # transport + Stellatus scene push), so it sits at stage 2.
     # Static public/ (bundle.js + samples/) served by the PREBUILT static-httpd Go
     # binary — the AC-blessed prebuilt-artifact static server (no python/npx as a
     # runtime dep; cf polyglot-deploy/static-httpd). Port 3023 allocated by the
@@ -222,7 +202,7 @@ services:
     # supervising a service with persistent state (rule 5: process exit releases
     # the DuckDB lock, so a restart re-acquires cleanly; verified by kill+restart).
     # Prebuilt artifact: `spago build` once, then `node run.js` (the toolchain-
-    # free runner that imports compiled output/Amphora.Main — like calypso/fh2).
+    # free runner that imports compiled output/Amphora.Main — like fh2).
     # Port embedded literally in the command (rule 1); the DB path is cwd-relative.
     # No depends_on and nothing depends on it: the frontend fetches at runtime and
     # falls back to bundled patterns if the store is down, so boot never blocks on
