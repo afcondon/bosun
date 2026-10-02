@@ -6,9 +6,9 @@
 # DeepStar SPEC's service table (es9-daemon was cv-router; fh2-daemon ×N).
 #
 # Boot order falls out of depends_on:
-#   stage 0: es9-daemon, link-spike, fh2-daemon   (no deps)
-#   stage 1: purerl-tidal        (needs es9-daemon + link-spike)
-#   stage 2: the pages that are rig WS clients of purerl-tidal
+#   stage 0: es9-daemon, diaphus, fh2-daemon   (no deps)
+#   stage 1: architeuthis        (needs es9-daemon + diaphus)
+#   stage 2: the pages that are rig WS clients of architeuthis
 #
 # Calypso (calypso-server :3060, calypso-frontend :3061) was a member until
 # 2026-10-01, when it was retired (Marginalia 192).
@@ -44,11 +44,13 @@ services:
         cwd: /Users/afc/work/afc-work/music/expert-sleepers/es9-daemon
         command: ./target/release/es9-daemon
       expose:
-        # OSC listen port moved 57120 -> 57130 (purerl-tidal workstream C) so a
+        # OSC listen port moved 57120 -> 57130 (architeuthis workstream C) so a
         # real SuperDirt can use the conventional Dirt port 57120.
         - host: 57130
 
-  link-spike:
+  # Diaphus (was link-spike, renamed 2026-10-02); its binary keeps the old
+  # name, since macOS ties Link's multicast permission to the signed binary.
+  diaphus:
     # Instrument tier: one UDP bind, and it joins an Ableton Link session — two
     # of these would be two peers claiming to be this machine.
     restart: on-failure
@@ -60,19 +62,19 @@ services:
         minSec: 30
         maxRetries: 10
       process:
-        cwd: /Users/afc/work/afc-work/music/link-spike
+        cwd: /Users/afc/work/afc-work/music/diaphus
         command: ./target/release/link-spike
       expose:
         - host: 57122
 
-  purerl-tidal:
+  architeuthis:
     depends_on:
       - es9-daemon
-      - link-spike
+      - diaphus
     x-bosun:
       host: mbp
       process:
-        cwd: /Users/afc/work/afc-work/music/live-coding/purerl-tidal
+        cwd: /Users/afc/work/afc-work/music/live-coding/architeuthis
         command: erl -pa ebin -noshell -eval 'F = main@ps:main(), F()'
         # ERL_LIBS puts the rebar3 deps (cowboy & co) on the BEAM code path —
         # `erl -pa ebin` alone misses cowboy.app and the boot crashes. Typed
@@ -87,7 +89,7 @@ services:
 
   triggerfish-frontend:
     # The Triggerfish instrument suite (Halogen: Odonus/Balistes/Sufflamen/
-    # Stellatus + Vetula). A rig WS client of purerl-tidal :3012 (Binnacle
+    # Stellatus + Vetula). A rig WS client of architeuthis :3012 (Binnacle
     # transport + Stellatus scene push), so it sits at stage 2.
     # Static public/ (bundle.js + samples/) served by the PREBUILT static-httpd Go
     # binary — the AC-blessed prebuilt-artifact static server (no python/npx as a
@@ -95,7 +97,7 @@ services:
     # Marginalia registry (server #154); replaces the ad-hoc `python -m http.server
     # 4321` that was serving it outside the infrastructure.
     depends_on:
-      - purerl-tidal
+      - architeuthis
     x-bosun:
       host: mbp
       # NO probe: process — this is a TCP HTTP server, so the exposed :3023 gives
@@ -117,10 +119,10 @@ services:
     # The Conspicillum module page (Halogen on reef's Reef.Conspicillum.*),
     # split out of triggerfish's module.html prototype 2026-09-27. Same shape as
     # triggerfish-frontend: static public/ by the prebuilt static-httpd, a rig WS
-    # client of purerl-tidal :3012 (it pushes conspicillum-scene), so stage 2.
+    # client of architeuthis :3012 (it pushes conspicillum-scene), so stage 2.
     # Port 3011 is reserved in fleet.json (server #193, project 296).
     depends_on:
-      - purerl-tidal
+      - architeuthis
     x-bosun:
       host: mbp
       process:
@@ -132,7 +134,7 @@ services:
   superdirt:
     # The rig's sample-playback sound engine (SuperCollider + SuperDirt). Stage 0
     # — no deps; it just binds UDP and waits for /dirt/play. The SHIPPING path is
-    # BEAM-authoritative: purerl-tidal (and its reef_stellatus voice) emits
+    # BEAM-authoritative: architeuthis (and its reef_stellatus voice) emits
     # /dirt/play straight here, so this is permanent rig infrastructure, not a
     # dev crutch. It listens on the conventional Dirt port 57120 — the reason
     # es9-daemon's OSC moved to 57130 above. boot-superdirt.sh runs headless
@@ -240,11 +242,11 @@ services:
 
   limulus:
     # LIMULUS (Marginalia 301): text in, sound out. One editor in front of two
-    # engines, Haskell Tidal and purerl-tidal, to show they are the same. Its
+    # engines, Haskell Tidal and architeuthis, to show they are the same. Its
     # server.mjs (Node, zero deps) serves the page and boots GHCi with Tidal
     # 1.10.1 (ghc-tidal, a nix-built symlink in the repo, made once; ~120 MB),
     # which plays SuperDirt on :57120, joins Link, and listens for Tidal's
-    # external controls on UDP :6010. Stage 0: the page reaches purerl-tidal
+    # external controls on UDP :6010. Stage 0: the page reaches architeuthis
     # itself over ws://:3012 and reconnects, and GHCi boots without SuperDirt.
     # TCP HTTP on :3036 → default TcpConnect readiness. Port-from-env (PORT),
     # prebuilt public/app.js, drains on TERM (kills GHCi).
@@ -317,7 +319,7 @@ services:
         # `output/Main/index.js` is a LIBRARY module (exports `main`, doesn't call
         # it), so it needs a tiny runner that invokes it — fh2-config/run-daemon.mjs
         # (the toolchain-free analog of bosun's cli/run.js). `--daemon` reaches
-        # main via argv. (es9/link are prebuilt Rust binaries, purerl-tidal runs
+        # main via argv. (es9/link are prebuilt Rust binaries, architeuthis runs
         # the compiled BEAM ebin — fh2 was the only build-at-launch outlier.)
         command: node run-daemon.mjs --daemon
       expose:

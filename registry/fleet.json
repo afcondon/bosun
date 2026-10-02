@@ -463,7 +463,7 @@
       "tailscaleName": "andrews-macbook-pro",
       "environment": "native",
       "id": 167,
-      "projectName": "purerl-tidal",
+      "projectName": "Architeuthis",
       "projectId": 90
     },
     {
@@ -489,7 +489,7 @@
       "tailscaleName": "andrews-macbook-pro",
       "environment": "native",
       "id": 169,
-      "projectName": "purerl-tidal Link spike (Rust)",
+      "projectName": "Diaphus",
       "projectId": 186
     },
     {
@@ -563,13 +563,13 @@
       "role": "frontend",
       "port": 3003,
       "url": "http://localhost:3003",
-      "startCommand": "cd /Users/afc/work/afc-work/music/live-coding/selene && PORT=3003 node server.mjs",
+      "startCommand": "cd /Users/afc/work/afc-work/music/live-coding/acropora && PORT=3003 node server.mjs",
       "description": "Selene — the modular companion. Read-only three-column patch surface (Triggerfish outputs -> interfaces -> modules), served by a zero-dependency static server. The page parses the .module/.device/.patch files client-side with the same parsers the CLI uses, so there is no server-side model and no JSON contract to keep in step. Prebuilt artifact (public/bundle.js via 'make bundle'), port from $PORT, drains on SIGTERM. /health returns JSON. Port suggested by Bosun 2026-08-14.",
       "host": "mbp",
       "tailscaleName": "andrews-macbook-pro",
       "environment": "native",
       "id": 185,
-      "projectName": "Selene",
+      "projectName": "Acropora",
       "projectId": 272
     },
     {
@@ -752,7 +752,7 @@
       "tailscaleName": "andrews-macbook-pro",
       "environment": "native",
       "id": 202,
-      "projectName": "purerl-tidal",
+      "projectName": "Architeuthis",
       "projectId": 90
     },
     {
@@ -765,7 +765,7 @@
       "tailscaleName": "andrews-macbook-pro",
       "environment": "native",
       "id": 203,
-      "projectName": "purerl-tidal Link spike (Rust)",
+      "projectName": "Diaphus",
       "projectId": 186
     },
     {
