@@ -109,7 +109,7 @@ services:
         # mounted under /conspicillum/; Quadrat's page and its absolute /api/*
         # calls pass through to the Friends server on :3029, which still owns
         # them. Triggerfish keeps the root, so its stored presets stay put.
-        command: ./static-httpd -port 3023 -root /Users/afc/work/afc-work/music/live-coding/triggerfish/public -mount /conspicillum/=/Users/afc/work/afc-work/music/live-coding/conspicillum/public -proxy /api/=http://localhost:3029 -proxy /quadrat.=http://localhost:3029
+        command: ./static-httpd -port 3023 -root /Users/afc/work/afc-work/music/live-coding/triggerfish/public -mount /conspicillum/=/Users/afc/work/afc-work/music/live-coding/conspicillum/public -proxy /api/=http://localhost:3029 -proxy /quadrat.=http://localhost:3029 -proxy /limulus/=http://localhost:3036 -proxy /limulus=http://localhost:3036
       expose:
         - host: 3023
 
