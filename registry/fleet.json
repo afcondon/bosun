@@ -760,7 +760,7 @@
       "port": 57122,
       "url": "udp://localhost:57122",
       "startCommand": null,
-      "description": "link-spike's CoreMIDI dispatch: OSC in on 127.0.0.1:57122. Daemon on UDP, not an HTTP route. Supervised in the Atlantis group (bosun supervise :3994); reservation row only, not routed.",
+      "description": "Diaphus's CoreMIDI dispatch: OSC in on 127.0.0.1:57122. Daemon on UDP, not an HTTP route. Supervised in the Atlantis group (bosun supervise :3994); reservation row only, not routed.",
       "host": "mbp",
       "tailscaleName": "andrews-macbook-pro",
       "environment": "native",

@@ -48,8 +48,7 @@ services:
         # real SuperDirt can use the conventional Dirt port 57120.
         - host: 57130
 
-  # Diaphus (was link-spike, renamed 2026-10-02); its binary keeps the old
-  # name, since macOS ties Link's multicast permission to the signed binary.
+  # Diaphus (was link-spike, renamed 2026-10-02): Link's peer on the rig.
   diaphus:
     # Instrument tier: one UDP bind, and it joins an Ableton Link session — two
     # of these would be two peers claiming to be this machine.
@@ -63,7 +62,7 @@ services:
         maxRetries: 10
       process:
         cwd: /Users/afc/work/afc-work/music/diaphus
-        command: ./target/release/link-spike
+        command: ./target/release/diaphus
       expose:
         - host: 57122
 
