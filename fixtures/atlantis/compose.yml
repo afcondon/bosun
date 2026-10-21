@@ -330,7 +330,7 @@ services:
     # so we keep the config in the repo (fh2-config/scripts/apply-drum-breakout.mjs
     # — the source of truth) and re-apply it here, the declarative-config-as-data
     # way (cf the Selene polysignals). It sets one note-filtered trigger MCV per
-    # Balistes drum note (bd/sn/cp/hh = 36/38/39/42, ch 10) → FHX-8GT jacks 1-4 →
+    # Balistes drum note (bd/sn/cp/hh = 36/38/39/42, ch 10) → FHX-8GT jacks 5-8 →
     # the vpme.de QuadDrum, leaving the FH-2's CV-capable main jacks free.
     #
     # A SETUP member, not a daemon: Bosun is keep-alive-only (no oneshot — a
