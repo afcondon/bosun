@@ -390,6 +390,11 @@ services:
     # auth at boot; the DLSMusicDevice (AudioUnit:Synths/aumu,dls ,appl) is a
     # self-contained fallback (but its id HAS a space — quote or use LABS/DLS via
     # the `add` socket verb instead).
+    # The binary is build-apple's (Apple clang + Xcode SDK, as the README
+    # says; build/ was the Nix compiler's, 2026-08-28). Since 2026-10-29 it
+    # never drops MIDI (MidiQueue), and logs stalls, slow layers, late MIDI and
+    # long-held notes to ~/.continuo/continuo.log, kept across restarts;
+    # `status` carries the same counts (audio, midi).
     restart: on-failure
     x-bosun:
       host: mbp
@@ -400,6 +405,6 @@ services:
         maxRetries: 5
       process:
         cwd: /Users/afc/work/afc-work/music/continuo
-        command: ./build/continuo_artefacts/continuo --plugin /Library/Audio/Plug-Ins/Components/PianoOne.component --plugin AudioUnit:Synths/aumu,Inst,Splc --gain 0.7
+        command: ./build-apple/continuo_artefacts/Release/continuo --plugin /Library/Audio/Plug-Ins/Components/PianoOne.component --plugin AudioUnit:Synths/aumu,Inst,Splc --gain 0.7
       expose:
         - socket: /Users/afc/.continuo/control.sock
