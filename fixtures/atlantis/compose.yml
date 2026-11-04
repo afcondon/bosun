@@ -224,6 +224,27 @@ services:
       expose:
         - host: 3029
 
+  helm-hub:
+    # HELM'S HUB (Marginalia 305, music/helm/hub): the one process that holds
+    # the rig's MIDI controllers (MC6, Twister, KeyStep, ...), so that PWYF,
+    # Quadrat and Triggerfish can share them; apps reach it over a WebSocket on
+    # :3039 through `Helm.WebMIDI.requestHubAccess` (PWYF with `?midi=hub`).
+    # Plan: docs/kb/plans/quadrat-the-sampler.md, phase 3.
+    #
+    # It is the pedalboard's voice once PWYF is on it (whatever writes the
+    # MC6's USB output is all the pedals hear), so it is restarted RARELY and
+    # has no dependencies: nothing in the rig must be up for the pedals to work.
+    # Stage 0. Port-from-env (PORT), plain Node (no build step; `npm install`
+    # once in hub/), drains on TERM (closes its CoreMIDI ports). TCP HTTP on
+    # :3039 -> default TcpConnect readiness.
+    x-bosun:
+      host: mbp
+      process:
+        cwd: /Users/afc/work/afc-work/music/helm/hub
+        command: PORT=3039 node hub.mjs
+      expose:
+        - host: 3039
+
   limulus:
     # LIMULUS (Marginalia 301): text in, sound out. One editor in front of two
     # engines, Haskell Tidal and architeuthis, to show they are the same. Its
