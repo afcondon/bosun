@@ -245,6 +245,28 @@ services:
       expose:
         - host: 3039
 
+  itajara-controllers:
+    # THE LOOPER'S OWN PROCESS (music/itajara/controllers, Itajara.Controllers.
+    # Main): answers the looper's MC6 switches beside Helm's hub, whether or not
+    # a page is open or in front (a background tab's timers run at about 1 Hz,
+    # so a looper answered by one is late on every press). It claims
+    # `itajara:switches` on the hub; PWYF stands back while that is held, and
+    # answers again by itself if this dies (the claim ends with the
+    # connection). Plan: docs/kb/plans/quadrat-the-sampler.md, phase 3, step 3.
+    #
+    # No port of its own (a WebSocket client of the hub and of Itajara), so
+    # probe: process. Prebuilt artifact: `spago bundle` in controllers/ writes
+    # dist/itajara-controllers.mjs. Settings by env: HUB_URL, LOOPER_URL,
+    # MC6_INPUT. Releases its claim on TERM.
+    depends_on:
+      - helm-hub
+    x-bosun:
+      host: mbp
+      probe: process
+      process:
+        cwd: /Users/afc/work/afc-work/music/itajara/controllers
+        command: node dist/itajara-controllers.mjs
+
   limulus:
     # LIMULUS (Marginalia 301): text in, sound out. One editor in front of two
     # engines, Haskell Tidal and architeuthis, to show they are the same. Its
