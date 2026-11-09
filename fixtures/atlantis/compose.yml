@@ -169,15 +169,18 @@ services:
         command: ./audio/superdirt-core.sh
         env:
           SUPERDIRT_PORT: "57120"
-          # scsynth output device — BlackHole 16ch, so Ableton captures the main
-          # mix on 1/2 and Conspicillum's per-grain SEND buses on their own pairs
-          # (orbit 10 -> 3/4, orbit 11 -> 5/6; superdirt-daemon.scd reads
-          # SUPERDIRT_OUTPUTS). Was BlackHole 2ch until 2026-09-25. The space is
+          # scsynth output device — the monitors, directly (AC, 2026-11-09):
+          # auditioning no longer needs Ableton open between SuperDirt and the
+          # speakers, and Ableton is for produced pieces only. Two outputs, so
+          # Conspicillum's send orbits fold onto 1/2 as a little extra level.
+          # To record SuperDirt into Ableton with the sends as returns, put
+          # back BlackHole 16ch with SUPERDIRT_OUTPUTS "6" (main 1/2, orbit 10
+          # -> 3/4, orbit 11 -> 5/6), as it was from 2026-09-25. The space is
           # safe: Bosun shell-quotes env values (project 227 note #398).
           # boot-superdirt.sh keeps a `:-BlackHole 2ch` fallback for manual
           # launches; this is the supervised value.
-          SUPERDIRT_DEVICE: "BlackHole 16ch"
-          SUPERDIRT_OUTPUTS: "6"
+          SUPERDIRT_DEVICE: "ADAM Audio D3V"
+          SUPERDIRT_OUTPUTS: "2"
       expose:
         - host: 57120
 
