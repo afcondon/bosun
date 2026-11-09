@@ -110,8 +110,10 @@ services:
         # Triggerfish's own page at /conspicillum/ since 2026-10-29 (it was
         # mounted from its own repo); Quadrat's page and its absolute /api/*
         # calls pass through to the Friends server on :3029, which still owns
-        # them. Triggerfish keeps the root, so its stored presets stay put.
-        command: ./static-httpd -port 3023 -root /Users/afc/work/afc-work/music/live-coding/triggerfish/public -proxy /api/=http://localhost:3029 -proxy /quadrat.=http://localhost:3029 -proxy /limulus/=http://localhost:3036 -proxy /limulus=http://localhost:3036
+        # them. Pinakes (Quadrat's Library, its own app since 2026-11-09) is
+        # served the same way. Triggerfish keeps the root, so its stored presets
+        # stay put.
+        command: ./static-httpd -port 3023 -root /Users/afc/work/afc-work/music/live-coding/triggerfish/public -proxy /api/=http://localhost:3029 -proxy /quadrat.=http://localhost:3029 -proxy /pinakes.=http://localhost:3029 -proxy /looper.css=http://localhost:3029 -proxy /limulus/=http://localhost:3036 -proxy /limulus=http://localhost:3036
       expose:
         - host: 3023
 
