@@ -415,8 +415,14 @@ services:
     # going forward; the Vetula WebMIDI route prefers this "continuo" port when
     # it's live (else the IAC bus).
     #
-    # --plugin is REPEATABLE — each is a LAYER, all sounding the same notes. The
-    # audition voice is piano + LABS strings: the second layer is Spitfire LABS
+    # --plugin is REPEATABLE — each is a LAYER. Since 2026-11-13 each has a
+    # channel and a name (`@1=Piano`, `@2=Strings`): a layer hears only its
+    # channel, and the dashboard's routing matrix draws a column for each from
+    # Continuo's `status` (relayed by the Friends server, /api/continuo), so a
+    # voice is sent to an instrument, never to a channel nothing plays. A layer
+    # with no `@` hears every channel, and the matrix falls back to one
+    # Continuo column with the channel in the cell.
+    # The audition voice is piano + LABS strings: the second layer is Spitfire LABS
     # via the Splice wrapper (AU id AudioUnit:Synths/aumu,Inst,Splc — loads its
     # patch headless, no GUI). Both tokens are space-free so the space-split
     # command is safe. Drop the second --plugin if LABS/Splice ever needs online
@@ -438,6 +444,6 @@ services:
         maxRetries: 5
       process:
         cwd: /Users/afc/work/afc-work/music/continuo
-        command: ./build-apple/continuo_artefacts/Release/continuo --plugin /Library/Audio/Plug-Ins/Components/PianoOne.component --plugin AudioUnit:Synths/aumu,Inst,Splc --gain 0.7
+        command: ./build-apple/continuo_artefacts/Release/continuo --plugin /Library/Audio/Plug-Ins/Components/PianoOne.component@1=Piano --plugin AudioUnit:Synths/aumu,Inst,Splc@2=Strings --gain 0.7
       expose:
         - socket: /Users/afc/.continuo/control.sock
