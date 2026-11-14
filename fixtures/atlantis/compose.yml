@@ -1,5 +1,5 @@
 # Atlantis — the live-coding rig's OS-process tier, modelled for Bosun to
-# supervise in place of DeepStar (ROADMAP Stage 2). These are NATIVE processes,
+# supervise (ROADMAP Stage 2; it took over from DeepStar, retired 2026-11-14). These are NATIVE processes,
 # not containers, so each declares `x-bosun.process {cwd, command}` (the compose
 # adapter reads that as a Process executor). `depends_on` gives the boot DAG;
 # `x-bosun.expose` the reachability. Source of truth for the set + deps: the
@@ -27,7 +27,7 @@ services:
     # loses the bind is not a copy that will win it later.
     #
     # `probe: exec` rather than `process`, because `process` asks "is the group
-    # I recorded alive" and this daemon is routinely started by hand or by
+    # I recorded alive" and this daemon was routinely started by hand or by
     # `deepstar up`. On 2026-09-10 the real one had held udp:57130 on pid 1596
     # for eight hours while this supervisor read Down and spawned a loser 1,335
     # times. The check tests the ENDPOINT DECLARED TWO LINES BELOW, so it cannot
@@ -290,36 +290,10 @@ services:
       expose:
         - host: 3036
 
-  deepstar:
-    # THE RIG DOCTOR, finally a member (Marginalia 191). `deepstar serve` is an
-    # HTTP API on :3027 — the house pattern (Marginalia :3100, the Chair :3022,
-    # Calypso :3060, Amphora :3024): one backend a human curls, an agent calls
-    # and a web surface renders, with one implementation behind all three.
-    #
-    # It was missing from this file for a reason worth writing down rather than
-    # quietly fixing: DeepStar is mostly a COMMAND, not a daemon, and "why is
-    # deepstar not supervised" is half a category error. But `serve` genuinely
-    # is a daemon, and it is the one Quadrat needs — the calibration runner
-    # (`tune`, `sweep`, `latency`) lives behind it, and the pitch-calibration
-    # work in docs/kb/plans/sample-sets.md shells out to exactly this.
-    #
-    # Stage 0: it binds and waits. Its rig lock means at most one may run, which
-    # its own :3027 bind already enforces — a TCP probe is adoption-capable by
-    # construction (it asks "is something listening", never "did I start it"),
-    # so no exec check is needed here. That is the whole reason the TCP services
-    # in this file have never storm-restarted and the process-probed ones have.
-    #
-    # It does NOT supervise anything and must not: supervision was ceded to
-    # Bosun on 2026-07-02, and `deepstar up` survives as the zero-infrastructure
-    # launcher for an Atlantis running on someone else's machine. See
-    # docs/WHO-SPAWNS-WHAT.md.
-    x-bosun:
-      host: mbp
-      process:
-        cwd: /Users/afc/work/afc-work/music/live-coding/deepstar
-        command: ./bin/deepstar serve --port 3027
-      expose:
-        - host: 3027
+  # DeepStar (`deepstar serve`, :3027) was a member from 2026-09-10 until it was
+  # retired on 2026-11-14. Calibration is Quadrat's Calibrate page, the
+  # dashboard's checks are friends-of-itajara's `/api/rig/checks`, and the
+  # looper's latency record is `itajara/daemon/scripts/latency.mjs`.
 
   fh2-daemon:
     # Instrument tier, and the service that paid for this whole seam. With the
