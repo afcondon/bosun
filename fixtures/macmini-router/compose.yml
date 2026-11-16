@@ -66,16 +66,21 @@ services:
       # UNKNOWN: whether it closes DuckDB cleanly on SIGTERM (rule 5). Check
       # the log after the first `/control/restart`.
       # Moved from launchd (net.hylograph.marginalia.api, now disabled)
-      # 2026-09-26. KNOWN, NOT BOSUN'S: uploads write straight to the volume
-      # (server/src/API/Agent.js), and the only Removable Volumes grant is
-      # for an nvm node that no longer exists, so uploads have probably failed
-      # since the nvm→Nix switch. See the two-machine plan, Phase 2.
+      # 2026-09-26.
+      # NO PROCESS HERE TOUCHES /Volumes OR ~/Documents (2026-11-16). macOS
+      # charges a child's file access to Bosun's launcher, a Nix store path
+      # with no grant, and asks with a prompt too vague to judge (denied).
+      # Attachment reads and upload writes go through infovore-files on
+      # :8091, the one binary with the grant (uploads by create-only PUT);
+      # the STORE path is only a prefix for building /attachments/ URLs.
+      # Blog drafts live under ~/work, not ~/Documents, for the same reason.
       process:
         cwd: /Users/andrew/work/marginalia-demo/project-tracker
         command: node server/run.js
         env:
           MARGINALIA_ATTACHMENT_STORE: "/Volumes/Crucial4TB/Documents/Notes Attachments/"
           MARGINALIA_ATTACHMENTS_PROXY: "http://127.0.0.1:8091/marginalia-attachments"
+          MARGINALIA_BLOG_DRAFTS: "/Users/andrew/work/marginalia-demo/blog-drafts"
       expose:
         - host: 3100
 
