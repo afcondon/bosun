@@ -30,7 +30,13 @@ cd "$SCRIPT_DIR/../.."   # tools/launchd → the bosun repo root
 # core/src/Bosun/ResidentAccess.purs).
 case "$(scutil --get LocalHostName 2>/dev/null | tr '[:upper:]' '[:lower:]')" in
   *mac-mini*)
-    exec node cli/run.js --targets fixtures/macmini-router/targets.json \
+    # ON THE BEAM since 2026-11-16: the Mini is the test bed for beam/bosun
+    # (docs/kb/plans/conformance-and-subsidiarity.md, step 3), because breaking
+    # Marginalia and Infovore costs less than breaking Atlantis. Needs
+    # beam/build.sh to have been run. To go back, replace `beam/bosun` with
+    # `node cli/run.js` and
+    #   launchctl kickstart -k gui/$(id -u)/net.hylograph.bosun-router
+    exec beam/bosun --targets fixtures/macmini-router/targets.json \
       supervise --tailnet-read --port 3990 fixtures/macmini-router/compose.yml fixtures/macmini-router/registry.json ;;
 esac
 exec node cli/run.js supervise --port 3990 fixtures/router/compose.yml fixtures/router/registry.json
