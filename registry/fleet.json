@@ -614,19 +614,6 @@
     },
     {
       "role": "api",
-      "port": 3027,
-      "url": "http://localhost:3027",
-      "startCommand": null,
-      "description": "deepstar serve — the rig doctor's HTTP API (doctor, calibrations, realise, measure, loop). Bosun-supervised in the Atlantis group (fixtures/atlantis/compose.yml, reload via :3994); startCommand NULL on purpose so bosun serve does not bind the port — this row is the port reservation. REGISTERED 2026-09-10 after finding :3027 already held by an unregistered node-express-realworld-example-app dev server (pid 35400, up since Aug 24): the port was DeepStar's documented DefaultAPIPort and was in no registry at all, so nothing could report the collision.",
-      "host": "mbp",
-      "tailscaleName": "andrews-macbook-pro",
-      "environment": "native",
-      "id": 190,
-      "projectName": "DeepStar",
-      "projectId": 191
-    },
-    {
-      "role": "api",
       "port": 3000,
       "url": "http://localhost:3000",
       "startCommand": null,
@@ -898,6 +885,6 @@
       "projectId": 305
     }
   ],
-  "count": 67,
+  "count": 66,
   "collisions": {}
 }
