@@ -117,6 +117,9 @@ services:
       # NO probe: process — TCP readiness on the exposed :3992, as above.
       process:
         cwd: ${BOSUN_ROOT}
-        command: node cli/run.js supervise --port 3992 ${BOSUN_ROOT}/fixtures/minard/compose.yml ${BOSUN_ROOT}/fixtures/minard/registry.json
+        # ON THE BEAM since 2026-11-11, as the first real trial of beam/bosun
+        # (docs/kb/plans/conformance-and-subsidiarity.md, step 3). To go back,
+        # replace `beam/bosun` with `node cli/run.js` and POST :3990/control/reload.
+        command: beam/bosun supervise --port 3992 ${BOSUN_ROOT}/fixtures/minard/compose.yml ${BOSUN_ROOT}/fixtures/minard/registry.json
       expose:
         - host: 3992
