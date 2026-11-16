@@ -1,0 +1,1 @@
+{ "desired": "up", "phase": "raised", "supervised": true, "services": { "a": "paused" }, "supervision": { "a": { "restarts": 0, "fails": 0, "lastTransitionAt": 1794690259979, "suspendedUntil": null, "retryCap": null, "gaveUp": false } }, "holders": { "a": { "verdict": "ours", "pids": [12] } } }

@@ -37,6 +37,7 @@ module Bosun.Holding
   , strangers
   , describeHolder
   , holdingJson
+  , holderRow
   , ReapVerdict(..)
   , reapTag
   , reapScript
@@ -49,6 +50,7 @@ module Bosun.Holding
 import Prelude
 
 import Bosun.Atoms (Port, ServiceId, unPort, unServiceId)
+import Bosun.Protocol.State as Wire
 import Bosun.Reachability (Address(..), Reachability, addresses)
 import Bosun.Substrate (TeardownVerdict(..), pidPath, shellQuote, teardownSettled)
 import Data.Array as A
@@ -325,19 +327,24 @@ describeHolder h =
 -- | every existing decoder reads it unchanged, and this says whose process the
 -- | status is about — which is the whole of acceptance criterion 3.
 holdingJson :: Holding -> String
-holdingJson h =
-  "{ \"verdict\": " <> jsonString (holdingTag h) <> fields <> " }"
+holdingJson = holderRow >>> Wire.printHolder
+
+-- | A holding as `/state` carries it (`Bosun.Protocol.State`): the verdict,
+-- | and beside it only what that verdict has to say.
+holderRow :: Holding -> Wire.Holder
+holderRow h = case h of
+  Ours hs -> bare { pids = Just (pidsOf hs) }
+  Stranger s -> bare
+    { claimable = Just s.claimable
+    , pids = Just (pidsOf s.holders)
+    , ours = Just (pidsOf s.ours)
+    , detail = Just (intercalate "; " (map describeHolder s.holders))
+    }
+  Unobservable why -> bare { detail = Just why }
+  _ -> bare
   where
-  fields = case h of
-    Ours hs -> ", \"pids\": " <> pidList hs
-    Stranger s ->
-      ", \"claimable\": " <> (if s.claimable then "true" else "false")
-        <> ", \"pids\": " <> pidList s.holders
-        <> ", \"ours\": " <> pidList s.ours
-        <> ", \"detail\": " <> jsonString (intercalate "; " (map describeHolder s.holders))
-    Unobservable why -> ", \"detail\": " <> jsonString why
-    _ -> ""
-  pidList hs = "[" <> intercalate ", " (map (show <<< unPid <<< _.pid) hs) <> "]"
+  bare = { verdict: holdingTag h, claimable: Nothing, pids: Nothing, ours: Nothing, detail: Nothing }
+  pidsOf = map (_.pid >>> unPid)
 
 -- | A JSON string literal. The hand-built `/state` never needed one while every
 -- | value was an identifier; a command line or a path can hold anything.

@@ -21,3 +21,6 @@ workspace:
     # up whatever branch that repo has checked out.
     glassbox:
       path: ../../purescript-hylograph-libs/purescript-glassbox/core
+    # Wire descriptions: `/state` is one (protocol/src/Bosun/Protocol/State.purs).
+    hawser:
+      path: ../../purescript-hylograph-libs/purescript-hawser

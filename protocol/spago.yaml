@@ -15,3 +15,9 @@ package:
     - maybe
     - codec-argonaut
     - profunctor
+    # Bosun.Protocol.State: /state described once (Hawser, a sibling repo).
+    - hawser
+    - argonaut-core
+    - foreign-object
+    - strings
+    - tuples

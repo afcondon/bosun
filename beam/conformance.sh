@@ -6,6 +6,7 @@
 #   Supervise  Bosun.Conformance.SuperviseMain  hardcoded fixture, the supervisor transition
 #   Analyze    Bosun.Conformance.AnalyzeText    real compose + registry files, through the JSON
 #                                               parser, the adapters and the wire codec
+#   State      Bosun.Conformance.StateText      /state documents, read and printed by the description
 #   Glassbox   Bosun.Beam.GlassboxVectors       every machine's committed vector file, regenerated
 #   YAML       Bosun.CLI.IO (foreign)           js-yaml against yamerl, every YAML file in fixtures/
 #   Commands   Bosun.CLI.Main                   check, plan, apply --dry-run, down --dry-run
@@ -55,6 +56,27 @@ for compose in "$BOSUN"/fixtures/*/compose.yml; do
     ok = file:write_file(\"$TMP/$name.beam\", 'bosun_conformance_analyzeText@ps':analyzeText(C, R)), halt()."
   check "$name" "$TMP/$name.node" "$TMP/$name.beam"
 done
+
+# /state: every document in protocol/vectors/state, read and printed again
+# through the one description (Bosun.Protocol.State). Three things are held:
+# node and the BEAM agree; a document the daemon wrote comes back unchanged;
+# and one with an .expected file beside it comes back as that file says.
+echo "==> /state, the described document"
+for doc in "$BOSUN"/protocol/vectors/state/*.json; do
+  name="state-$(basename "$doc" .json)"
+  node --input-type=module -e "
+    import { readFileSync } from 'node:fs';
+    import { stateText } from '$BOSUN/output/Bosun.Conformance.StateText/index.js';
+    process.stdout.write(stateText(readFileSync('$doc', 'utf8')));" > "$TMP/$name.node"
+  erl -noshell -pa "$HERE/ebin" -eval "
+    {ok, D} = file:read_file(\"$doc\"),
+    ok = file:write_file(\"$TMP/$name.beam\", 'bosun_conformance_stateText@ps':stateText(D)), halt()."
+  check "$name" "$TMP/$name.node" "$TMP/$name.beam"
+  want="${doc%.json}.expected"; [ -f "$want" ] || want="$doc"
+  if cmp -s "$TMP/$name.node" "$want"; then echo "  ✓ $name is what $(basename "$want") says"
+  else echo "  ✗ $name: not what $(basename "$want") says"; diff <(head -c 4000 "$want") <(head -c 4000 "$TMP/$name.node") | head -6 | sed 's/^/      /' || true; fail=1; fi
+done
+ls "$BOSUN"/protocol/vectors/state/*.json >/dev/null 2>&1 || { echo "  ✗ no /state vectors found"; fail=1; }
 
 # The two YAML readers: js-yaml on node, yamerl on the BEAM. Each reads the
 # same file through Bosun's own read edge, and the JSON each makes of it is

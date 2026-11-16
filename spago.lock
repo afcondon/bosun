@@ -176,10 +176,15 @@
         "path": "protocol",
         "core": {
           "dependencies": [
+            "argonaut-core",
             "codec-argonaut",
+            "foreign-object",
+            "hawser",
             "maybe",
             "prelude",
-            "profunctor"
+            "profunctor",
+            "strings",
+            "tuples"
           ]
         },
         "test": {
@@ -868,6 +873,9 @@
     "extra_packages": {
       "glassbox": {
         "path": "../../purescript-hylograph-libs/purescript-glassbox/core"
+      },
+      "hawser": {
+        "path": "../../purescript-hylograph-libs/purescript-hawser"
       }
     }
   },
@@ -1568,6 +1576,23 @@
         "unsafe-coerce",
         "web-dom",
         "web-events"
+      ]
+    },
+    "hawser": {
+      "type": "local",
+      "path": "../../purescript-hylograph-libs/purescript-hawser",
+      "dependencies": [
+        "argonaut-core",
+        "arrays",
+        "either",
+        "foldable-traversable",
+        "foreign-object",
+        "integers",
+        "maybe",
+        "numbers",
+        "prelude",
+        "strings",
+        "tuples"
       ]
     },
     "heterogeneous": {

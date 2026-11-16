@@ -1,0 +1,1 @@
+{ "desired": "up", "phase": "raised", "supervised": true, "services": { "minard-for-nix": "running" }, "supervision": { "minard-for-nix": { "restarts": 0, "fails": 0, "lastTransitionAt": 1790407240841, "suspendedUntil": null, "retryCap": null, "gaveUp": false } }, "holders": { "minard-for-nix": { "verdict": "ours", "pids": [34377] } } }

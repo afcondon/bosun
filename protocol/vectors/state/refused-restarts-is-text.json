@@ -1,0 +1,1 @@
+{ "desired": "up", "phase": "raised", "supervised": true, "services": { "a": "running" }, "supervision": { "a": { "restarts": "0", "fails": 0, "lastTransitionAt": 1, "suspendedUntil": null, "retryCap": null, "gaveUp": false } } }

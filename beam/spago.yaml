@@ -30,6 +30,8 @@ workspace:
       path: ../cli
     glassbox:
       path: ../../../purescript-hylograph-libs/purescript-glassbox/core
+    hawser:
+      path: ../../../purescript-hylograph-libs/purescript-hawser
     st:
       path: ../../../purescript-backends/purerl-ports/st
     foreign-object:

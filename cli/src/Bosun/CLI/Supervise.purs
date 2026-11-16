@@ -18,7 +18,7 @@
 -- | to restart by marking it `Failed` in the observed snapshot and letting the
 -- | pure planner do the rest (incl. D-E5 coupled co-restart) — no ref-minting,
 -- | no special path.
-module Bosun.CLI.Supervise (runSupervise, superviseResident) where
+module Bosun.CLI.Supervise (runSupervise, superviseResident, stateDocOf, snapshotBody) where
 
 import Prelude
 
@@ -29,7 +29,7 @@ import Bosun.Atoms (ServiceId, unServiceId)
 import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (readJsonFile, readYamlFile)
 import Bosun.CLI.Observe (observeHolding, observeHoldings, observeSupSnapshot)
-import Bosun.Holding (Holding(..), describeHolder, holdingJson, readReap, reapScript, reapSettled, reapTag, settleTeardown, strangers)
+import Bosun.Holding (Holding(..), describeHolder, holderRow, readReap, reapScript, reapSettled, reapTag, settleTeardown, strangers)
 import Bosun.CLI.Resident (Resident, accepted, nowMs, refused, runResidentFor)
 import Bosun.CLI.Supervise.Machine (complaints, desiredFromPhase, evDone, evDown, evRejected, evReload, evReloaded, evRestart, evTick, evUp, phaseTag)
 import Bosun.Machine.SuperviseGroup as SG
@@ -39,6 +39,7 @@ import Glassbox.Host (dispatch)
 import Glassbox.Codec.JSON (parseSpec)
 import Glassbox.Run (setConfig, setFact, worldFrom)
 import Glassbox.Spec (CommandId, ConfigId(..), EventId, FactId(..), RefusalId, Spec, StateId, Value(..), textOfRefusal)
+import Bosun.Protocol.State (StateDoc, printState)
 import Bosun.Plan (Change(..), Plan, Status(..), plan, planSteps)
 import Bosun.Reconcile (buildAliases, reconcile)
 import Bosun.Report (renderAddressMiss, renderCommand, renderReport, renderTeardown, renderTeardownSummary)
@@ -699,25 +700,29 @@ reloadSummary d =
 -- | Chair on :3020 reads it, and an additive `/state` means the running Chair
 -- | keeps working untouched while it learns about phases at its own pace.
 snapshotBody :: Policies -> StateId -> SupState -> Map.Map ServiceId { verdict :: TeardownVerdict, at :: Number } -> Map.Map ServiceId Holding -> String
-snapshotBody ps phase st td holders =
-  "{ \"desired\": \"" <> (if desiredFromPhase phase then "up" else "down") <> "\""
-    <> ", \"phase\": \"" <> phaseTag phase <> "\""
-    <> ", \"supervised\": true"
-    <> ", \"services\": { " <> intercalate ", " (map svcEntry entries) <> " }"
-    <> ", \"supervision\": { " <> intercalate ", " (map supEntry entries) <> " }"
-    <> teardownField
-    <> holdersField
-    <> " }"
-  where
+snapshotBody ps phase st td holders = printState (stateDocOf ps phase st td holders)
+
+-- | The document itself (`Bosun.Protocol.State` describes it and prints it).
+-- | Pure, so the conformance harness can hold it on every runtime.
+stateDocOf :: Policies -> StateId -> SupState -> Map.Map ServiceId { verdict :: TeardownVerdict, at :: Number } -> Map.Map ServiceId Holding -> StateDoc
+stateDocOf ps phase st td holders =
+  { desired: if desiredFromPhase phase then "up" else "down"
+  , phase: phaseTag phase
+  , supervised: true
+  , services: entries <#> \(Tuple sid s) -> Tuple (unServiceId sid) (statusToken s.status)
+  , supervision: entries <#> \(Tuple sid s) -> Tuple (unServiceId sid) (supRow sid s)
+  , teardown: unlessEmpty (teardownEntries <#> \(Tuple sid v) -> Tuple (unServiceId sid) (teardownRow v))
   -- WHOSE process each status is about (Bosun.Holding). Additive, like
   -- `teardown`: `services` keeps its words for every existing decoder, and a
   -- stranger answering on a service's port no longer reads exactly like a
   -- process this group owns. Services with no TCP port are left out.
-  holdersField =
-    let hs = A.filter (\(Tuple _ h) -> holdingTagIsPorted h) (Map.toUnfoldable holders :: Array (Tuple ServiceId Holding))
-    in
-      if A.null hs then ""
-      else ", \"holders\": { " <> intercalate ", " (map (\(Tuple sid h) -> "\"" <> unServiceId sid <> "\": " <> holdingJson h) hs) <> " }"
+  , holders: unlessEmpty (ported <#> \(Tuple sid h) -> Tuple (unServiceId sid) (holderRow h))
+  }
+  where
+  unlessEmpty :: forall a. Array a -> Maybe (Array a)
+  unlessEmpty rows = if A.null rows then Nothing else Just rows
+
+  ported = A.filter (\(Tuple _ h) -> holdingTagIsPorted h) (Map.toUnfoldable holders :: Array (Tuple ServiceId Holding))
   holdingTagIsPorted = case _ of
     NoPort -> false
     _ -> true
@@ -726,32 +731,19 @@ snapshotBody ps phase st td holders =
 
   teardownEntries = Map.toUnfoldable td :: Array (Tuple ServiceId { verdict :: TeardownVerdict, at :: Number })
 
-  teardownField =
-    if A.null teardownEntries then ""
-    else ", \"teardown\": { " <> intercalate ", " (map teardownEntry teardownEntries) <> " }"
-
   -- `settled` is carried rather than left to the reader to derive from the tag.
   -- A consumer that has to know which of six tokens mean "it stopped" will get
   -- it wrong the first time a seventh is added, and the core already knows.
-  teardownEntry (Tuple sid v) =
-    "\"" <> unServiceId sid <> "\": { "
-      <> "\"verdict\": \"" <> teardownTag v.verdict <> "\""
-      <> ", \"settled\": " <> (if teardownSettled v.verdict then "true" else "false")
-      <> ", \"at\": " <> show v.at
-      <> " }"
+  teardownRow v = { verdict: teardownTag v.verdict, settled: teardownSettled v.verdict, at: v.at }
 
-  svcEntry (Tuple sid s) =
-    "\"" <> unServiceId sid <> "\": \"" <> statusToken s.status <> "\""
-
-  supEntry (Tuple sid s) =
-    "\"" <> unServiceId sid <> "\": { "
-      <> "\"restarts\": " <> show s.restarts
-      <> ", \"fails\": " <> show s.fails
-      <> ", \"lastTransitionAt\": " <> show s.since
-      <> ", \"suspendedUntil\": " <> maybe "null" show s.suspendedUntil
-      <> ", \"retryCap\": " <> maybe "null" show (cfgFor ps sid).maxRetries
-      <> ", \"gaveUp\": " <> (if gaveUp sid s then "true" else "false")
-      <> " }"
+  supRow sid s =
+    { restarts: s.restarts
+    , fails: s.fails
+    , lastTransitionAt: s.since
+    , suspendedUntil: s.suspendedUntil
+    , retryCap: (cfgFor ps sid).maxRetries
+    , gaveUp: gaveUp sid s
+    }
 
   -- `in-backoff` covers two states a reader must not confuse: throttled (it
   -- will come back on its own, wait) and PARKED (it has spent its retry cap and

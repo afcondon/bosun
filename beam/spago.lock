@@ -1450,6 +1450,9 @@
       "glassbox": {
         "path": "../../../purescript-hylograph-libs/purescript-glassbox/core"
       },
+      "hawser": {
+        "path": "../../../purescript-hylograph-libs/purescript-hawser"
+      },
       "parsing": {
         "path": "../../../purescript-backends/purerl-ports/parsing"
       },
@@ -1576,10 +1579,15 @@
       "type": "local",
       "path": "../protocol",
       "dependencies": [
+        "argonaut-core",
         "codec-argonaut",
+        "foreign-object",
+        "hawser",
         "maybe",
         "prelude",
-        "profunctor"
+        "profunctor",
+        "strings",
+        "tuples"
       ]
     },
     "codec": {
@@ -1812,6 +1820,23 @@
         "strings",
         "tuples",
         "variant"
+      ]
+    },
+    "hawser": {
+      "type": "local",
+      "path": "../../../purescript-hylograph-libs/purescript-hawser",
+      "dependencies": [
+        "argonaut-core",
+        "arrays",
+        "either",
+        "foldable-traversable",
+        "foreign-object",
+        "integers",
+        "maybe",
+        "numbers",
+        "prelude",
+        "strings",
+        "tuples"
       ]
     },
     "identity": {
