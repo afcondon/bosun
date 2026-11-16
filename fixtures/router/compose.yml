@@ -104,7 +104,12 @@ services:
       # layering failure as brunel-supervisor above).
       process:
         cwd: ${BOSUN_ROOT}
-        command: node cli/run.js supervise --port 3994 ${BOSUN_ROOT}/fixtures/atlantis/compose.yml ${BOSUN_ROOT}/fixtures/atlantis/registry.json
+        # ON THE BEAM since 2026-11-16, after Minard (11 Nov) and the Mini's root
+        # (16 Nov) ran on it without trouble. To go back, replace `beam/bosun`
+        # with `node cli/run.js` and POST :3990/control/reload. Either way the
+        # new supervisor reaps and relaunches all thirteen services, and
+        # Architeuthis's session-only state (record buffers, marks) goes.
+        command: beam/bosun supervise --port 3994 ${BOSUN_ROOT}/fixtures/atlantis/compose.yml ${BOSUN_ROOT}/fixtures/atlantis/registry.json
       expose:
         - host: 3994
 
