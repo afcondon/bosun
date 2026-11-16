@@ -21,6 +21,7 @@ import Bosun.Supervisor
   , backoffMs, emptySupState, initialSvc, recordLaunches, refine, uniform
   )
 import Data.Array (foldl, mapMaybe)
+import Data.Int as Int
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Tuple (Tuple(..))
@@ -80,13 +81,23 @@ main = do
         svc = fromMaybe (initialSvc s.now) (Map.lookup web r.state)
         refined = fromMaybe Down (Map.lookup web r.refined)
     log
-      ( "t=" <> show s.now
+      ( "t=" <> ms s.now
           <> "  web=" <> tok refined
           <> "  restarts=" <> show svc.restarts
           <> "  fails=" <> show svc.fails
-          <> "  susp=" <> maybe "none" show svc.suspendedUntil
+          <> "  susp=" <> maybe "none" ms svc.suspendedUntil
       )
     pure r.state
+
+-- | A time in whole milliseconds, printed as an integer.
+-- |
+-- | Not `show`: `show :: Number -> String` is not the same function on every
+-- | backend. JavaScript prints 3000.0 and purerl's prelude prints
+-- | 3.00000000000000000000e+03, so a harness that printed times with `show`
+-- | would report a divergence in the printer, not in the supervisor. Every time
+-- | in this script is a whole number of milliseconds.
+ms :: Number -> String
+ms = show <<< Int.round
 
 tok :: Status -> String
 tok = case _ of
@@ -99,4 +110,4 @@ tok = case _ of
   Unknown _ -> "unknown"
 
 joinInts :: Array Number -> String
-joinInts = foldl (\acc n -> acc <> " " <> show n) ""
+joinInts = foldl (\acc n -> acc <> " " <> ms n) ""

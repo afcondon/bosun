@@ -39,7 +39,12 @@ listeners(){ lsof -ti :"$1" 2>/dev/null | wc -l | tr -d ' '; }
 group_size(){ ps -Ao pgid= 2>/dev/null | tr -d ' ' | grep -cx "$1"; }
 # canonicalise a /state body for the cross-runtime diff: only timestamps vary at
 # a quiescent green checkpoint (restarts/fails 0, suspendedUntil null).
-canon(){ sed -E 's/"lastTransitionAt": [0-9.]+/"lastTransitionAt": T/g'; }
+# (The BEAM prints a float as 1.79e+12 where node prints 1790000000000.0: the
+# same number, so the pattern takes an exponent too.)
+# The `holders` map carries live process ids, which differ on every run: mask
+# them too. (They joined /state after this rig was written, and from then until
+# 2026-11-11 the parity diff below failed on every run for that reason alone.)
+canon(){ sed -E 's/"lastTransitionAt": [0-9.e+]+/"lastTransitionAt": T/g; s/"pids": \[[0-9, ]*\]/"pids": P/g'; }
 
 cleanup_ports(){
   # touch ONLY menagerie processes — never a blanket /tmp pidfile wipe (those may
@@ -175,10 +180,50 @@ else
   fi
 fi
 
+# ── BEAM column ──────────────────────────────────────────────────────────────
+# The real CLI again, lowered by purerl and run on the BEAM (beam/README.md).
+# Same compose file, read by yamerl. SKIPPED, not failed, when erl is absent.
+BEAM_RAN=0
+if ! command -v erl >/dev/null 2>&1 || [ ! -x "$BOSUN/beam/build.sh" ]; then
+  echo ""
+  note "erl or beam/build.sh not found: BEAM column SKIPPED"
+else
+  echo ""
+  echo "==> [beam] purerl build (PureScript -> Erlang -> .beam)"
+  if ! "$BOSUN/beam/build.sh"; then
+    bad "[beam] build failed"
+  else
+    echo "==> [beam] RUN the real CLI on the BEAM as the resident supervisor on :$PORT"
+    "$BOSUN/beam/bosun" supervise --port "$PORT" "$FIX/compose.yml" "$FIX/registry.json" >/tmp/menagerie-beam.log 2>&1 &
+    SUP_PID=$!
+    if wait_control; then
+      ok "[beam] control surface answering on :$PORT"
+      assert_column beam /tmp/menagerie-state-beam.txt
+      BEAM_RAN=1
+    else
+      bad "[beam] control surface never came up: see /tmp/menagerie-beam.log"
+    fi
+    stop_supervisor
+
+    echo ""
+    echo "== /state cross-runtime parity (node ≡ beam, modulo timestamps) =="
+    if [ -s /tmp/menagerie-state-node.txt ] && [ -s /tmp/menagerie-state-beam.txt ]; then
+      if diff /tmp/menagerie-state-node.txt /tmp/menagerie-state-beam.txt >/dev/null; then
+        ok "green /state is byte-identical across runtimes (the BEAM matches the Node oracle)"
+      else
+        bad "/state DIVERGED between node and beam:"
+        diff /tmp/menagerie-state-node.txt /tmp/menagerie-state-beam.txt
+      fi
+    else
+      bad "missing a /state snapshot: cannot diff runtimes"
+    fi
+  fi
+fi
+
 echo ""
 if [ "$fail" = 0 ]; then
-  echo "✅ MENAGERIE: all behavioural assertions passed (node$([ -x /tmp/bgo_menagerie ] && echo ' + gnomon, /state parity'))"
+  echo "✅ MENAGERIE: all behavioural assertions passed (node$([ -x /tmp/bgo_menagerie ] && echo ' + gnomon')$([ "$BEAM_RAN" = 1 ] && echo ' + beam'), /state parity)"
 else
-  echo "❌ MENAGERIE: failures above — see /tmp/menagerie-{node,go}.log"
+  echo "❌ MENAGERIE: failures above — see /tmp/menagerie-{node,go,beam}.log"
 fi
 exit $fail

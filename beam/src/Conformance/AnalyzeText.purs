@@ -1,0 +1,1 @@
+../../../conformance/src/Bosun/Conformance/AnalyzeText.purs

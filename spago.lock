@@ -129,6 +129,8 @@
             "bosun-adapters",
             "bosun-cli",
             "bosun-core",
+            "bosun-protocol",
+            "codec-argonaut",
             "console",
             "effect",
             "either",

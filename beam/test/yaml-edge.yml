@@ -1,0 +1,53 @@
+# Scalars and shapes where two YAML readers could disagree. beam/conformance.sh
+# reads this with js-yaml (node) and with yamerl (the BEAM) and compares the
+# JSON each makes of it.
+plain: on-failure
+quoted_number: "3"
+integer: 3082
+negative: -7
+float: 1.5
+exponent: 1e3
+hex: 0x1F
+octal: 0o17
+yes_word: yes
+on_word: on
+true_word: true
+null_word: null
+tilde: ~
+empty:
+empty_list: []
+empty_map: {}
+nested:
+  list:
+    - host: 3082
+    - [1, 2, three]
+  later: first
+  earlier: second
+3082: integer key
+multi: |
+  line one
+  line two
+folded: >
+  folded
+  text
+anchors:
+  base: &base
+    a: 1
+    b: 2
+  copy: *base
+  word: &word hello
+  again: *word
+merged:
+  first: explicit, before the merge
+  <<: *base
+  b: explicit, after the merge
+  c: 3
+merged_from_two:
+  <<: [*base, {b: loses, d: 4}]
+index_keys:
+  b: 1
+  10: ten
+  a: 2
+  2: two
+command: sh -c 'sleep 1 & exec python3 -m http.server'
+unicode: "café → ✓"

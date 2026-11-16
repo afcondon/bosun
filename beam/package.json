@@ -1,0 +1,1 @@
+{ "private": true, "type": "module", "devDependencies": { "purs-backend-erl": "0.0.3" } }

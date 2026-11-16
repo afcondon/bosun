@@ -23,6 +23,8 @@ package:
     - foreign-object
     - bosun-core
     - bosun-adapters
+    - bosun-protocol
+    - codec-argonaut
     - bosun-cli
     - glassbox
   run:

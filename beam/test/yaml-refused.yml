@@ -1,0 +1,5 @@
+# beam/conformance.sh expects the BEAM to REFUSE this file. yamerl 0.10.0
+# attaches an anchor on a flow collection to its first element, so `copy`
+# would read as 1. js-yaml reads it correctly.
+base: &base {a: 1, b: 2}
+copy: *base

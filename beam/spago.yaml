@@ -1,0 +1,50 @@
+# Bosun's pure packages, lowered to Erlang by purerl. A spike: see README.md.
+#
+# The purerl package set has no argonaut-core, foreign-object or st, because
+# each has JavaScript foreign code, and its parsing is four major versions
+# behind. purescript-backends/purerl-ports holds a port of each, taken here by
+# path. codec and codec-argonaut are pure PureScript and are taken from
+# upstream unchanged.
+package:
+  name: bosun-beam
+  dependencies:
+    - prelude
+    - effect
+    - console
+    - bosun-core
+    - bosun-protocol
+    - bosun-adapters
+    - bosun-cli
+    - glassbox
+workspace:
+  packageSet:
+    url: https://raw.githubusercontent.com/purerl/package-sets/erl-0.15.3-20220629/packages.json
+  extraPackages:
+    bosun-core:
+      path: ../core
+    bosun-protocol:
+      path: ../protocol
+    bosun-adapters:
+      path: ../adapters
+    bosun-cli:
+      path: ../cli
+    glassbox:
+      path: ../../../purescript-hylograph-libs/purescript-glassbox/core
+    st:
+      path: ../../../purescript-backends/purerl-ports/st
+    foreign-object:
+      path: ../../../purescript-backends/purerl-ports/foreign-object
+    argonaut-core:
+      path: ../../../purescript-backends/purerl-ports/argonaut-core
+    parsing:
+      path: ../../../purescript-backends/purerl-ports/parsing
+    codec:
+      git: https://github.com/garyb/purescript-codec.git
+      ref: v6.1.0
+      dependencies: [ bifunctors, profunctor ]
+    codec-argonaut:
+      git: https://github.com/garyb/purescript-codec-argonaut.git
+      ref: v10.0.0
+      dependencies: [ argonaut-core, codec, foreign-object, ordered-collections, type-equality, variant, record ]
+  backend:
+    cmd: "node_modules/.bin/purs-backend-erl"

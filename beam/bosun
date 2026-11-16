@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# beam/bosun: the `bosun` command line, on the BEAM. Same arguments as
+# `node cli/run.js`. A resident command (supervise) keeps the VM up; anything
+# else exits when Main returns. Build first with beam/build.sh.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec erl -noshell -pa "$HERE/ebin" -pa "$HERE/deps/yamerl/ebin" -eval '
+  try ('"'"'bosun_cLI_main@ps'"'"':main())() of _ -> ok
+  catch Class:Reason:Stack -> io:format(standard_error, "bosun: ~p: ~0p~n~p~n", [Class, Reason, Stack]), halt(1) end,
+  case persistent_term:get(bosun_resident, false) of
+    true -> receive after infinity -> ok end;
+    false -> halt(0)
+  end.' -extra "$@"
