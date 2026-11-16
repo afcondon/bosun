@@ -40,6 +40,13 @@ workspace:
       path: ../../../purescript-backends/purerl-ports/argonaut-core
     parsing:
       path: ../../../purescript-backends/purerl-ports/parsing
+    # The set's own purerl strings has two foreign bugs: takeWhile and
+    # dropWhile crash (_countPrefix was never implemented), and codePointAt's
+    # bounds check can never hold. Nothing in Bosun calls them today; the
+    # port is taken so that nothing can start to (found by Quartermaster's
+    # Brewfile parser, 2026-11-16).
+    strings:
+      path: ../../../purescript-backends/purerl-ports/strings
     codec:
       git: https://github.com/garyb/purescript-codec.git
       ref: v6.1.0

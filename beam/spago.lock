@@ -1458,6 +1458,9 @@
       },
       "st": {
         "path": "../../../purescript-backends/purerl-ports/st"
+      },
+      "strings": {
+        "path": "../../../purescript-backends/purerl-ports/strings"
       }
     }
   },
@@ -2091,9 +2094,8 @@
       ]
     },
     "strings": {
-      "type": "git",
-      "url": "https://github.com/purerl/purescript-strings.git",
-      "rev": "82ee15ccdc9d37238e4a57edbb74b135bbe2315a",
+      "type": "local",
+      "path": "../../../purescript-backends/purerl-ports/strings",
       "dependencies": [
         "arrays",
         "control",
