@@ -212,6 +212,7 @@
             "effect",
             "either",
             "foldable-traversable",
+            "glassbox",
             "hawser",
             "maybe",
             "ordered-collections",

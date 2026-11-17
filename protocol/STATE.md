@@ -51,7 +51,7 @@ The group, as its supervisor sees it now.
 | `desired` | string | `up` or `down`: whether the supervisor is keeping the group up. Follows from `phase` |
 | `phase` | string | the state of the group's lifecycle machine (`machines/supervise-group.json`), such as `raised` or `held` |
 | `supervised` | true or false | always true: this is a supervisor, not `bosun serve` |
-| `services` | table of string | each service's status: `running`, `starting`, `in-backoff`, `failed`, `down`, `completed-ok` or `unknown` |
+| `services` | table of string | each service's status: `running`, `starting`, `in-backoff` (it will be tried again), `failed` (it will not, when its row says `gaveUp`), `down`, `completed-ok` or `unknown` |
 | `supervision` | table of supervision row | each service's supervision row |
 | `teardown` | table of teardown row, optional | what the last `down` found, per service. Left out when there is nothing to say |
 | `holders` | table of holder row, optional | who holds each service's TCP port. Services with no port are left out, and so is the field when none has one |

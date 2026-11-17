@@ -105,7 +105,7 @@ stateMessage = message "state" "The group, as its supervisor sees it now." $
     <$> field "desired" _.desired string "`up` or `down`: whether the supervisor is keeping the group up. Follows from `phase`"
     <*> field "phase" _.phase string "the state of the group's lifecycle machine (`machines/supervise-group.json`), such as `raised` or `held`"
     <*> field "supervised" _.supervised boolean "always true: this is a supervisor, not `bosun serve`"
-    <*> field "services" _.services (tableOf string) "each service's status: `running`, `starting`, `in-backoff`, `failed`, `down`, `completed-ok` or `unknown`"
+    <*> field "services" _.services (tableOf string) "each service's status: `running`, `starting`, `in-backoff` (it will be tried again), `failed` (it will not, when its row says `gaveUp`), `down`, `completed-ok` or `unknown`"
     <*> field "supervision" _.supervision (tableOf supervision) "each service's supervision row"
     <*> optional "teardown" _.teardown (tableOf teardown) "what the last `down` found, per service. Left out when there is nothing to say"
     <*> optional "holders" _.holders (tableOf holder) "who holds each service's TCP port. Services with no port are left out, and so is the field when none has one"

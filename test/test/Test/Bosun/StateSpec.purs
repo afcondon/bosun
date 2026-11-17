@@ -16,9 +16,11 @@ import Bosun.Adapters.DockerPs (HealthVerdict(..))
 import Bosun.Atoms (ServiceId, mkServiceId)
 import Bosun.CLI.Docker as Docker
 import Bosun.CLI.IO (readJsonFile)
+import Bosun.CLI.Supervise (stateDocOf)
 import Bosun.Plan (Status(..))
 import Bosun.Protocol.ServeState (readServeState)
 import Bosun.Protocol.State (group, groupOf, readGroup, stateDoc)
+import Bosun.Supervisor (defaultConfig, initialSvc, uniform)
 import Data.Argonaut.Core (stringify)
 import Data.Argonaut.Parser (jsonParser)
 import Data.Array as Array
@@ -30,6 +32,7 @@ import Data.String (Pattern(..))
 import Data.String as String
 import Data.Tuple (Tuple(..))
 import Effect.Class (liftEffect)
+import Glassbox.Spec (StateId(..))
 import Hawser.Value (Value(..))
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (fail, shouldEqual)
@@ -71,6 +74,28 @@ spec = describe "Bosun.Protocol.State and ServeState (the reading side)" do
     it "the router's document is not a group document, and the refusal says why" do
       json <- liftEffect (readJsonFile "protocol/vectors/serve-state/live-mbp-serve-node.json")
       readGroup json `shouldEqual` Left "no desired"
+
+  describe "the status word of a service that has given up" do
+    let
+      capped = uniform (defaultConfig { maxRetries = Just 5 })
+      row status fails = (initialSvc 0.0) { status = status, fails = fails, restarts = fails }
+      wordsOf services =
+        (stateDocOf capped (StateId "raised") (Map.fromFoldable services) Map.empty Map.empty).services
+
+    -- `in-backoff` promises another try. Parked, there will be none: the
+    -- FH-2's daemon read `in-backoff` for a morning after giving up.
+    it "in backoff with tries left is in-backoff; with none left it is failed" $
+      wordsOf [ Tuple (sid "a") (row InBackoff 2), Tuple (sid "b") (row InBackoff 5) ]
+        `shouldEqual` [ Tuple "a" "in-backoff", Tuple "b" "failed" ]
+
+    -- Its last try may still be booting, and may yet work.
+    it "while its last try is starting it still says starting" $
+      wordsOf [ Tuple (sid "a") (row Starting 5) ] `shouldEqual` [ Tuple "a" "starting" ]
+
+    it "the row still says gaveUp, for a reader that wants to know why" $
+      map (\(Tuple name r) -> Tuple name r.gaveUp)
+        (stateDocOf capped (StateId "raised") (Map.fromFoldable [ Tuple (sid "b") (row InBackoff 5) ]) Map.empty Map.empty).supervision
+        `shouldEqual` [ Tuple "b" true ]
 
   describe "what docker prints is a group document" do
     let

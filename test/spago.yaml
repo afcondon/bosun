@@ -26,6 +26,7 @@ package:
       - bosun-cli
       - bosun-protocol
       - hawser
+      - glassbox
       - foldable-traversable
       - tuples
       - spec

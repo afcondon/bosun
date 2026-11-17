@@ -708,7 +708,7 @@ stateDocOf ps phase st td holders =
   { desired: if desiredFromPhase phase then "up" else "down"
   , phase: phaseTag phase
   , supervised: true
-  , services: entries <#> \(Tuple sid s) -> Tuple (unServiceId sid) (statusToken s.status)
+  , services: entries <#> \(Tuple sid s) -> Tuple (unServiceId sid) (statusWord sid s)
   , supervision: entries <#> \(Tuple sid s) -> Tuple (unServiceId sid) (supRow sid s)
   , teardown: unlessEmpty (teardownEntries <#> \(Tuple sid v) -> Tuple (unServiceId sid) (teardownRow v))
   -- WHOSE process each status is about (Bosun.Holding). Additive, like
@@ -744,15 +744,24 @@ stateDocOf ps phase st td holders =
     , gaveUp: gaveUp sid s
     }
 
-  -- `in-backoff` covers two states a reader must not confuse: throttled (it
-  -- will come back on its own, wait) and PARKED (it has spent its retry cap and
-  -- nothing further will happen without you). Both NoOp the planner, so the
-  -- status token alone cannot tell them apart, and a rig where the ES-9 daemon
-  -- has quietly given up looks identical to one where it is a second from
-  -- returning. Additive, so every existing decoder ignores it.
+  -- The supervisor's `InBackoff` covers two states a reader must not confuse:
+  -- throttled (it will come back on its own, wait) and PARKED (it has spent
+  -- its retry cap and nothing further will happen without you). Both NoOp the
+  -- planner. `gaveUp` in the row says which, and since 2026-11-17 so does the
+  -- status word (`statusWord`): until then a parked service read `in-backoff`,
+  -- and the FH-2's daemon sat like that for a morning looking as if it were
+  -- about to return.
   gaveUp sid s = case (cfgFor ps sid).maxRetries of
     Just m -> s.fails >= m
     Nothing -> false
+
+  -- The word in `services`. A parked service is `failed`, not `in-backoff`:
+  -- `in-backoff` promises another try, and there will be none. `failed` is a
+  -- word every reader already draws as down. While its last try is still
+  -- booting it stays `starting`, which is true.
+  statusWord sid s = case s.status of
+    InBackoff | gaveUp sid s -> statusToken Failed
+    status -> statusToken status
 
 statusToken :: Status -> String
 statusToken = case _ of
