@@ -272,5 +272,5 @@ column, its scripts and its `.go` twins were removed the next day.
 |---|---|
 | Bosun's Chair (`chair/src/Chair/State.purs`) | reads both documents through the descriptions (`readGroup`, `readServeState`) |
 | Brunel's Chair (`minard-for-nix/src/Chair/State.purs`) | the same |
-| Triggerfish's Dashboard (`Triggerfish/Bosun.js`) | not held: hand-written JavaScript, reading `desired`, `phase`, `services`, `restarts`, `gaveUp`, `lastTransitionAt` |
+| Triggerfish's Dashboard (`Triggerfish/Bosun.purs`) | reads the supervise document through the description (`readState`), since 2026-11-17 |
 | `scripts/menagerie-conf.sh` | greps the text; relies on the fixed spacing |
