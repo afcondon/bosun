@@ -1,5 +1,12 @@
 # Bosun — productionization roadmap
 
+> **2026-11-17: the Go column this document describes has been removed.** Go was
+> demoted as a runtime on 2026-11-16 (where Go was meant, use the BEAM or Rust).
+> The `.go` files, `scripts/go-*.sh`, `scripts/gnomon-bosun.sh`,
+> `scripts/control-parity.sh` and the Go-only conformance programs named below no
+> longer exist; git history before that date has them. The second runtime is now
+> the BEAM (`beam/README.md`). The text is kept as the record of what was done.
+
 Status: **PLAN** (2026-06-17, Andrew + engine session). The forward plan from
 "MVP proven" to "the tool we actually run." Continues `BUILD-PLAN.md` (the
 phase-history log); realises the vision in `BEAM-OBSERVER.md`; meets the Chair

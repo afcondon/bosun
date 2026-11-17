@@ -180,8 +180,8 @@ Two of signal-box's moves transfer, and one **extends**:
 And the tie is **literal, not only thematic.** signal-box's pure core (no FFI,
 no `Effect`, no PRNG) runs *identically across every PureScript backend* as a
 conformance matrix. Bosun's pure core — `ingest` / `reconcile` / `validate` /
-`plan`, the **Detect** tier — has the same shape and runs on **purescript-go**,
-the backend Bosun is the MVP showcase for. The effectful edges (`apply`) are
+`plan`, the **Detect** tier — has the same shape and runs on node and the
+BEAM (and ran on purescript-go until that column was removed, 2026-11-17). The effectful edges (`apply`) are
 where Bosun extends past signal-box's purity, exactly along the no-Aff seam.
 So Bosun is signal-box's thesis made *useful*, *infinite-domain*, and run
-through the Go column.
+on two runtimes.

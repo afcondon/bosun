@@ -1,8 +1,8 @@
--- | purescript-go conformance harness (BUILD-PLAN Phase 4).
+-- | Conformance harness (BUILD-PLAN Phase 4; first written for purescript-go).
 -- |
 -- | The pure Detect pipeline over a fixed fixture, printed. No I/O beyond the
 -- | final `log`, so this compiles on any backend that supports the pure-core
--- | library surface. Run via node AND via backend-go; the output must be
+-- | library surface. Run on node AND on the BEAM; the output must be
 -- | byte-identical (the signal-box conformance pattern). The fixture mirrors
 -- | the CLI demo: the §7 tilted-radio two-facet divergence + a minard tier
 -- | with an uncheckable gate.
@@ -55,15 +55,15 @@ main = do
 -- | validates, against an observed snapshot where the api crashed: the base
 -- | pass turns `Failed` into `Restart … Crashed`, and D-E5 propagates a `Stop`
 -- | backward along the worker's `BindsTo` edge — all pure, so node and
--- | backend-go must render this byte-identically too.
+-- | the BEAM must render this byte-identically too.
 planReport :: String
 planReport = withPlanFixture \vd ->
   renderPlan (plan vd { desired: vd, recorded: Nothing, observed: planObserved })
 
 -- | The apply column (BUILD-PLAN Phase 6B). The *same* plan rendered as the
 -- | command script `apply` would run — pure `Plan -> Array StagedCommand`, so
--- | the backend-go binary must emit the byte-identical docker/ssh/process
--- | script the node binary does. This is the headline claim, gated.
+-- | the BEAM build must emit the byte-identical docker/ssh/process
+-- | script the node build does. This is the headline claim, gated.
 applyReport :: String
 applyReport = withPlanFixture \vd ->
   renderScript (applyScript defaultTargets vd (plan vd { desired: vd, recorded: Nothing, observed: planObserved }))
@@ -174,9 +174,8 @@ port_ n = unsafePartial (fromJust (mkPort n))
 -- | The ownership column (docs/FINDINGS-restart-ok-on-orphan.md). Evidence
 -- | shaped like what the host printed on 2026-09-25 — the orphan on :3029, an
 -- | owned process, a split bind — parsed, judged, rendered, and the scripts
--- | that gather and act on it. The Go column is the reference runtime, so the
--- | verdict that decides whether a restart may stop a process must lower to it
--- | byte-identically.
+-- | that gather and act on it. The verdict that decides whether a restart may
+-- | stop a process must be byte-identical on every runtime.
 holdingReport :: String
 holdingReport =
   intercalate "\n"

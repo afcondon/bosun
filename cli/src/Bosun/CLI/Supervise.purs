@@ -145,10 +145,9 @@ loadMachine = case parseSpec artifactJson of
 -- | Build the supervise `Resident` — Refs for desired-state and launch memory,
 -- | the observe→refine→plan→enact `tick`, the `/state` renderer, the `/control`
 -- | handler — and run the initial bring-up, returning the record for
--- | `runResident`. Extracted from `runSupervise` so the Go-column conformance
--- | harness (`Bosun.Conformance.SuperviseMain`) drives the IDENTICAL keep-alive
--- | logic under backend-go that the node CLI runs — the point of the Menagerie's
--- | dual-runtime parity test (mirrors `Bosun.CLI.Docker.dockerResident`). The
+-- | `runResident`. Extracted from `runSupervise` so that a harness can
+-- | drive the IDENTICAL keep-alive logic the CLI runs (mirrors
+-- | `Bosun.CLI.Docker.dockerResident`). The
 -- | `targets` are threaded (not hardcoded) so a remote-host supervise resolves
 -- | the same way `apply` does.
 superviseResident :: TargetMap -> Maybe Int -> Boolean -> ReloadSource -> Spec -> Deployment -> ValidatedDeployment -> Effect Resident

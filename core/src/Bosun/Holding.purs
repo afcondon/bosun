@@ -16,8 +16,8 @@
 -- |
 -- | Same discipline as `Substrate`'s teardown: the shell gathers evidence
 -- | (`holdingScript`), the pure core weighs it (`readHoldingEvidence` →
--- | `judgeHolding`), so the verdict is unit-testable and lowers to the Go column
--- | unchanged. The evidence is every LISTENER on the port — IPv4 and IPv6 both,
+-- | `judgeHolding`), so the verdict is unit-testable and the same on
+-- | every runtime. The evidence is every LISTENER on the port — IPv4 and IPv6 both,
 -- | because a split bind is how a week-old process kept serving :3040 while a
 -- | fresh one bound beside it (2026-09-01).
 module Bosun.Holding

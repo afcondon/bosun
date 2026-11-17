@@ -5,8 +5,8 @@
 // spawner.mjs; the *decisions* (routability, port rewrite, idle policy, 421
 // targets, what-changed-on-reload) were already made upstream. P2 features:
 // 421 redirects, WebSocket bridging, JSON /state, and SIGHUP hot-reload driven
-// by the pure serveDiff. P3 replaces this file with a Go shim reading the same
-// records.
+// by the pure serveDiff. (P3 once gave this file a Go twin reading the same
+// records; that column was removed 2026-11-17.)
 //
 // Date.now / timers / signal + event callbacks live here, at the edge, never in
 // the pure core.
@@ -568,15 +568,15 @@ const sendJSON = (res, code, obj) => {
   res.end(JSON.stringify(obj, null, 2) + "\n");
 };
 
-// ── THIS SURFACE IS TWO-COLUMN. Adding a verb here is half the change. ──────
+// ── THIS SURFACE HAS ONE COLUMN TODAY: node. ────────────────────────────────
 //
-// Gnomon (PureScript→Go) is the PRIMARY runtime; this file is the development
-// shell's half of the same shim. Every path, every `?key=` and every
-// `x-bosun-*` header below must also exist in
-// conformance/go/bosun_cli_serve_foreign.go, and `scripts/control-parity.sh`
-// (run by `npm test`) goes red when one column has something the other lacks.
-// Broker mode was added here alone and nothing could tell for a week — hence
-// the check, and hence this note where the next verb gets written.
+// The router is the one part of Bosun that does not run on the BEAM yet
+// (`Serve.erl` is a stub). Until 2026-11-17 it had a Go twin, and
+// `scripts/control-parity.sh` held the two to the same paths, query keys and
+// `x-bosun-*` headers, because broker mode was once added here alone and
+// nothing could tell for a week. The Go column is gone (Go was demoted
+// 2026-11-16). When the router gets its BEAM twin, bring that check back
+// against it: git history has the script.
 //
 // GET /state · GET /where/:service · POST /control/reload · POST
 // /control/spawn?port= · POST /control/stop?port=. The control verbs map to

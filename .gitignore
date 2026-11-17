@@ -3,7 +3,6 @@ site/bosun-design.html
 
 # Spago / PureScript
 output/
-output-go/
 .spago/
 .psci_modules/
 node_modules/

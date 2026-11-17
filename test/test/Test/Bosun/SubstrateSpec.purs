@@ -9,7 +9,7 @@
 -- |
 -- | Same shape as `ServeSpec`'s `brokerStopVerdict` cases: the evidence is what
 -- | the exec edge can see (did the shell run, what did it print), the weighing
--- | is pure, so it is testable here AND lowers to the Go column unchanged.
+-- | is pure, so it is testable here and the same on every runtime.
 module Test.Bosun.SubstrateSpec where
 
 import Prelude

@@ -4,9 +4,8 @@
 #   Bosun.Machine.SuperviseGroup        the alphabet, as rows — what makes a
 #                                       forgotten state a compile error that
 #                                       NAMES the state
-#   Bosun.Machine.SuperviseGroupSource  the artifact verbatim, because the Go
-#                                       conformance Main is transpiled and run
-#                                       under backend-go and cannot open a file
+#   Bosun.Machine.SuperviseGroupSource  the artifact verbatim, so that a
+#                                       conformance Main needs no file read
 #
 # Run this after editing the artifact. Forgetting to is not silent: the daemon
 # compares the alphabet with the artifact at boot (`Supervise.Machine.complaints`)

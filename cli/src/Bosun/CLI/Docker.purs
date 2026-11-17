@@ -88,10 +88,8 @@ runDocker targets mPort audience composePath registryPath = do
 
 -- | Build the resident Docker substrate from a validated deployment, do the
 -- | initial read-only observe, and return the `Resident` for `runResident` to
--- | mount. Factored out of `runDocker` so the I/O-free conformance harness
--- | (`Bosun.Conformance.DockerMain`) can build it from a pure-constructed
--- | deployment — exercising the execLine + residentImpl foreigns on the Go
--- | column without dragging in the yaml/json/argv read foreigns.
+-- | mount. Factored out of `runDocker` so that a harness can build it from a
+-- | pure-constructed deployment, without the yaml/json/argv read foreigns.
 dockerResident :: TargetMap -> Maybe Int -> ValidatedDeployment -> Effect Resident
 dockerResident targets mPort vd = do
       -- The cached observation the resident `/state` serves; the tick refreshes

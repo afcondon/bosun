@@ -99,12 +99,9 @@ through the description, on node and on the BEAM:
 
 `scripts/state-doc.sh --check` fails when the tables above are stale.
 
-**Not held on Go, by decision.** The Gnomon build of Bosun stops at this
-module: Hawser's byte functions have JavaScript and Erlang twins and no Go
-one (found by `scripts/menagerie-conf.sh`). Go was demoted as a runtime the
-same day (Andrew, 2026-11-16: where Go was meant, use the BEAM or Rust), so
-no Go twin will be written. Bosun's Go column, its scripts and its `.go`
-twins are still in the repository and are due to be removed.
+**No Go column.** Bosun had one until 2026-11-17. Go was demoted as a runtime
+on 2026-11-16 (Andrew: where Go was meant, use the BEAM or Rust), and the
+column, its scripts and its `.go` twins were removed the next day.
 
 ## Who reads it, and how each is held
 

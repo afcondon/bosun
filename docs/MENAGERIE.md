@@ -1,5 +1,12 @@
 # The Menagerie — a dual-runtime conformance rig for Bosun's control surface
 
+> **2026-11-17: the Go column this document describes has been removed.** Go was
+> demoted as a runtime on 2026-11-16 (where Go was meant, use the BEAM or Rust).
+> The `.go` files, `scripts/go-*.sh`, `scripts/gnomon-bosun.sh`,
+> `scripts/control-parity.sh` and the Go-only conformance programs named below no
+> longer exist; git history before that date has them. The second runtime is now
+> the BEAM (`beam/README.md`). The text is kept as the record of what was done.
+
 **Status:** DIRECTION (2026-06-19, Chair→Engine). A spec for a purpose-built test
 rig, born from the two-mode milestone (drive polyglot up/down/restart from the Chair
 across docker + native). Owner: Engine (it lives in the backend repo + CI). Name is a

@@ -297,7 +297,7 @@ killMaxPolls = 20
 -- |
 -- | Same discipline as `Serve`'s `StopVerdict`: the shell gathers evidence, the
 -- | pure core weighs it (`readTeardown`), so the verdict is unit-testable and
--- | lowers to the Go column for free.
+-- | the same on every runtime.
 -- |
 -- | The brief asked for three — signalled, nothing to signal, cannot tell — and
 -- | said to say so if there was a fourth. There are seven, because "nothing to

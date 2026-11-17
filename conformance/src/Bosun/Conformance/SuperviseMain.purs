@@ -5,7 +5,7 @@
 -- | supervise loop, minus the live probes), and the per-tick digest is printed.
 -- |
 -- | Because time is a *parameter* and the transition is pure, node and
--- | backend-go must print this byte-identically — the same gate `plan` and
+-- | the BEAM must print this byte-identically — the same gate `plan` and
 -- | `applyScript` already pass. The script walks every branch: a Down bring-up,
 -- | the boot-grace `Starting` that kills the storm, recovery to `Running`, a
 -- | crash → `Restart`, the `InBackoff` throttle, escalating backoff, and a final

@@ -1,5 +1,12 @@
 # Phase 7 (P3, Go column) — the Go binary IS the router
 
+> **2026-11-17: the Go column this document describes has been removed.** Go was
+> demoted as a runtime on 2026-11-16 (where Go was meant, use the BEAM or Rust).
+> The `.go` files, `scripts/go-*.sh`, `scripts/gnomon-bosun.sh`,
+> `scripts/control-parity.sh` and the Go-only conformance programs named below no
+> longer exist; git history before that date has them. The second runtime is now
+> the BEAM (`beam/README.md`). The text is kept as the record of what was done.
+
 **The flagship concurrent purescript-go app.** A PureScript program compiled by
 **backend-go** to a native Go binary runs the pure admission pipeline
 (`reconcile → servePlan`) *as Go* and then **is** the resident lazy-spawn reverse

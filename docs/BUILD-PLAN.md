@@ -1,5 +1,12 @@
 # Bosun — Build Plan
 
+> **2026-11-17: the Go column this document describes has been removed.** Go was
+> demoted as a runtime on 2026-11-16 (where Go was meant, use the BEAM or Rust).
+> The `.go` files, `scripts/go-*.sh`, `scripts/gnomon-bosun.sh`,
+> `scripts/control-parity.sh` and the Go-only conformance programs named below no
+> longer exist; git history before that date has them. The second runtime is now
+> the BEAM (`beam/README.md`). The text is kept as the record of what was done.
+
 > **⚠️ Status section is STALE (as of 2026-06-15).** This roadmap's status
 > stops at "Phase 6B pending"; in reality Phases 5, 6, and 7 (the resident
 > router) plus Bosun's Chair all shipped since. **`README.md` is the

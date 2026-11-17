@@ -114,8 +114,8 @@ run it.
 ## Status (where the design actually stands)
 
 - **Bosun** — built and in real use; replaced a couple of older home-grown
-  launchers. Also compiles to a single native binary that needs no Node at
-  runtime.
+  launchers. Also runs on the BEAM, byte-identical to the node build, and
+  that build supervises real groups.
 - **The Chair** — built; already drives both native processes (on the laptop) and
   Docker over ssh (on the Mac Mini) through the one `/state`+`/control` interface.
 - **Quartermaster** — newest. `verify` (local and remote, over ssh) and `build`

@@ -358,6 +358,37 @@ publish into the node≡backend-go conformance.
 
 ---
 
+## D-B1 — Two runtimes, node and the BEAM; the Go column is removed
+
+**Date.** 2026-11-17.
+
+**Context.** Bosun was built as the showcase for the PureScript→Go backend
+(Gnomon), and until November 2026 its documents called Go the primary runtime
+and node the development shell. In practice no Go build of Bosun was ever the
+one in service, and its build was red for stretches without anyone noticing.
+The BEAM build (purerl), started 2026-11-11, went into service within a week:
+the Mini's root, Minard and Atlantis are supervised by it. On 2026-11-16 Andrew
+demoted Go as a runtime for the ecosystem: where Go was meant, use the BEAM or
+Rust. The same day the Go build of Bosun stopped compiling, because `/state`
+is now described with Hawser, whose byte functions have no Go twin.
+
+**Decision.** Remove the Go column: the ten `.go` foreign files, the `go-*.sh`
+scripts, `gnomon-bosun.sh`, `race-fix.py`, and the conformance programs that
+existed only to be compiled to Go (`ApplyMain`, `ApplyCliMain`, `DockerMain`,
+`MenagerieMain`, `ServeMain`, `RaceSpike`). `control-parity.sh` goes with
+them, since it compared the node router to its Go twin and the router has no
+other twin.
+
+**Consequences.** Conformance is node against the BEAM (`beam/conformance.sh`,
+and the Menagerie's two columns). Three things the Go column checked are no
+longer checked by anything: the `apply` script from real files on a second
+runtime, the docker executor on a second runtime, and the router under a race
+detector. The router (`serve`) is the one part still on node only; when it
+gets a BEAM twin, the parity check comes back against it. The documents that
+record the Go work are kept, each with a note at the top.
+
+---
+
 ## Still open (deferred, not blocking)
 
 - **E10** — the full EdgeKind × tool *fidelity matrix* (which requirement

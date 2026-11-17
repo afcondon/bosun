@@ -6,22 +6,21 @@
 # with no relaunch storm, `down` reaps the whole pgid tree (forker's child
 # workers too — the direct regression guard), `up` returns to green.
 #
-# Runs the SAME assertions against BOTH binaries, SEQUENTIALLY on :8788:
-#   · NODE   — the real CLI `bosun supervise` (output/…/Bosun.CLI.Main via run.js)
-#   · GNOMON — the backend-go native binary of Bosun.Conformance.MenagerieMain,
-#              which runs the IDENTICAL `superviseResident` over the same embedded
-#              cast (only new Go surface: cli/src/Bosun/CLI/Observe.go).
+# Runs the SAME assertions against BOTH runtimes, SEQUENTIALLY on :8788, each
+# the real CLI `bosun supervise`:
+#   · NODE — output/…/Bosun.CLI.Main via run.js
+#   · BEAM — the same source lowered by purerl (beam/bosun)
 # Then diffs the two `/state` snapshots at the green checkpoint (modulo
-# timestamps) — the dual-runtime dogfood: anything Gnomon gets wrong, Node is the
-# oracle. If backend-go is absent, the Gnomon column is SKIPPED (not failed).
+# timestamps). If erl is absent, the BEAM column is SKIPPED (not failed).
+# (There was a third, Go column until 2026-11-17.)
+#
+# CAUTION: the BEAM column runs beam/build.sh in this checkout. Do not run this
+# where a live supervisor runs from beam/ebin; use a worktree.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOSUN="$(cd "$HERE/.." && pwd)"
-BACKEND_GO="${BACKEND_GO:-$BOSUN/../../purescript-backends/purescript-go/backend-go}"
 FIX="$BOSUN/fixtures/menagerie"
-MAIN="Bosun.Conformance.MenagerieMain"
-OUT="${OUT:-/tmp/bosun-go-menagerie}"
 PORT=8788                       # control surface (distinct from supervise's 3996 default)
 TICKER=8790 SLOWBOOT=8791 FORKER=8792
 PORTS=($TICKER $SLOWBOOT $FORKER)
@@ -134,52 +133,6 @@ ok "[node] control surface answering on :$PORT"
 assert_column node /tmp/menagerie-state-node.txt
 stop_supervisor
 
-# ── GNOMON column ────────────────────────────────────────────────────────────
-if [ ! -d "$BACKEND_GO" ]; then
-  echo ""
-  note "backend-go not found at $BACKEND_GO — Gnomon column SKIPPED (set BACKEND_GO to enable the dual-runtime diff)"
-else
-  echo ""
-  echo "==> [gnomon] backend-go transpile (corefn -> Go, pruned to $MAIN)"
-  rm -rf "$OUT"
-  ( cd "$BOSUN" && "$BACKEND_GO/bin/backend-go" --corefn-dir "$BOSUN/output" --output-dir "$OUT" --main "$MAIN" >/dev/null 2>&1 )
-  cp "$BACKEND_GO/runtime.go" "$OUT/runtime.go"
-  # Bosun's OWN FFI only; the library foreigns are backend-go's foreign/ layer.
-  echo "==> [gnomon] go build ($(ls "$OUT"/*.go | wc -l | tr -d ' ') Go files)"
-  if ! ( cd "$OUT" && go build -o /tmp/bgo_menagerie *.go ) 2> /tmp/bgo_menagerie_build.err; then
-    if grep -qE "probe(Http|Tcp|Socket|PgidAlive)Impl|execLineImpl|residentImpl|jsonParser" /tmp/bgo_menagerie_build.err; then
-      echo "   ✗ a foreign symbol was unresolved — a co-located *.go was not picked up into $OUT"
-    else
-      echo "   ✗ go build failed:"; cat /tmp/bgo_menagerie_build.err
-    fi
-    fail=1
-  else
-    echo "==> [gnomon] RUN the native binary as the resident supervisor on :$PORT"
-    /tmp/bgo_menagerie >/tmp/menagerie-go.log 2>&1 &
-    SUP_PID=$!
-    if wait_control; then
-      ok "[gnomon] control surface answering on :$PORT"
-      assert_column gnomon /tmp/menagerie-state-go.txt
-    else
-      bad "[gnomon] control surface never came up — see /tmp/menagerie-go.log"
-    fi
-    stop_supervisor
-
-    echo ""
-    echo "== /state cross-runtime parity (node ≡ gnomon, modulo timestamps) =="
-    if [ -s /tmp/menagerie-state-node.txt ] && [ -s /tmp/menagerie-state-go.txt ]; then
-      if diff /tmp/menagerie-state-node.txt /tmp/menagerie-state-go.txt >/dev/null; then
-        ok "green /state is byte-identical across runtimes (the dogfood: Gnomon matches the Node oracle)"
-      else
-        bad "/state DIVERGED between node and gnomon:"
-        diff /tmp/menagerie-state-node.txt /tmp/menagerie-state-go.txt
-      fi
-    else
-      bad "missing a /state snapshot — cannot diff runtimes"
-    fi
-  fi
-fi
-
 # ── BEAM column ──────────────────────────────────────────────────────────────
 # The real CLI again, lowered by purerl and run on the BEAM (beam/README.md).
 # Same compose file, read by yamerl. SKIPPED, not failed, when erl is absent.
@@ -222,8 +175,8 @@ fi
 
 echo ""
 if [ "$fail" = 0 ]; then
-  echo "✅ MENAGERIE: all behavioural assertions passed (node$([ -x /tmp/bgo_menagerie ] && echo ' + gnomon')$([ "$BEAM_RAN" = 1 ] && echo ' + beam'), /state parity)"
+  echo "✅ MENAGERIE: all behavioural assertions passed (node$([ "$BEAM_RAN" = 1 ] && echo ' + beam'), /state parity)"
 else
-  echo "❌ MENAGERIE: failures above — see /tmp/menagerie-{node,go,beam}.log"
+  echo "❌ MENAGERIE: failures above — see /tmp/menagerie-{node,beam}.log"
 fi
 exit $fail

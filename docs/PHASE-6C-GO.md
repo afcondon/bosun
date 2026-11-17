@@ -1,5 +1,12 @@
 # Phase 6C (Go column) — the Go binary does the devops
 
+> **2026-11-17: the Go column this document describes has been removed.** Go was
+> demoted as a runtime on 2026-11-16 (where Go was meant, use the BEAM or Rust).
+> The `.go` files, `scripts/go-*.sh`, `scripts/gnomon-bosun.sh`,
+> `scripts/control-parity.sh` and the Go-only conformance programs named below no
+> longer exist; git history before that date has them. The second runtime is now
+> the BEAM (`beam/README.md`). The text is kept as the record of what was done.
+
 **Done & reproducible.** A PureScript program compiled by **backend-go** to a
 native Go binary runs the pure pipeline (`reconcile → validate → plan →
 applyScript`) *as Go* and then **executes** the deploy via os-exec. Verified:

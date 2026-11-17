@@ -9,8 +9,7 @@
 #
 # Native processes on the mbp, declared via `x-bosun.process` (absolute cwd per
 # the SDI footgun rule). `ports:` gives each a TCP reachability so the supervisor
-# observes it by port. Driven by scripts/menagerie-conf.sh under the Node binary;
-# the Gnomon column (probe foreigns + a supervise-resident main) lands next.
+# observes it by port. Driven by scripts/menagerie-conf.sh under node and the BEAM.
 #
 # NOTE: cwd is an absolute path to THIS checkout (matches fixtures/hello's
 # convention). Portability across machines/CI is a follow-up (templated cwd).

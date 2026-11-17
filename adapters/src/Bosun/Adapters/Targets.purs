@@ -20,10 +20,8 @@
 -- | | `podman` | `nerdctl`) keys; either missing falls back to that field of
 -- | `defaultPlatform` (macOS + Docker), so an unannotated host keeps today's
 -- | behaviour and a Linux box opts in by naming its OS. Pure (the file read is
--- | at the CLI edge), using
--- | only the argonaut combinators the Go column already shims — so a
--- | targets-driven deploy stays conformance-clean across the node and Go
--- | columns, exactly like the compose and registry adapters.
+-- | at the CLI edge), so a targets-driven deploy stays conformance-clean
+-- | across node and the BEAM, exactly like the compose and registry adapters.
 module Bosun.Adapters.Targets (ingestTargets) where
 
 import Prelude

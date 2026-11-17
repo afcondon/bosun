@@ -6,8 +6,7 @@
 -- | a `Plan`, `applyScript` produces the ordered list of shell commands that
 -- | would realise it. That keeps the effectful shell trivial — it just runs the
 -- | strings — and, crucially, makes the command script **conformance-testable**:
--- | the backend-go binary must emit the byte-identical docker/ssh script the
--- | node binary does.
+-- | every runtime must emit the byte-identical docker/ssh script.
 -- |
 -- | A `Change` maps to a command via the service's representative-facet
 -- | `Executor` (the `LaunchSpec` threaded through `validate`): a `Process` runs

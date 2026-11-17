@@ -14,7 +14,7 @@ is. Two things are unbuilt (several groups in one VM, `serve`); see the end.
     beam/bosun check <compose.yml> <registry.json>
     beam/bosun supervise --port N <compose.yml> <registry.json>
     beam/conformance.sh           # node against the BEAM, byte for byte
-    scripts/menagerie-conf.sh     # behaviour: node, Go and the BEAM
+    scripts/menagerie-conf.sh     # behaviour: node and the BEAM
 
 Needs `spago`, `node` (to run purerl's backend, and as the oracle), `erl` and
 `erlc` (OTP 27 or later, for the `json` module), and `git` once, to fetch
@@ -26,7 +26,7 @@ yamerl.
 |---|---|
 | `spago.yaml` | a purerl workspace over `../core`, `../protocol`, `../adapters`, `../cli` and Glassbox, by path |
 | `purescript-backends/purerl-ports` (outside this repository, by path) | `st`, `foreign-object`, `argonaut-core`: upstream's PureScript, foreign modules rewritten in Erlang. `parsing`: upstream v10, less three modules purerl cannot build. Moved out of `vendor/` here on 2026-11-11 so they can be offered upstream (Marginalia 319) |
-| `../cli/src/Bosun/CLI/*.erl` | the Erlang twins of the effectful edges (368 lines), beside the `.js` and `.go` twins |
+| `../cli/src/Bosun/CLI/*.erl` | the Erlang twins of the effectful edges (368 lines), beside the `.js` twins |
 | `deps/yamerl` | the YAML reader: fetched by `build.sh` at a pinned commit, not committed |
 | `test/` | two YAML files for the reader comparison |
 | `src/` | two small pure modules and links to three programs in `../conformance` |
@@ -108,9 +108,10 @@ order, and prepending a new key each turn cases red. Mutate the source, not
 `scripts/menagerie-conf.sh`: the existing behavioural rig, now with a BEAM
 column. 12 assertions per runtime on real effects (boot grace, no relaunch
 storm, one listener per port, a forked process tree reaped on `down`, a
-clean `up`), then `/state` compared with node's. node, Go and the BEAM pass.
+clean `up`), then `/state` compared with node's. node and the BEAM pass. (Go passed too, until its column was removed on
+2026-11-17.)
 
-That rig's `/state` comparison had been failing for Go on every run, since
+That rig's `/state` comparison had been failing on every run, since
 `/state` gained live process ids. The ids are now masked.
 
 By hand, on a private two-service group: bring-up in dependency order;

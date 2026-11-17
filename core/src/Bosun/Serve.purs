@@ -96,7 +96,7 @@ internalPort public = public + internalOffset
 -- | addressed the router's way (`Bosun.Report.renderAddressMiss`), and reaching
 -- | `Bosun.CLI.Serve` for a number would drag the resident proxy shim and its
 -- | foreign imports into every group daemon's module graph — including the
--- | conformance mains the Go column transpiles. A second literal `3997` in the
+-- | conformance mains. A second literal `3997` in the
 -- | message would be worse: the one thing that must not drift is the address an
 -- | operator is sent to.
 controlPort :: Int
