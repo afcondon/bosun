@@ -2,10 +2,20 @@
 # beam/bosun: the `bosun` command line, on the BEAM. Same arguments as
 # `node cli/run.js`. A resident command (supervise) keeps the VM up; anything
 # else exits when Main returns. Build first with beam/build.sh.
+#
+# A reader that closes the pipe early (`bosun plan … | head -1`) is not an
+# error: the write that then fails raises `error:terminated`, and the command
+# exits 141 and says nothing, as a program killed by SIGPIPE would. (Crash
+# dumps are left on: from a supervisor they are evidence.)
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec erl -noshell -pa "$HERE/ebin" -pa "$HERE/deps/yamerl/ebin" -eval '
   try ('"'"'bosun_cLI_main@ps'"'"':main())() of _ -> ok
-  catch Class:Reason:Stack -> io:format(standard_error, "bosun: ~p: ~0p~n~p~n", [Class, Reason, Stack]), halt(1) end,
+  catch
+    error:terminated -> halt(141);
+    Class:Reason:Stack ->
+      catch io:format(standard_error, "bosun: ~p: ~0p~n~p~n", [Class, Reason, Stack]),
+      halt(1)
+  end,
   case persistent_term:get(bosun_resident, false) of
     true -> receive after infinity -> ok end;
     false -> halt(0)
