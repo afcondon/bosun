@@ -432,6 +432,9 @@ renderTeardown :: ServiceId -> TeardownVerdict -> String
 renderTeardown sid = case _ of
   Reaped ->
     unServiceId sid <> " — stopped: signalled the recorded process group and it is gone."
+  Killed ->
+    unServiceId sid <> " — stopped by force: the recorded process group ignored TERM for "
+      <> show releaseBudgetSecs <> "s and was killed. It did not shut down cleanly."
   AlreadyGone ->
     unServiceId sid <> " — already down: the recorded process group had exited before the stop, "
       <> "so there was nothing to signal."
@@ -442,9 +445,9 @@ renderTeardown sid = case _ of
       <> pidPath sid <> " has been swept. Find the holder with "
       <> "`lsof -i :<port> -sTCP:LISTEN` and stop it by hand."
   Survived ->
-    unServiceId sid <> " — NOT STOPPED: the recorded process group took the signal and was still "
-      <> "alive " <> show releaseBudgetSecs <> "s later. Escalate by hand: "
-      <> "kill -9 -- -\"$(cat " <> pidPath sid <> ")\"."
+    unServiceId sid <> " — NOT STOPPED: the recorded process group was still alive after TERM, "
+      <> show releaseBudgetSecs <> "s and KILL. See what is left of it: "
+      <> "ps -o pid=,stat=,command= -g \"$(cat " <> pidPath sid <> ")\"."
   Refused ->
     unServiceId sid <> " — NOT STOPPED: the recorded process group is alive and the kernel refused "
       <> "the signal, so it is not this user's to kill. See who owns it: "
@@ -463,10 +466,15 @@ renderTeardownSummary :: Array (Tuple ServiceId TeardownVerdict) -> String
 renderTeardownSummary vs = case unsettled of
   [] -> case length vs of
     0 -> "nothing to stop"
-    n -> show n <> " stopped"
+    n -> show n <> " stopped" <> forced
   us ->
     show (length us) <> " NOT STOPPED (" <> intercalate ", " (map named us) <> "); "
-      <> show (length vs - length us) <> " stopped"
+      <> show (length vs - length us) <> " stopped" <> forced
   where
+  -- A kill is a stop, so it counts as one; but it was not a clean one, and
+  -- the one-line answer is where an operator would otherwise never learn it.
+  forced = case filter (\(Tuple _ v) -> v == Killed) vs of
+    [] -> ""
+    ks -> ", " <> show (length ks) <> " by force (" <> intercalate ", " (map (\(Tuple sid _) -> unServiceId sid) ks) <> ")"
   unsettled = filter (\(Tuple _ v) -> not (teardownSettled v)) vs
   named (Tuple sid v) = unServiceId sid <> ": " <> teardownTag v

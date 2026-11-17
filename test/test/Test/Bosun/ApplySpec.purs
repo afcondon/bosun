@@ -108,14 +108,14 @@ spec = describe "Bosun.Apply" do
   -- pidfile and `|| true` no-ops.
   it "Process Start -> local, reap-then-daemonize, recording its process group (not ssh-wrapped)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; i=0; while kill -0 -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; ( nohup env run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+      lines `shouldEqual` [ launched "run-a" ]
 
   -- A startCommand may carry a leading env-var assignment (e.g. the julia atlas:
   -- `ATLAS_PORT=3210 julia …`). Bare `nohup VAR=val prog` makes nohup exec the
   -- string `VAR=val` — the `env` prefix lets the shell-style assignment through.
   it "Process Start with an env-var prefix is launched via `env` (not eaten by nohup)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "ATLAS_PORT=3210 run-a" ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; i=0; while kill -0 -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; ( nohup env ATLAS_PORT=3210 run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+      lines `shouldEqual` [ launched "ATLAS_PORT=3210 run-a" ]
 
   -- The typed `x-bosun.process.env` (e.g. purerl-tidal's rebar3
   -- `ERL_LIBS=_build/default/lib`) renders as a leading `KEY=VAL ` assignment
@@ -123,7 +123,7 @@ spec = describe "Bosun.Apply" do
   -- inline-prefix path above, but inspectable instead of buried in the command.
   it "Process Start with a typed env renders leading KEY=VAL assignments" $
     withScript (mkDeployment [ procLeafEnv "a" "/srv/a" "erl -pa ebin" [ Tuple (mkEnvVar "ERL_LIBS") "_build/default/lib" ] ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; i=0; while kill -0 -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; ( nohup env ERL_LIBS=_build/default/lib erl -pa ebin >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+      lines `shouldEqual` [ launched "ERL_LIBS=_build/default/lib erl -pa ebin" ]
 
   -- REGRESSION (note #398): a typed env VALUE with a space (the CoreAudio
   -- device name `BlackHole 2ch` on SuperDirt) must be single-quoted, or `env`
@@ -132,7 +132,7 @@ spec = describe "Bosun.Apply" do
   -- (ERL_LIBS above) stay unquoted; only this one gets quotes.
   it "Process Start with a spaced env value single-quotes it (the BlackHole 2ch bug)" $
     withScript (mkDeployment [ procLeafEnv "a" "/srv/a" "./boot-superdirt.sh" [ Tuple (mkEnvVar "SUPERDIRT_DEVICE") "BlackHole 2ch" ] ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; i=0; while kill -0 -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; ( nohup env SUPERDIRT_DEVICE='BlackHole 2ch' ./boot-superdirt.sh >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+      lines `shouldEqual` [ launched "SUPERDIRT_DEVICE='BlackHole 2ch' ./boot-superdirt.sh" ]
 
   -- REGRESSION (teardown fidelity): a command carrying its own trailing `&` used
   -- to be passed through verbatim — no reap, no barrier, and no pidfile — so its
@@ -141,14 +141,14 @@ spec = describe "Bosun.Apply" do
   -- trailing ampersand is a typing habit, not an opt-out of supervision.
   it "a Process command that backgrounds itself is tracked like any other (the & is dropped)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a &" ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; i=0; while kill -0 -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; ( nohup env run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+      lines `shouldEqual` [ launched "run-a" ]
 
   -- The redirection-terminated shape the fixtures actually carry: stripping the
   -- `&` must leave `2>&1` intact (it ends in an ampersand too, one character
   -- earlier), and the launch's own redirect then wins because it comes last.
   it "dropping the trailing & does not eat the 2>&1 in front of it" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "python3 -m http.server 8771 >greeter.log 2>&1 &" ]) (snap []) \lines ->
-      lines `shouldEqual` [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; i=0; while kill -0 -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; ( nohup env python3 -m http.server 8771 >greeter.log 2>&1 >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+      lines `shouldEqual` [ launched "python3 -m http.server 8771 >greeter.log 2>&1" ]
 
   -- Stop kills the process GROUP Bosun recorded at launch (reaping the whole
   -- nohup→server tree) — its own processes, not whatever holds the port — and
@@ -156,7 +156,7 @@ spec = describe "Bosun.Apply" do
   -- replaced turned "no pidfile, nothing signalled" into a green tick.
   it "down: a Process Stop kills the recorded process group AND reports what that did" $
     withDownScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) \lines ->
-      lines `shouldEqual` [ "p=$(cat /tmp/bosun-apply-a.pid 2>/dev/null | tr -dc 0-9); if [ -z \"$p\" ]; then echo bosun-stop:no-record; elif ! kill -0 -\"$p\" 2>/dev/null; then echo bosun-stop:already-gone; elif ! kill -- -\"$p\" 2>/dev/null; then if kill -0 -\"$p\" 2>/dev/null; then echo bosun-stop:refused; else echo bosun-stop:already-gone; fi; else i=0; while kill -0 -\"$p\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; if kill -0 -\"$p\" 2>/dev/null; then echo bosun-stop:survived; else echo bosun-stop:reaped; fi; fi" ]
+      lines `shouldEqual` [ "p=$(cat /tmp/bosun-apply-a.pid 2>/dev/null | tr -dc 0-9); if [ -z \"$p\" ]; then echo bosun-stop:no-record; elif ! kill -0 -\"$p\" 2>/dev/null; then echo bosun-stop:already-gone; elif ! kill -- -\"$p\" 2>/dev/null; then if kill -0 -\"$p\" 2>/dev/null; then echo bosun-stop:refused; else echo bosun-stop:already-gone; fi; else i=0; while kill -0 -\"$p\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; if ! kill -0 -\"$p\" 2>/dev/null; then echo bosun-stop:reaped; else kill -KILL -- -\"$p\" 2>/dev/null; i=0; while kill -0 -\"$p\" 2>/dev/null && [ \"$i\" -lt 20 ]; do sleep 0.1; i=$((i+1)); done; if kill -0 -\"$p\" 2>/dev/null; then echo bosun-stop:survived; else echo bosun-stop:killed; fi; fi; fi" ]
 
   -- The stop script is ssh-wrapped in SINGLE QUOTES for a remote host, so it may
   -- never contain an apostrophe of its own — one would close that quote and hand
@@ -168,7 +168,7 @@ spec = describe "Bosun.Apply" do
   it "Process Restart -> kill the recorded group, then relaunch (recording the new one)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) (snap [ Tuple "a" Failed ]) \lines ->
       lines `shouldEqual`
-        [ "cd /srv/a && kill -- -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null || true; i=0; while kill -0 -\"$(cat /tmp/bosun-apply-a.pid 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; ( nohup env run-a >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &" ]
+        [ launched "run-a" ]
 
   -- A macmini container resolves to the macmini Target: ssh login, the remote
   -- compose workdir (so the file is found) and Docker Desktop's PATH (so a
@@ -202,3 +202,17 @@ spec = describe "Bosun.Apply" do
   it "a running service contributes no command (NoOp omitted)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) (snap [ Tuple "a" Running ]) \lines ->
       lines `shouldEqual` []
+
+-- | The whole launch line for service `a` in `/srv/a`, spelled out once: stop
+-- | the recorded group (TERM, up to 5 s, then KILL, up to 2 s), refuse to
+-- | launch over a group that is somehow still alive, and otherwise launch,
+-- | recording the new group.
+launched :: String -> String
+launched command =
+  "cd /srv/a && p=$(cat /tmp/bosun-apply-a.pid 2>/dev/null | tr -dc 0-9); "
+    <> "if [ -n \"$p\" ]; then kill -- -\"$p\" 2>/dev/null; "
+    <> "i=0; while kill -0 -\"$p\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; "
+    <> "if kill -0 -\"$p\" 2>/dev/null; then kill -KILL -- -\"$p\" 2>/dev/null; "
+    <> "i=0; while kill -0 -\"$p\" 2>/dev/null && [ \"$i\" -lt 20 ]; do sleep 0.1; i=$((i+1)); done; fi; fi; "
+    <> "{ [ -n \"$p\" ] && kill -0 -\"$p\" 2>/dev/null && echo \"bosun: not launched: the previous process group $p is still alive after TERM and KILL\" >>/tmp/bosun-apply-a.log; } || "
+    <> "( nohup env " <> command <> " >/tmp/bosun-apply-a.log 2>&1 & ps -o pgid= -p $! | tr -d ' ' > /tmp/bosun-apply-a.pid ) &"

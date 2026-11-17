@@ -25,7 +25,7 @@ module Bosun.Substrate
   , Platform
   , defaultPlatform
   , daemonize
-  , pidKill
+  , reapPrior
   , pidStop
   , TeardownVerdict(..)
   , allTeardownVerdicts
@@ -34,6 +34,7 @@ module Bosun.Substrate
   , TeardownEvidence
   , readTeardown
   , releaseBudgetSecs
+  , killMaxPolls
   , pidPath
   , pidLease
   , leaseEveryMs
@@ -155,7 +156,7 @@ defaultPlatform = { os: MacOS, containerEngine: Docker }
 -- | program (bare `nohup VAR=val prog` would try to exec `VAR=val`). With no
 -- | prefix `env` is a transparent passthrough.
 daemonize :: OS -> ServiceId -> String -> String
-daemonize os sid cmd = reapPrior <> launch
+daemonize os sid cmd = reapPrior sid <> launch
   where
   runnable = dropBackgrounding cmd
   -- Kill any prior recorded generation, then BLOCK until its group is
@@ -165,15 +166,28 @@ daemonize os sid cmd = reapPrior <> launch
   -- degraded (the Atlantis 57121 anchor-listener incident, docs/RESTART-
   -- BARRIER.md). Polling group-existence instead waits exactly as long as
   -- the corpse takes and no longer. POSIX-portable, so OS-independent.
-  reapPrior = pidKill sid <> "; " <> awaitDead sid
-  launch = case os of
+  --
+  -- NEVER LAUNCH OVER A LIVING GROUP (2026-11-17). `reapPrior` ends with the
+  -- old group either gone or, rarely, alive after TERM and KILL. In the second
+  -- case launching would overwrite the pidfile with the new group and leave
+  -- the old one an orphan that nothing names: that is how an Infovore stuck
+  -- in a request outlived two restarts on the Mini (worklog 2026-11-16). So
+  -- the launch is the right-hand side of `stillHeld ||`: it runs only when
+  -- the old group is gone, and otherwise the pidfile is left naming it and
+  -- the service's log says why nothing was launched. On macOS the `&` at the
+  -- end backgrounds the whole `stillHeld || ( … )` list, so the line still
+  -- ends in `&`, which is how the exec edge knows a launch.
+  stillHeld =
+    "{ [ -n \"$p\" ] && " <> groupAlive <> " && echo \"bosun: not launched: the previous "
+      <> "process group $p is still alive after TERM and KILL\" >>" <> logPath sid <> "; } || "
+  launch = stillHeld <> case os of
     MacOS ->
       "( nohup env " <> runnable <> " >" <> logPath sid <> " 2>&1 & "
         <> macRecordPgid sid <> " ) &"
     Linux ->
       -- setsid makes the server a session+group leader ⇒ `$!` == its pgid.
-      "setsid env " <> runnable <> " >" <> logPath sid <> " 2>&1 & "
-        <> "echo $! > " <> pidPath sid
+      "{ setsid env " <> runnable <> " >" <> logPath sid <> " 2>&1 & "
+        <> "echo $! > " <> pidPath sid <> "; }"
 
 -- | Drop a start command's OWN trailing `&`, so `daemonize` can do the
 -- | backgrounding and record what it backgrounded.
@@ -212,37 +226,48 @@ dropBackgrounding cmd =
 macRecordPgid :: ServiceId -> String
 macRecordPgid sid = "ps -o pgid= -p $! | tr -d ' ' > " <> pidPath sid
 
--- | Kill the recorded process GROUP for a service (`-<pgid>`), reaping the whole
--- | launch tree. POSIX-portable (`kill -- -<pgid>` is the same on BSD and GNU),
--- | so it takes no `OS` — annotated rather than forced into false symmetry; the
--- | OS divergence is all in `daemonize`'s capture. Tolerant of a missing file
--- | (a first-ever Start) so a launch never aborts on its own reap.
+-- | REAP-BEFORE-LAUNCH: stop the recorded process GROUP for a service
+-- | (`-<pgid>`, so the whole launch tree) and block until it is gone, so the
+-- | kernel has released its ports before the new generation binds.
 -- |
--- | THIS IS THE REAP-BEFORE-LAUNCH FORM, and its silence is correct HERE: the
--- | line it sits in is fire-and-forget (`( … ) &`, spawned detached), so there
--- | is no reader for a verdict, and the launch that follows is the thing whose
--- | success is observed. It is NOT the teardown form — a Stop that a human or
--- | the Chair is waiting on reports what it did (`pidStop`), because `|| true`
--- | over a `cat` that failed is how a `down` came to answer `{"ok":true}` with
--- | both servers still listening.
+-- | TERM, then up to `releaseMaxPolls` × 100ms for the group to exit; if it is
+-- | still there, KILL, then up to `killMaxPolls` × 100ms. Until 2026-11-17 the
+-- | line stopped at TERM and the launch went ahead regardless, so a service
+-- | that ignored TERM for five seconds was launched over and orphaned. Docker,
+-- | launchd and systemd all escalate the same way, and so did Bosun itself for
+-- | strangers on a port (`Holding.reapStrangers`).
+-- |
+-- | Leaves `$p` set to the recorded group id (empty when there is no usable
+-- | pidfile, as on a first-ever Start), for `daemonize` to look at once more
+-- | before it launches. POSIX `sh`, the same on BSD and GNU, so it takes no
+-- | `OS`. Silent: the line is fire-and-forget, with no reader for a verdict.
+-- | The teardown form, which a human or the Chair is waiting on, is `pidStop`.
 -- |
 -- | NB best-effort against pgid reuse — the resident `supervise` daemon,
 -- | holding live state, is the reuse-safe authority.
-pidKill :: ServiceId -> String
-pidKill sid = "kill -- -\"$(cat " <> pidPath sid <> " 2>/dev/null)\" 2>/dev/null || true"
+reapPrior :: ServiceId -> String
+reapPrior sid =
+  recordedGroup sid
+    <> "if [ -n \"$p\" ]; then kill -- -\"$p\" 2>/dev/null; "
+    <> awaitGone releaseMaxPolls
+    <> "if " <> groupAlive <> "; then kill -KILL -- -\"$p\" 2>/dev/null; "
+    <> awaitGone killMaxPolls <> "fi; fi; "
 
--- | RELEASE BARRIER. Block until the recorded process GROUP for `sid` is fully
--- | gone — every member exited, so the kernel has released all its ports and
--- | sockets — or `releaseMaxPolls` × 100ms elapse. POSIX-portable
--- | group-existence check (`kill -0 -<pgid>`, signal 0 tests existence without
--- | signalling), so OS-independent like `pidKill`. A missing/empty pidfile makes
--- | the guard fail and the loop no-op (a first-ever Start). This is the release
--- | half of release-before-bind; it sits inside `daemonize`'s detached launch
--- | subshell, so the new generation never binds until the old one is dead.
-awaitDead :: ServiceId -> String
-awaitDead sid =
-  "i=0; while kill -0 -\"$(cat " <> pidPath sid
-    <> " 2>/dev/null)\" 2>/dev/null && [ \"$i\" -lt " <> show releaseMaxPolls
+-- | `p=<the recorded group id>`: digits only, so a missing, empty or garbled
+-- | pidfile leaves it empty.
+recordedGroup :: ServiceId -> String
+recordedGroup sid = "p=$(cat " <> pidPath sid <> " 2>/dev/null | tr -dc 0-9); "
+
+-- | Does group `$p` exist? Signal 0 tests existence without signalling.
+groupAlive :: String
+groupAlive = "kill -0 -\"$p\" 2>/dev/null"
+
+-- | RELEASE BARRIER. Block until group `$p` is fully gone — every member
+-- | exited, so the kernel has released all its ports and sockets — or the
+-- | given number of 100ms polls elapse.
+awaitGone :: Int -> String
+awaitGone polls =
+  "i=0; while " <> groupAlive <> " && [ \"$i\" -lt " <> show polls
     <> " ]; do sleep 0.1; i=$((i+1)); done; "
 
 -- | Release-barrier budget: 100ms × this. 50 ⇒ up to 5s for a slow-dying group
@@ -256,10 +281,15 @@ releaseMaxPolls = 50
 releaseBudgetSecs :: Int
 releaseBudgetSecs = releaseMaxPolls / 10
 
+-- | How long a group gets to disappear after KILL: 100ms × this. KILL cannot
+-- | be caught, so this only covers the kernel tearing the processes down.
+killMaxPolls :: Int
+killMaxPolls = 20
+
 -- ── what a teardown actually did ─────────────────────────────────────────────
 
 -- | What one Process Stop established. This is a TAXONOMY where there used to
--- | be nothing at all: `pidKill`'s teardown form ended `2>/dev/null || true`, so
+-- | be nothing at all: the old teardown line ended `2>/dev/null || true`, so
 -- | every outcome — reaped a live group, found no pidfile, found a corpse, was
 -- | refused by the kernel — arrived at the operator as the same silent exit 0.
 -- | `POST /control/down` over `fixtures/hello` answered `{"ok":true}` with both
@@ -270,7 +300,7 @@ releaseBudgetSecs = releaseMaxPolls / 10
 -- | lowers to the Go column for free.
 -- |
 -- | The brief asked for three — signalled, nothing to signal, cannot tell — and
--- | said to say so if there was a fourth. There are six, because "nothing to
+-- | said to say so if there was a fourth. There are seven, because "nothing to
 -- | signal" is two different facts with two different remedies, and so is
 -- | "did not die":
 -- |
@@ -279,14 +309,19 @@ releaseBudgetSecs = releaseMaxPolls / 10
 -- |     running and bosun cannot see it) versus a pgid that was recorded and has
 -- |     already exited (nothing is running; nothing to do). Collapsing these is
 -- |     exactly the old bug: it reports the dangerous case as the harmless one.
--- |   * `Survived` vs `Refused` — the signal was delivered and ignored (escalate
--- |     to SIGKILL) versus the kernel would not deliver it (it is not ours to
--- |     kill; find the owner). Different next command.
+-- |   * `Survived` vs `Refused` — still alive after TERM and KILL (something
+-- |     the kernel cannot tear down) versus the kernel would not deliver the
+-- |     signal (it is not ours to kill; find the owner). Different next command.
+-- |   * `Reaped` vs `Killed` (2026-11-17) — both mean the service is down. One
+-- |     exited when asked; the other ignored TERM for the whole release window
+-- |     and was killed, so whatever it would have saved on the way out it did
+-- |     not. An operator needs to know which.
 data TeardownVerdict
   = Reaped       -- ^ signalled the recorded group; it is gone
+  | Killed       -- ^ ignored TERM for the release window; KILL took it
   | AlreadyGone  -- ^ a group was recorded and had already exited; nothing to signal
   | NoRecord     -- ^ no usable pgid recorded; NOTHING was signalled
-  | Survived     -- ^ signalled, still alive when the release barrier expired
+  | Survived     -- ^ still alive after TERM, the release window, and KILL
   | Refused      -- ^ the group is alive and the kernel refused the signal
   | Unreadable   -- ^ the stop reported nothing: the shell never got that far
 derive instance Eq TeardownVerdict
@@ -296,26 +331,28 @@ instance Show TeardownVerdict where show = genericShow
 
 -- | Every constructor, for the readers that must consider all of them.
 allTeardownVerdicts :: Array TeardownVerdict
-allTeardownVerdicts = [ Reaped, AlreadyGone, NoRecord, Survived, Refused, Unreadable ]
+allTeardownVerdicts = [ Reaped, Killed, AlreadyGone, NoRecord, Survived, Refused, Unreadable ]
 
 -- | The bare wire word. `pidStop` echoes it behind `teardownPrefix`; the
 -- | summary line prints it plain.
 teardownTag :: TeardownVerdict -> String
 teardownTag = case _ of
   Reaped -> "reaped"
+  Killed -> "killed"
   AlreadyGone -> "already-gone"
   NoRecord -> "no-record"
   Survived -> "survived"
   Refused -> "refused"
   Unreadable -> "unreadable"
 
--- | Is the service known to be down? Only the two verdicts that establish it.
+-- | Is the service known to be down? Only the three verdicts that establish it.
 -- | `NoRecord` is deliberately NOT settled even though it is the commonest and
 -- | most innocent-looking: "we signalled nothing" is not "it stopped", and
 -- | treating it as success is the whole of the bug this type exists to end.
 teardownSettled :: TeardownVerdict -> Boolean
 teardownSettled = case _ of
   Reaped -> true
+  Killed -> true
   AlreadyGone -> true
   _ -> false
 
@@ -356,23 +393,25 @@ readTeardown ev
 -- |      `AlreadyGone`. Without the re-check that race reads as EPERM and sends
 -- |      the operator hunting for an owner who does not exist.
 -- |   4. otherwise poll the same release barrier `daemonize` uses, then look
--- |      once more: gone ⇒ `Reaped`, alive ⇒ `Survived`.
+-- |      once more: gone ⇒ `Reaped`.
+-- |   5. still alive ⇒ KILL, poll again: gone ⇒ `Killed`, alive ⇒ `Survived`.
 -- |
 -- | CONTAINS NO SINGLE QUOTES, and must not grow any: `Report.renderCommand`
 -- | wraps a remote command as `ssh dest '<inner>'`, so one apostrophe in here
 -- | would close that quote and hand the rest of the script to the local shell.
 pidStop :: ServiceId -> String
 pidStop sid =
-  "p=$(cat " <> pidPath sid <> " 2>/dev/null | tr -dc 0-9); "
+  recordedGroup sid
     <> "if [ -z \"$p\" ]; then " <> say NoRecord
-    <> "elif ! kill -0 -\"$p\" 2>/dev/null; then " <> say AlreadyGone
+    <> "elif ! " <> groupAlive <> "; then " <> say AlreadyGone
     <> "elif ! kill -- -\"$p\" 2>/dev/null; then "
-    <> "if kill -0 -\"$p\" 2>/dev/null; then " <> say Refused
+    <> "if " <> groupAlive <> "; then " <> say Refused
     <> "else " <> say AlreadyGone <> "fi; "
-    <> "else i=0; while kill -0 -\"$p\" 2>/dev/null && [ \"$i\" -lt "
-    <> show releaseMaxPolls <> " ]; do sleep 0.1; i=$((i+1)); done; "
-    <> "if kill -0 -\"$p\" 2>/dev/null; then " <> say Survived
-    <> "else " <> say Reaped <> "fi; fi"
+    <> "else " <> awaitGone releaseMaxPolls
+    <> "if ! " <> groupAlive <> "; then " <> say Reaped
+    <> "else kill -KILL -- -\"$p\" 2>/dev/null; " <> awaitGone killMaxPolls
+    <> "if " <> groupAlive <> "; then " <> say Survived
+    <> "else " <> say Killed <> "fi; fi; fi"
   where
   say v = "echo " <> teardownPrefix <> teardownTag v <> "; "
 

@@ -66,8 +66,8 @@ What the last `down` established about one service.
 
 | Field | Holds | Meaning |
 |---|---|---|
-| `verdict` | string | `reaped`, `already-gone`, `no-record`, `survived`, `refused` or `unreadable` |
-| `settled` | true or false | true when the verdict establishes that the service is down |
+| `verdict` | string | `reaped`, `killed`, `already-gone`, `no-record`, `survived`, `refused` or `unreadable` |
+| `settled` | true or false | true when the verdict establishes that the service is down: `reaped`, `killed` or `already-gone` |
 | `at` | time in ms | when it was judged |
 
 ### The holder row

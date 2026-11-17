@@ -115,8 +115,8 @@ supervisionMessage = message "supervision row" "What the supervisor has done abo
 teardownMessage :: Message Teardown
 teardownMessage = message "teardown row" "What the last `down` established about one service." $
   { verdict: _, settled: _, at: _ }
-    <$> field "verdict" _.verdict string "`reaped`, `already-gone`, `no-record`, `survived`, `refused` or `unreadable`"
-    <*> field "settled" _.settled boolean "true when the verdict establishes that the service is down"
+    <$> field "verdict" _.verdict string "`reaped`, `killed`, `already-gone`, `no-record`, `survived`, `refused` or `unreadable`"
+    <*> field "settled" _.settled boolean "true when the verdict establishes that the service is down: `reaped`, `killed` or `already-gone`"
     <*> field "at" _.at time "when it was judged"
 
 holderMessage :: Message Holder

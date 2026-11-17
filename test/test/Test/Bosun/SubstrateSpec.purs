@@ -66,17 +66,25 @@ spec = describe "Bosun.Substrate (teardown)" do
 
   describe "teardownSettled" do
 
-    -- Two verdicts, and only two, mean the service is down. `NoRecord` looks
+    -- Three verdicts, and only three, mean the service is down. `NoRecord` looks
     -- innocent and is the commonest of the failures, which is exactly why it
     -- must not be here.
-    it "only Reaped and AlreadyGone establish that the service is down" $
-      A.filter teardownSettled allTeardownVerdicts `shouldEqual` [ Reaped, AlreadyGone ]
+    it "only Reaped, Killed and AlreadyGone establish that the service is down" $
+      A.filter teardownSettled allTeardownVerdicts `shouldEqual` [ Reaped, Killed, AlreadyGone ]
+
+    -- A forced stop is a stop, and the sentence must say it was forced.
+    it "a kill is reported as a stop that was not clean" $
+      String.contains (Pattern "by force") (renderTeardown (sid "a") Killed) `shouldEqual` true
 
   describe "renderTeardownSummary" do
 
     it "an all-clear reads as a count" $
       renderTeardownSummary [ Tuple (sid "a") Reaped, Tuple (sid "b") AlreadyGone ]
         `shouldEqual` "2 stopped"
+
+    it "a forced stop counts as stopped, and is named" $
+      renderTeardownSummary [ Tuple (sid "a") Reaped, Tuple (sid "b") Killed ]
+        `shouldEqual` "2 stopped, 1 by force (b)"
 
     it "nothing to stop says so rather than claiming a success" $
       renderTeardownSummary [] `shouldEqual` "nothing to stop"
@@ -89,7 +97,7 @@ spec = describe "Bosun.Substrate (teardown)" do
 
   describe "renderTeardown" do
 
-    -- Three of the six are not a stop, and an operator scanning a teardown log
+    -- Four of the seven are not a stop, and an operator scanning a teardown log
     -- must be able to see that without reading a sentence.
     it "every verdict that is not a stop says so in capitals" $
       map (\v -> String.contains (Pattern "NOT STOPPED") (renderTeardown (sid "a") v)
