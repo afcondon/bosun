@@ -24,9 +24,10 @@ services:
         # compiled output). Reads the GIT-TRACKED registry/fleet.json — Bosun's
         # source of truth for the dev-server fleet (see docs/PORT-MODEL.md). This
         # drops the router's runtime dependency on Marginalia being up; Marginalia's
-        # /api/ports is now a non-authoritative mirror. `serve` is the one part of
-        # Bosun still on node; a BEAM build swaps in here with no model change.
-        command: node cli/run.js serve ${BOSUN_ROOT}/registry/fleet.json
+        # /api/ports is now a non-authoritative mirror. The router is the BEAM
+        # one (cli/src/Bosun/CLI/Serve.erl, held to docs/SERVE-BEHAVIOURS.md);
+        # to fall back to node, put `node cli/run.js serve` here and restart.
+        command: beam/bosun serve ${BOSUN_ROOT}/registry/fleet.json
       expose:
         - host: 3997
 
