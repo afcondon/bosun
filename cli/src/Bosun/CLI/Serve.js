@@ -47,6 +47,14 @@ export const resolveStatusPort = () => {
   return Number.isInteger(n) && n > 0 && n < 65536 ? n : 3997;
 };
 
+// The idle limit, for a test. Ten minutes is the plan's figure and cannot be
+// waited out by a test, so a scratch router may be given a short one. Same
+// standing as the status-port override above: unset in normal use.
+const IDLE_OVERRIDE_MS = (() => {
+  const n = Number(process.env.BOSUN_SERVE_IDLE_MS);
+  return Number.isInteger(n) && n > 0 ? n : null;
+})();
+
 // EffectFn1: uncurried — the effect runs on serveImpl(config).
 export const serveImpl = (config) => {
   const states = [];            // proxy-route states, for /state
@@ -69,7 +77,8 @@ export const serveImpl = (config) => {
   // a check that FAILED is not a check that found agreement.
   let registryError = null;
 
-  const bindRoute = (route) => {
+  const bindRoute = (planned) => {
+    const route = IDLE_OVERRIDE_MS === null ? planned : { ...planned, idleTimeoutMs: IDLE_OVERRIDE_MS };
     const state = {
       route,
       child: null,
@@ -568,15 +577,14 @@ const sendJSON = (res, code, obj) => {
   res.end(JSON.stringify(obj, null, 2) + "\n");
 };
 
-// ── THIS SURFACE HAS ONE COLUMN TODAY: node. ────────────────────────────────
+// ── THIS SURFACE HAS TWO IMPLEMENTATIONS: this one and `Serve.erl`. ─────────
 //
-// The router is the one part of Bosun that does not run on the BEAM yet
-// (`Serve.erl` is a stub). Until 2026-11-17 it had a Go twin, and
-// `scripts/control-parity.sh` held the two to the same paths, query keys and
-// `x-bosun-*` headers, because broker mode was once added here alone and
-// nothing could tell for a week. The Go column is gone (Go was demoted
-// 2026-11-16). When the router gets its BEAM twin, bring that check back
-// against it: git history has the script.
+// The BEAM router is not a translation of this file. Both are held to
+// docs/SERVE-BEHAVIOURS.md by scripts/serve-behaviours/run.mjs, which runs
+// against either and covers every path, query key and `x-bosun-*` header
+// below. A change to this surface is a change to that list and to both
+// files. (This file falls short of the list in six places, written down
+// there; they are fixed on the BEAM and not here.)
 //
 // GET /state · GET /where/:service · POST /control/reload · POST
 // /control/spawn?port= · POST /control/stop?port=. The control verbs map to

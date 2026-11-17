@@ -7,8 +7,19 @@
 # error: the write that then fails raises `error:terminated`, and the command
 # exits 141 and says nothing, as a program killed by SIGPIPE would. (Crash
 # dumps are left on: from a supervisor they are evidence.)
+#
+# +Bd: Ctrl-C ends the command. Without it the BEAM answers SIGINT with its
+# BREAK menu and stops running until someone picks from it, so a resident
+# command would stand frozen: not serving, and deaf to SIGTERM. The BEAM
+# cannot run code on SIGINT, so a router stopped this way leaves its relayed
+# backends; the next router clears them before it binds.
+#
+# `serve` is given more open files than the 256 launchd hands a service: a
+# relayed connection takes two. Where the limit cannot be raised the router
+# waits for a free one, so this is headroom, not a requirement.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec erl -noshell -pa "$HERE/ebin" -pa "$HERE/deps/yamerl/ebin" -eval '
+[ "${1:-}" = serve ] && ulimit -n 4096 2>/dev/null
+exec erl +Bd -noshell -pa "$HERE/ebin" -pa "$HERE/deps/yamerl/ebin" -eval '
   try ('"'"'bosun_cLI_main@ps'"'"':main())() of _ -> ok
   catch
     error:terminated -> halt(141);

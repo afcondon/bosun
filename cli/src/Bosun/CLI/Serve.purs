@@ -3,11 +3,12 @@
 -- | This is the one place the no-Aff seam yields: a lazy-spawn reverse proxy is
 -- | inherently an event loop (it binds ports and stays resident, spawning
 -- | backends on demand), which a straight-line synchronous edge cannot express.
--- | So the event loop is quarantined in ONE foreign shim (`Serve.js`), driven
--- | entirely by the pure `ServePlan` (`Bosun.Serve`): PureScript decides
--- | admission, port-rewrite, and idle policy; the shim does the mechanical
--- | bind / spawn / poll / proxy / reap. P3 swaps this JS shim for a Go one
--- | (`httputil.ReverseProxy`) driven by the *same* plan.
+-- | So the event loop is quarantined in ONE foreign shim per runtime
+-- | (`Serve.js` on node, `Serve.erl` on the BEAM), driven entirely by the pure
+-- | `ServePlan` (`Bosun.Serve`): PureScript decides admission, port-rewrite,
+-- | and idle policy; the shim does the mechanical bind / spawn / poll / proxy
+-- | / reap. The two shims are written separately and held to one list of
+-- | behaviours (`docs/SERVE-BEHAVIOURS.md`).
 -- |
 -- | `serveImpl` takes the admitted `Route`s (all-primitive records, so they
 -- | cross to JS with no decoding) and never returns — it is the resident loop.
@@ -29,6 +30,7 @@ import Bosun.Reconcile (reconcile)
 import Bosun.Report (renderDrift, renderDriftKind, renderReject, renderServePlan)
 import Bosun.Health (Probe(..))
 import Bosun.Protocol (Locator, whereResultCodec)
+import Bosun.Protocol.ServeState (printServeState)
 import Bosun.Serve (Broker, DriftKind(..), PortDrift, Redirect, Route, ServePlan, brokerDoor, brokerStopVerdict, controlPort, doorTag, planDrift, serveDiff, servePlanWith, stopVerdictTag)
 import Bosun.Version (version)
 import Bosun.Atoms (unAbsPath, unPort)
@@ -148,6 +150,96 @@ type ReloadResult =
   , rejected :: Array RejectInfo
   }
 
+-- | What the shim knows about one lazy-spawn route at the moment `/state` is
+-- | asked: the facts, with `Nullable` where it may have nothing to say.
+-- | `stateText` turns them into the document.
+type RouteFacts =
+  { serviceId :: String
+  , publicPort :: Int
+  , internalPort :: Int
+  , up :: Boolean
+  , pid :: Nullable Int
+  , external :: Boolean
+  , externalCheckedAt :: Nullable String
+  , adoptedBackend :: Boolean
+  , adoptedBackendAt :: Nullable String
+  , bound :: Boolean
+  , bindError :: Nullable String
+  }
+
+-- | The same for one brokered service.
+type BrokeredFacts =
+  { serviceId :: String
+  , publicPort :: Nullable Int
+  , at :: String
+  , url :: Nullable String
+  , transport :: String
+  , probe :: String
+  , pid :: Nullable Int
+  , bound :: Boolean
+  , bindError :: Nullable String
+  , door :: String
+  , doorCheckedAt :: Nullable String
+  }
+
+-- | Everything `/state` reports, as the shim holds it.
+type StateFacts =
+  { routes :: Array RouteFacts
+  , brokered :: Array BrokeredFacts
+  , redirects :: Array Redirect
+  , rejected :: Array RejectInfo
+  , drift :: Array DriftInfo
+  , registry ::
+      { source :: String
+      , plannedAt :: String
+      , modifiedAt :: Nullable String
+      , error :: Nullable String
+      }
+  }
+
+-- | The `/state` document for these facts, printed through its description
+-- | (`Bosun.Protocol.ServeState`). `stale` is derived here, not reported.
+stateText :: StateFacts -> String
+stateText facts = printServeState
+  { routes: facts.routes <#> \r ->
+      { serviceId: r.serviceId
+      , publicPort: r.publicPort
+      , internalPort: r.internalPort
+      , up: r.up
+      , pid: toMaybe r.pid
+      , external: Just r.external
+      , externalCheckedAt: toMaybe r.externalCheckedAt
+      , adoptedBackend: Just r.adoptedBackend
+      , adoptedBackendAt: toMaybe r.adoptedBackendAt
+      , bound: Just r.bound
+      , bindError: toMaybe r.bindError
+      }
+  , redirects: facts.redirects
+  , rejected: facts.rejected <#> \r ->
+      { serviceId: r.serviceId, publicPort: toMaybe r.publicPort, reason: r.reason }
+  , brokered: Just $ facts.brokered <#> \b ->
+      { serviceId: b.serviceId
+      , publicPort: toMaybe b.publicPort
+      , at: Just b.at
+      , url: toMaybe b.url
+      , transport: Just b.transport
+      , probe: Just b.probe
+      , pid: toMaybe b.pid
+      , bound: Just b.bound
+      , bindError: toMaybe b.bindError
+      , door: Just b.door
+      , doorCheckedAt: toMaybe b.doorCheckedAt
+      }
+  , drift: Just facts.drift
+  , stale: Just (not (A.null facts.drift))
+  , registry: Just
+      { source: facts.registry.source
+      , plannedAt: Just facts.registry.plannedAt
+      , modifiedAt: toMaybe facts.registry.modifiedAt
+      , error: toMaybe facts.registry.error
+      }
+  }
+
 type ServeConfig =
   { routes :: Array Route
   , brokers :: Array BrokerInfo
@@ -166,6 +258,9 @@ type ServeConfig =
   -- wire shape is a codec value in `Bosun.Protocol`, shared with every consumer
   -- that decodes it, and this is how the shim reaches it.
   , whereJson :: Fn1 WhereInfo Json
+  -- the `/state` printer, passed in for the same reason. The BEAM shim
+  -- answers `/state` with its text; the JavaScript shim does not use it yet.
+  , stateText :: Fn1 StateFacts String
   }
 
 -- The resident loop. Binds every public port and, on first request to a proxy
@@ -235,8 +330,11 @@ serveFrom label source sourceFile reread = do
   log ""
   log (renderServePlan plan)
   log ""
-  if A.null plan.routes && A.null plan.redirects then
-    log "serve: nothing to bind (no routable or redirectable services). Exiting."
+  -- A brokered service counts: a registry of nothing but brokered services
+  -- (unix-socket daemons, say) binds no port and is still worth serving,
+  -- because `/where` is the only door those have.
+  if A.null plan.routes && A.null plan.redirects && A.null plan.brokered then
+    log "serve: nothing to serve (no routable, brokered or redirectable services). Exiting."
   else do
     log
       ( "serve: binding " <> show (A.length plan.routes) <> " proxy + "
@@ -278,6 +376,7 @@ serveFrom label source sourceFile reread = do
       , reload
       , drift
       , whereJson: mkFn1 encodeWhere
+      , stateText: mkFn1 stateText
       }
 
 rejectInfo :: ServePlan -> Array RejectInfo

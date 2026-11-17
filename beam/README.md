@@ -139,14 +139,15 @@ under-reports on this machine, which compresses memory.
 One BEAM supervisor is bigger than one node supervisor. The saving comes
 only from putting several groups in one VM, which is not built: four node
 supervisors are about 165 MB, and one VM holding four groups should be near
-70 MB. `serve` stays on node either way.
+70 MB. The router (`serve`) is one VM of about 77 MB.
 
 ## Not done
 
 - **Several groups in one VM,** and OTP supervising the group supervisors,
   which is what would replace today's meta-supervisor on :3990.
-- **`serve`.** A reverse proxy living in 1,500 lines of foreign code. Not
-  ported, on purpose; `Serve.erl` and `Audit.erl` are stubs that say so.
+- **`serve --audit`.** `Audit.erl` is a stub that says so. (`serve` itself
+  runs here since 2026-11-17: `cli/src/Bosun/CLI/Serve.erl`, built to
+  `docs/SERVE-BEHAVIOURS.md`, not translated from `Serve.js`.)
 - **A release.** `beam/bosun` runs `erl -pa ebin`. No OTP application,
   no boot script.
 - **Divergences documented but not tested:** very large and very small

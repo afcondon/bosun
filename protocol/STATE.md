@@ -7,7 +7,7 @@ documents, because there are two kinds of resident:
 |---|---|---|---|
 | `bosun supervise` | the group document | `src/Bosun/Protocol/State.purs` | yes, on node and the BEAM |
 | `bosun docker` | the group document, reader's form | the same module (`Group`) | yes |
-| `bosun serve` | the router document | `src/Bosun/Protocol/ServeState.purs` | no: the router is JavaScript and builds it there |
+| `bosun serve` | the router document | `src/Bosun/Protocol/ServeState.purs` | on the BEAM, yes; the node router builds its own |
 
 Both descriptions are written with Hawser, and the tables below are
 generated from them. The Chair reads both documents through them.
@@ -257,10 +257,11 @@ The reading side is held by `test/test/Test/Bosun/StateSpec.purs`, run by
   document, as does one with every optional part filled in and a field from
   a newer router; a port written as text and a missing table are refused.
 
-Not held: that the router goes on writing what the description says. It is
-checked against one captured document, not against the JavaScript that
-builds it. That closes when the router is written in PureScript and prints
-through the description.
+The BEAM router prints its document through the description, and
+`scripts/serve-behaviours/run.mjs` reads the document of whichever router it
+is run against through the same description (case C1). The node router still
+builds its document by hand, so for it that case and the captured document
+are the only hold.
 
 **No Go column.** Bosun had one until 2026-11-17. Go was demoted as a runtime
 on 2026-11-16 (Andrew: where Go was meant, use the BEAM or Rust), and the

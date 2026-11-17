@@ -6,12 +6,13 @@
 -- | bind, a service it refused, a registry row it has not seen) has no place
 -- | in a group.
 -- |
--- | The router is written in JavaScript (`cli/src/Bosun/CLI/Serve.js`) and
--- | builds this document there, so unlike the group document it is not
--- | PRINTED through this description. It is READ through it: by the Chair,
--- | and by a test that reads a document the running router answered
--- | (`protocol/vectors/serve-state/`). When the router moves to PureScript on
--- | the BEAM, it prints through this too.
+-- | The router on the BEAM (`cli/src/Bosun/CLI/Serve.erl`) PRINTS its document
+-- | through this description (`printServeState`). The router in JavaScript
+-- | (`cli/src/Bosun/CLI/Serve.js`) still builds its own, so there it is only
+-- | READ through it: by the Chair, and by a test that reads a document the
+-- | running router answered (`protocol/vectors/serve-state/`). A field the
+-- | BEAM router has nothing to say for is left out, where the JavaScript one
+-- | writes `null`; a reader takes the two alike.
 -- |
 -- | Every record is open, for the reason the group document's are: a reader
 -- | built before a field was added must still read the document.
@@ -25,6 +26,7 @@ module Bosun.Protocol.ServeState
   , Registry
   , serveState
   , readServeState
+  , printServeState
   , document
   ) where
 
@@ -37,7 +39,7 @@ import Data.Maybe (Maybe)
 import Data.String as String
 import Hawser.Document as Document
 import Hawser.Message (Message(..), Shape(..), field, message, openRecordOf, optional)
-import Hawser.Value (Value, arrayOf, boolean, string, whole)
+import Hawser.Value (Value(..), arrayOf, boolean, string, whole)
 
 -- | The whole document.
 type ServeState =
@@ -207,6 +209,12 @@ readServeState json = do
   object <- note "not a JSON object" (Json.toObject json)
   let Message { shape: Shape shape } = stateMessage
   shape.fromJson object
+
+-- | The document as the router answers it.
+printServeState :: ServeState -> String
+printServeState state = Json.stringify (value.toJson state)
+  where
+  Value value = serveState
 
 -- | The tables of `protocol/STATE.md`'s router section.
 document :: String
