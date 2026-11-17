@@ -1,0 +1,12 @@
+{
+  "routes": [
+    {
+      "serviceId": "7:site",
+      "publicPort": "3040",
+      "internalPort": 23040,
+      "up": true
+    }
+  ],
+  "redirects": [],
+  "rejected": []
+}

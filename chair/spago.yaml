@@ -35,6 +35,7 @@ package:
     - routing
     - routing-duplex
     - bosun-core
+    - bosun-protocol
   bundle:
     module: Chair.Main
     outfile: app.js

@@ -9,10 +9,12 @@
 module Bosun.Conformance.StateText
   ( stateText
   , stateDocument
+  , routerDocument
   ) where
 
 import Prelude
 
+import Bosun.Protocol.ServeState as Router
 import Bosun.Protocol.State (document, printState, readState)
 import Data.Maybe (maybe)
 
@@ -22,3 +24,7 @@ stateText = readState >>> maybe "UNREADABLE" printState
 -- | The generated tables of `protocol/STATE.md` (`scripts/state-doc.sh`).
 stateDocument :: String
 stateDocument = document
+
+-- | The generated tables of `protocol/STATE.md`'s router section.
+routerDocument :: String
+routerDocument = Router.document

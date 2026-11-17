@@ -37,6 +37,13 @@ module Bosun.Protocol.State
   , printState
   , printHolder
   , readState
+  , Group
+  , Progress
+  , group
+  , progress
+  , readGroup
+  , printGroup
+  , groupOf
   , spaced
   , document
   ) where
@@ -45,7 +52,8 @@ import Prelude
 
 import Data.Argonaut.Core (Json)
 import Data.Argonaut.Core as Json
-import Data.Maybe (Maybe)
+import Data.Either (Either, note)
+import Data.Maybe (Maybe(..))
 import Data.String as String
 import Data.Tuple (Tuple(..))
 import Foreign.Object as Object
@@ -160,6 +168,112 @@ printWith (Value value) = value.toJson >>> spaced
 readState :: String -> Maybe StateDoc
 readState = fromText stateDoc
 
+-- ── the group document, as any resident answers it ───────────────────────────
+
+-- | What a READER may count on from any resident that answers for a group:
+-- | `bosun supervise`, and `bosun docker`, which watches containers it does
+-- | not keep alive itself. `StateDoc` above is the stricter promise that
+-- | `supervise` alone makes; every `StateDoc` is a `Group` (`groupOf`), and
+-- | `readGroup` reads both residents' documents.
+-- |
+-- | The Chair reads through this. It is the description of the reading side:
+-- | a field only one resident knows is optional here, so a reader has to say
+-- | what it does when the field is not there.
+type Group =
+  { desired :: String
+  , phase :: Maybe String
+  , supervised :: Boolean
+  , services :: Array (Tuple String String)
+  , supervision :: Array (Tuple String Progress)
+  , teardown :: Maybe (Array (Tuple String Teardown))
+  , holders :: Maybe (Array (Tuple String Holder))
+  , selfHeals :: Maybe Boolean
+  , keepAliveOwner :: Maybe String
+  }
+
+-- | One service's row in a `Group`. `supervise` fills in everything but
+-- | `health` and `keepAliveOwner`; `docker` fills in only those two beside
+-- | the counts, which it writes as zero because Docker does the counting.
+type Progress =
+  { restarts :: Int
+  , fails :: Int
+  , lastTransitionAt :: Maybe Number
+  , suspendedUntil :: Maybe Number
+  , retryCap :: Maybe Int
+  , gaveUp :: Maybe Boolean
+  , health :: Maybe String
+  , keepAliveOwner :: Maybe String
+  }
+
+groupMessage :: Message Group
+groupMessage = message "group" "A group, as any resident that answers for one says it." $
+  { desired: _, phase: _, supervised: _, services: _, supervision: _, teardown: _, holders: _, selfHeals: _, keepAliveOwner: _ }
+    <$> field "desired" _.desired string "`up` or `down`"
+    <*> optional "phase" _.phase string "the lifecycle phase. From `supervise` only"
+    <*> field "supervised" _.supervised boolean "true when this resident relaunches what fails: `supervise`. False from `docker`"
+    <*> field "services" _.services (tableOf string) "each service's status"
+    <*> field "supervision" _.supervision (tableOf progress) "each service's progress row"
+    <*> optional "teardown" _.teardown (tableOf teardown) "what the last `down` found, per service. From `supervise` only"
+    <*> optional "holders" _.holders (tableOf holder) "who holds each service's TCP port. From `supervise` only"
+    <*> optional "selfHeals" _.selfHeals boolean "true when something other than this resident relaunches what fails. From `docker` only"
+    <*> optional "keepAliveOwner" _.keepAliveOwner string "what that something is, such as `docker`"
+
+progressMessage :: Message Progress
+progressMessage = message "progress row" "One service's row, as any group resident says it." $
+  { restarts: _, fails: _, lastTransitionAt: _, suspendedUntil: _, retryCap: _, gaveUp: _, health: _, keepAliveOwner: _ }
+    <$> field "restarts" _.restarts whole "how many times it has been relaunched. Zero from `docker`, which does not count"
+    <*> field "fails" _.fails whole "failures in a row. Zero from `docker`"
+    <*> optional "lastTransitionAt" _.lastTransitionAt time "when its status last changed"
+    <*> optional "suspendedUntil" _.suspendedUntil time "while backing off, when the next try is due"
+    <*> optional "retryCap" _.retryCap whole "the most failures in a row before the supervisor stops trying"
+    <*> optional "gaveUp" _.gaveUp boolean "true when the supervisor has stopped trying"
+    <*> optional "health" _.health string "Docker's verdict on the container's own health check. From `docker` only"
+    <*> optional "keepAliveOwner" _.keepAliveOwner string "what relaunches this service, when it is not this resident"
+
+group :: Value Group
+group = openOf groupMessage
+
+progress :: Value Progress
+progress = openOf progressMessage
+
+-- | Read a group document from parsed JSON, with the reason when it cannot
+-- | be read: the first field that is missing or holds the wrong type.
+readGroup :: Json -> Either String Group
+readGroup json = do
+  object <- note "not a JSON object" (Json.toObject json)
+  let Message { shape: Shape shape } = groupMessage
+  shape.fromJson object
+
+-- | A group document in `/state`'s spacing. `docker` prints through this.
+printGroup :: Group -> String
+printGroup = printWith group
+
+-- | Every `supervise` document is a group document.
+groupOf :: StateDoc -> Group
+groupOf doc =
+  { desired: doc.desired
+  , phase: Just doc.phase
+  , supervised: doc.supervised
+  , services: doc.services
+  , supervision: map (map progressOf) doc.supervision
+  , teardown: doc.teardown
+  , holders: doc.holders
+  , selfHeals: Nothing
+  , keepAliveOwner: Nothing
+  }
+
+progressOf :: Supervision -> Progress
+progressOf row =
+  { restarts: row.restarts
+  , fails: row.fails
+  , lastTransitionAt: Just row.lastTransitionAt
+  , suspendedUntil: row.suspendedUntil
+  , retryCap: row.retryCap
+  , gaveUp: Just row.gaveUp
+  , health: Nothing
+  , keepAliveOwner: Nothing
+  }
+
 -- | JSON in the spacing `/state` has always had: `{ "a": 1, "b": [2, 3] }`,
 -- | and `{  }` for an empty object. Strings and numbers are argonaut's.
 spaced :: Json -> String
@@ -185,6 +299,12 @@ document = String.joinWith "\n\n"
   , section supervisionMessage
   , section teardownMessage
   , section holderMessage
+  , "## The group document, for a reader\n\n"
+      <> "What a reader may count on from any resident that answers for a group: "
+      <> "`bosun supervise`, whose document is the one above, and `bosun docker`. "
+      <> "A field that only one of them knows is optional here."
+  , section groupMessage
+  , section progressMessage
   ]
   where
   section :: forall r. Message r -> String

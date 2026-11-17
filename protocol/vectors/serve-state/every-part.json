@@ -1,0 +1,78 @@
+{
+  "routes": [
+    {
+      "serviceId": "7:site",
+      "publicPort": 3040,
+      "internalPort": 23040,
+      "up": true,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": 4242
+    },
+    {
+      "serviceId": "8:api",
+      "publicPort": 3041,
+      "internalPort": 23041,
+      "up": true,
+      "external": true,
+      "externalCheckedAt": "2026-11-17T09:23:18.311Z",
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": false,
+      "bindError": "EADDRINUSE",
+      "pid": null
+    }
+  ],
+  "brokered": [
+    {
+      "serviceId": "es9-daemon",
+      "publicPort": null,
+      "transport": "unix",
+      "at": "~/.es9/control.sock",
+      "url": null,
+      "probe": "none",
+      "pid": null,
+      "bound": false,
+      "bindError": null,
+      "door": "none",
+      "doorCheckedAt": null
+    }
+  ],
+  "redirects": [
+    {
+      "publicPort": 3100,
+      "serviceId": "marginalia:api",
+      "host": "macmini",
+      "target": "http://andrews-mac-mini:3100"
+    }
+  ],
+  "rejected": [
+    {
+      "serviceId": "9:ghost",
+      "publicPort": null,
+      "reason": "no start command"
+    }
+  ],
+  "drift": [
+    {
+      "serviceId": "10:new",
+      "publicPort": 3050,
+      "kind": "unrouted",
+      "note": "registered after the router planned"
+    }
+  ],
+  "stale": true,
+  "registry": {
+    "source": "registry/fleet.json",
+    "plannedAt": "2026-11-17T09:23:18.311Z",
+    "modifiedAt": "2026-11-17T10:00:00.000Z",
+    "error": null
+  },
+  "aFieldFromANewerRouter": {
+    "x": 1
+  }
+}

@@ -20,13 +20,14 @@
 -- | resident control surface share one code path. The only new effect is the
 -- | read-only `docker compose ps` observe (`execLine` + the pure
 -- | `Bosun.Adapters.DockerPs` parse).
-module Bosun.CLI.Docker (runDocker, dockerResident) where
+module Bosun.CLI.Docker (runDocker, dockerResident, snapshotBody) where
 
 import Prelude
 
 import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.Adapters.DockerPs (ContainerObs, healthVerdictToken, parseDockerInspect)
 import Bosun.Adapters.Registry (ingestRegistry)
+import Bosun.Protocol.State (printGroup)
 import Bosun.Apply (Command(..), applyScript, downScript)
 import Bosun.Atoms (Host, ServiceId, mkServiceId, unAbsPath, unServiceId)
 import Bosun.CLI.Exec (execLine)
@@ -224,36 +225,37 @@ inspectCommand target = case target.exec of
 envExports :: Array (Tuple String String) -> String
 envExports = foldMap \(Tuple k v) -> "export " <> k <> "=" <> v <> " && "
 
--- | `/state` JSON — the SAME shape `supervise` emits (services map + additive
--- | `supervision`), so the Chair's decoder is unchanged. The differences are
--- | honest and additive: `supervised: false` (Bosun does NOT run the keep-alive
--- | loop here) but `selfHeals: true` with `keepAliveOwner: "docker"` (the `↻`
--- | badge should read the container `restart:` policy, per EXECUTORS.md). Each
--- | `supervision` entry carries docker's `health` verdict; `restarts`/`fails`
--- | are 0 because Bosun isn't the one counting them — Docker is.
+-- | `/state`: a group document (`Bosun.Protocol.State.Group`), printed
+-- | through the shared description, so the Chair reads it with the reader it
+-- | uses for `supervise`. What differs is said in the document: `supervised:
+-- | false` (Bosun does NOT run the keep-alive loop here), `selfHeals: true`
+-- | with `keepAliveOwner: "docker"` (the container `restart:` policy does,
+-- | per EXECUTORS.md). Each row carries docker's `health` verdict, with
+-- | `check-error` distinct from `unhealthy`; `restarts` and `fails` are 0
+-- | because Bosun isn't the one counting them — Docker is.
 snapshotBody :: String -> Map ServiceId ContainerObs -> String
-snapshotBody desired snap =
-  "{ \"desired\": \"" <> desired <> "\""
-    <> ", \"supervised\": false"
-    <> ", \"selfHeals\": true"
-    <> ", \"keepAliveOwner\": \"docker\""
-    <> ", \"services\": { " <> intercalate ", " (map svcEntry entries) <> " }"
-    <> ", \"supervision\": { " <> intercalate ", " (map supEntry entries) <> " }"
-    <> " }"
+snapshotBody desired snap = printGroup
+  { desired
+  , phase: Nothing
+  , supervised: false
+  , services: entries <#> \(Tuple sid obs) -> Tuple (unServiceId sid) (statusToken obs.status)
+  , supervision: entries <#> \(Tuple sid obs) -> Tuple (unServiceId sid)
+      { restarts: 0
+      , fails: 0
+      , lastTransitionAt: Nothing
+      , suspendedUntil: Nothing
+      , retryCap: Nothing
+      , gaveUp: Nothing
+      , health: Just (healthVerdictToken obs.health)
+      , keepAliveOwner: Just "docker"
+      }
+  , teardown: Nothing
+  , holders: Nothing
+  , selfHeals: Just true
+  , keepAliveOwner: Just "docker"
+  }
   where
   entries = Map.toUnfoldable snap :: Array (Tuple ServiceId ContainerObs)
-
-  svcEntry (Tuple sid obs) =
-    "\"" <> unServiceId sid <> "\": \"" <> statusToken obs.status <> "\""
-
-  -- `health` is now docker's own verdict, with `check-error` distinct from
-  -- `unhealthy` (the broken-vs-failing distinction `ps` could not make).
-  supEntry (Tuple sid obs) =
-    "\"" <> unServiceId sid <> "\": { "
-      <> "\"restarts\": 0, \"fails\": 0"
-      <> ", \"health\": \"" <> healthVerdictToken obs.health <> "\""
-      <> ", \"keepAliveOwner\": \"docker\""
-      <> " }"
 
 statusToken :: Status -> String
 statusToken = case _ of

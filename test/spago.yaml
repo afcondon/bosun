@@ -23,6 +23,11 @@ package:
       - partial
       - strings
       - validation
+      - bosun-cli
+      - bosun-protocol
+      - hawser
+      - foldable-traversable
+      - tuples
       - spec
       - spec-node
       - spec-quickcheck

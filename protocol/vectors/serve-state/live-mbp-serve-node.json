@@ -1,0 +1,578 @@
+{
+  "routes": [
+    {
+      "serviceId": "132:frontend",
+      "publicPort": 3030,
+      "internalPort": 23030,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "134:blog",
+      "publicPort": 3041,
+      "internalPort": 23041,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "134:website",
+      "publicPort": 3040,
+      "internalPort": 23040,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "144:api",
+      "publicPort": 3002,
+      "internalPort": 23002,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "144:frontend",
+      "publicPort": 3006,
+      "internalPort": 23006,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "150:frontend",
+      "publicPort": 3005,
+      "internalPort": 23005,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "152:frontend",
+      "publicPort": 3004,
+      "internalPort": 23004,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "158:api",
+      "publicPort": 3050,
+      "internalPort": 23050,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "158:frontend",
+      "publicPort": 3051,
+      "internalPort": 23051,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "168:frontend",
+      "publicPort": 3014,
+      "internalPort": 23014,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "169:frontend",
+      "publicPort": 3102,
+      "internalPort": 23102,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "179:frontend",
+      "publicPort": 3007,
+      "internalPort": 23007,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "180:frontend",
+      "publicPort": 3008,
+      "internalPort": 23008,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "209:frontend",
+      "publicPort": 3070,
+      "internalPort": 23070,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "219:frontend",
+      "publicPort": 3211,
+      "internalPort": 23211,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "226:frontend",
+      "publicPort": 3009,
+      "internalPort": 23009,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "242:frontend",
+      "publicPort": 3025,
+      "internalPort": 23025,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "246:frontend",
+      "publicPort": 3021,
+      "internalPort": 23021,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "251:frontend",
+      "publicPort": 3026,
+      "internalPort": 23026,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "262:frontend",
+      "publicPort": 3001,
+      "internalPort": 23001,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "272:frontend",
+      "publicPort": 3003,
+      "internalPort": 23003,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "71:frontend",
+      "publicPort": 3019,
+      "internalPort": 23019,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "73:frontend",
+      "publicPort": 3017,
+      "internalPort": 23017,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "75:frontend",
+      "publicPort": 3018,
+      "internalPort": 23018,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "80:frontend",
+      "publicPort": 3016,
+      "internalPort": 23016,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "82:frontend",
+      "publicPort": 3013,
+      "internalPort": 23013,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    },
+    {
+      "serviceId": "88:frontend",
+      "publicPort": 3015,
+      "internalPort": 23015,
+      "up": false,
+      "external": false,
+      "externalCheckedAt": null,
+      "adoptedBackend": false,
+      "adoptedBackendAt": null,
+      "bound": true,
+      "bindError": null,
+      "pid": null
+    }
+  ],
+  "brokered": [
+    {
+      "serviceId": "144:worker",
+      "publicPort": 3028,
+      "transport": "tcp",
+      "at": "ws://127.0.0.1:23028",
+      "url": "ws://127.0.0.1:23028",
+      "probe": "tcp",
+      "pid": null,
+      "bound": true,
+      "bindError": null,
+      "door": "open",
+      "doorCheckedAt": null
+    }
+  ],
+  "redirects": [
+    {
+      "publicPort": 3100,
+      "serviceId": "121:api",
+      "host": "macmini",
+      "target": "http://andrews-mac-mini:3100"
+    },
+    {
+      "publicPort": 3101,
+      "serviceId": "121:frontend",
+      "host": "macmini",
+      "target": "http://andrews-mac-mini:3101"
+    },
+    {
+      "publicPort": 3200,
+      "serviceId": "121:whisper",
+      "host": "macmini",
+      "target": "http://andrews-mac-mini:3200"
+    },
+    {
+      "publicPort": 3111,
+      "serviceId": "285:frontend",
+      "host": "macmini",
+      "target": "http://andrews-mac-mini:3111"
+    },
+    {
+      "publicPort": 80,
+      "serviceId": "55:edge",
+      "host": "macmini",
+      "target": "http://andrews-mac-mini:80"
+    },
+    {
+      "publicPort": 8090,
+      "serviceId": "5:frontend",
+      "host": "macmini",
+      "target": "http://andrews-mac-mini:8090"
+    }
+  ],
+  "rejected": [
+    {
+      "serviceId": "185:link-anchor",
+      "publicPort": 57123,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "185:osc",
+      "publicPort": 57130,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "186:link-discovery",
+      "publicPort": 20808,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "186:midi-rx",
+      "publicPort": 57122,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "219:websocket",
+      "publicPort": 3210,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "223:scsynth",
+      "publicPort": 57110,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "223:superdirt",
+      "publicPort": 57120,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "227:router",
+      "publicPort": 3997,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "227:supervise-atlantis",
+      "publicPort": 3994,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "227:supervise-brunel",
+      "publicPort": 3993,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "227:supervise-minard",
+      "publicPort": 3992,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "227:supervisor",
+      "publicPort": 3990,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "236:api",
+      "publicPort": 3022,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "236:frontend",
+      "publicPort": 3020,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "240:frontend",
+      "publicPort": 3023,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "250:api",
+      "publicPort": 3024,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "267:osc",
+      "publicPort": 57127,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "286:osc",
+      "publicPort": 57125,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "287:frontend",
+      "publicPort": 3029,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "296:frontend",
+      "publicPort": 3011,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "301:frontend",
+      "publicPort": 3036,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "301:tidal-controls",
+      "publicPort": 6010,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "305:api",
+      "publicPort": 3039,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "35:api",
+      "publicPort": 3000,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "35:frontend",
+      "publicPort": 3010,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "78:ee-api",
+      "publicPort": 3031,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "78:ee-frontend",
+      "publicPort": 3032,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "78:ge-api",
+      "publicPort": 3033,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "78:ge-frontend",
+      "publicPort": 3034,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "78:landing",
+      "publicPort": 3035,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "90:link-anchor",
+      "publicPort": 57121,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    },
+    {
+      "serviceId": "90:websocket",
+      "publicPort": 3012,
+      "reason": "port reservation — the row names no start command, so nothing here is spawnable (by design; another launcher owns it)"
+    }
+  ],
+  "drift": [],
+  "stale": false,
+  "registry": {
+    "source": "/Users/afc/work/afc-work/ShapedSteer/bosun/registry/fleet.json",
+    "plannedAt": "2026-11-17T09:23:18.311Z",
+    "modifiedAt": "2026-11-14T21:05:52.934Z",
+    "error": null
+  }
+}

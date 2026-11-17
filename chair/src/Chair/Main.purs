@@ -24,7 +24,6 @@ import Chair.State (unsettledTeardowns, BrokerStatus, DriftInfo, RedirectInfo, R
 import Chair.Topo (fetchTopology, fetchFleetNames)
 import Data.Argonaut.Core (Json)
 import Data.Argonaut.Decode (JsonDecodeError, decodeJson)
-import Data.Argonaut.Decode.Error (printJsonDecodeError)
 import Data.Array as Array
 import Data.Codec.Argonaut as CA
 import Data.Either (Either(..))
@@ -541,7 +540,7 @@ refresh = do
     Right resp -> case s0.currentProject >>= _.supervise of
       Just _ -> case decodeSuperviseState resp.body of
         Left e ->
-          H.modify_ \s -> s { cockErr = Just (printJsonDecodeError e), ticks = s.ticks + 1 }
+          H.modify_ \s -> s { cockErr = Just ("/state could not be read: " <> e), ticks = s.ticks + 1 }
         Right v -> do
           H.modify_ \s -> s { superv = Just v, cockpit = Nothing, cockErr = Nothing, ticks = s.ticks + 1 }
           -- Auto-re-analyze when the supervised service SET changes under us — a
@@ -560,7 +559,7 @@ refresh = do
             _ -> pure unit
       Nothing -> case decodeStateView resp.body of
         Left e ->
-          H.modify_ \s -> s { cockErr = Just (printJsonDecodeError e), ticks = s.ticks + 1 }
+          H.modify_ \s -> s { cockErr = Just ("/state could not be read: " <> e), ticks = s.ticks + 1 }
         Right v ->
           H.modify_ \s -> s { cockpit = Just v, superv = Nothing, cockErr = Nothing, ticks = s.ticks + 1 }
   where
@@ -1207,20 +1206,14 @@ superviseCtrl sv a =
   where
   entry i = let c = canonOf a i in if FO.member c sv.services then Just (i.localName /\ c) else Nothing
 
--- | supervise /state → node id ↦ restart count, for the `↻` auto-restart badge.
--- | PRESENCE in this map means "this process will self-heal" (it's under an
--- | active supervisor). Sourced from the D-S1 `supervision` map when present
--- | (carrying real counts); else, for a `supervised: true` daemon that predates
--- | D-S1, every managed service still self-heals — fall back to count 0.
+-- | A group's /state → node id ↦ restart count, for the `↻` auto-restart badge.
+-- | PRESENCE in this map means "this process will self-heal": it has a row in
+-- | `supervision`, which `supervise` writes for what it keeps alive and
+-- | `docker` for what the container restart policy does.
 superviseBadge :: SuperviseState -> AnalyzeResult -> Map String Int
-superviseBadge sv a = case sv.supervision of
-  Just m -> Map.fromFoldable (Array.mapMaybe (rowEntry m) a.instances)
-  Nothing
-    | sv.supervised == Just true -> Map.fromFoldable (Array.mapMaybe svcEntry a.instances)
-    | otherwise -> Map.empty
+superviseBadge sv a = Map.fromFoldable (Array.mapMaybe rowEntry a.instances)
   where
-  rowEntry m i = map (\row -> i.localName /\ row.restarts) (FO.lookup (canonOf a i) m)
-  svcEntry i = if FO.member (canonOf a i) sv.services then Just (i.localName /\ 0) else Nothing
+  rowEntry i = map (\row -> i.localName /\ row.restarts) (FO.lookup (canonOf a i) sv.supervision)
 
 ladder :: forall m. State -> AnalyzeResult -> H.ComponentHTML Action () m
 ladder s a =

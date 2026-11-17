@@ -32,6 +32,7 @@
             "argonaut-core",
             "arrays",
             "bosun-core",
+            "bosun-protocol",
             "codec-argonaut",
             "effect",
             "either",
@@ -205,9 +206,13 @@
             "aff",
             "argonaut-core",
             "arrays",
+            "bosun-cli",
+            "bosun-protocol",
             "codec-argonaut",
             "effect",
             "either",
+            "foldable-traversable",
+            "hawser",
             "maybe",
             "ordered-collections",
             "partial",
@@ -216,6 +221,7 @@
             "spec-node",
             "spec-quickcheck",
             "strings",
+            "tuples",
             "validation"
           ]
         }

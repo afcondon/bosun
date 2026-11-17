@@ -15,6 +15,7 @@ import Test.Bosun.ReachabilitySpec as ReachabilitySpec
 import Test.Bosun.ReconcileSpec as ReconcileSpec
 import Test.Bosun.ResidentAccessSpec as ResidentAccessSpec
 import Test.Bosun.ServeSpec as ServeSpec
+import Test.Bosun.StateSpec as StateSpec
 import Test.Bosun.SubstrateSpec as SubstrateSpec
 import Test.Bosun.SupervisorSpec as SupervisorSpec
 import Test.Bosun.ValidateSpec as ValidateSpec
@@ -38,6 +39,7 @@ main = runSpecAndExitProcess [specReporter] do
     ReconcileSpec.spec
     PlanSpec.spec
     ApplySpec.spec
+    StateSpec.spec
     SubstrateSpec.spec
     HoldingSpec.spec
     ResidentAccessSpec.spec
