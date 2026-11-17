@@ -88,7 +88,10 @@ services:
       # double-owning the group. A port probe reads the incumbent as up.
       process:
         cwd: ${BOSUN_ROOT}
-        command: node cli/run.js supervise --port 3993 ${BOSUN_ROOT}/fixtures/brunel/compose.yml ${BOSUN_ROOT}/fixtures/brunel/registry.json
+        # ON THE BEAM since 2026-11-17, the last group supervisor to move. To go
+        # back, replace `beam/bosun` with `node cli/run.js` and POST
+        # :3990/control/reload.
+        command: beam/bosun supervise --port 3993 ${BOSUN_ROOT}/fixtures/brunel/compose.yml ${BOSUN_ROOT}/fixtures/brunel/registry.json
       expose:
         - host: 3993
 

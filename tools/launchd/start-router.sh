@@ -39,4 +39,9 @@ case "$(scutil --get LocalHostName 2>/dev/null | tr '[:upper:]' '[:lower:]')" in
     exec beam/bosun --targets fixtures/macmini-router/targets.json \
       supervise --tailnet-read --port 3990 fixtures/macmini-router/compose.yml fixtures/macmini-router/registry.json ;;
 esac
-exec node cli/run.js supervise --port 3990 fixtures/router/compose.yml fixtures/router/registry.json
+# The MBP's root: ON THE BEAM since 2026-11-17, after the Mini's root (16
+# November) and the three group supervisors. Needs beam/build.sh to have been
+# run. `bosun serve`, which this root launches, is still node. To go back,
+# replace `beam/bosun` with `node cli/run.js` and
+#   launchctl kickstart -k gui/$(id -u)/net.hylograph.bosun-router
+exec beam/bosun supervise --port 3990 fixtures/router/compose.yml fixtures/router/registry.json
