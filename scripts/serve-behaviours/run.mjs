@@ -174,7 +174,7 @@ const sweepPorts = () => {
       for (const pid of pids) { try { process.kill(Number(pid), "SIGKILL"); } catch (_) {} }
     } catch (_) {}
   }
-  try { execSync(`pkill -KILL -f "${STUB} --socket ${SOCKET}" 2>/dev/null || true`); } catch (_) {}
+  try { execSync(`pkill -KILL -f "${titleOf("sock")}" 2>/dev/null || true`); } catch (_) {}
   try { execSync(`pkill -KILL -f "[s]leep 611" 2>/dev/null || true`); } catch (_) {}
 };
 const cleanup = async () => {
