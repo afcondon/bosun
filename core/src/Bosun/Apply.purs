@@ -29,6 +29,7 @@ import Bosun.Artifact (Artifact(..), ArtifactRef(..))
 import Bosun.Atoms (EnvVar, Port, ServiceId, unAbsPath, unEnvVar, unPort, unServiceId)
 import Bosun.Executor (Executor(..))
 import Bosun.Plan (Change(..), Plan, changeRef, planSteps)
+import Bosun.ProcessTitle (GroupName, processTitle, titledCommand, titledEnv)
 import Bosun.Reachability (Address(..), addresses)
 import Bosun.Service (Service, ValidatedDeployment, unBootOrder, unServiceRef, unValidatedDeployment)
 import Bosun.Substrate (composeCmd, daemonize, pidStop, shellQuote)
@@ -70,9 +71,10 @@ type StagedCommand =
 -- | `TargetMap` resolves each service's host to its enactment profile (ssh
 -- | login, remote workdir, env prefix) — so the same pure script renders
 -- | local for `mbp` and ssh-wrapped for `macmini`, with no host strings baked
--- | into the planner.
-applyScript :: TargetMap -> ValidatedDeployment -> Plan -> Array StagedCommand
-applyScript tmap vd p =
+-- | into the planner. The `GroupName` is what each launched Process is titled
+-- | with in `ps` (`Bosun.ProcessTitle`).
+applyScript :: GroupName -> TargetMap -> ValidatedDeployment -> Plan -> Array StagedCommand
+applyScript group tmap vd p =
   planSteps p # A.concatMap \step ->
     case Map.lookup (unServiceRef (changeRef step.change)) svcs of
       Nothing -> []
@@ -81,7 +83,7 @@ applyScript tmap vd p =
         -- (e.g. `tailscale funnel` for a service with a Published address),
         -- both at this step's stage so the publish follows the launch in order.
         map (\command -> { stage: step.stage, service: svc.id, command, reportsTeardown: false })
-          ( A.fromFoldable (commandFor tmap step.change svc)
+          ( A.fromFoldable (commandFor group tmap step.change svc)
               <> publishCommands tmap step.change svc
               <> advisoryCommands step.change svc
           )
@@ -104,7 +106,7 @@ downScript tmap vd =
     NEA.toArray nea # A.mapMaybe \ref ->
       case Map.lookup (unServiceRef ref) svcs of
         Nothing -> Nothing
-        Just svc -> case commandFor tmap (Stop ref) svc of
+        Just svc -> case commandIn Nothing tmap (Stop ref) svc of
           Nothing -> Nothing
           Just command ->
             Just { stage, service: svc.id, command, reportsTeardown: reportsTeardown svc }
@@ -124,8 +126,13 @@ reportsTeardown svc = case svc.launch.executor of
 -- | target's `workdir` (so the remote shell finds the compose file) prefixed by
 -- | its `envPrefix` (so a non-interactive ssh shell finds `docker`), and `wrap`
 -- | ssh-wraps it when the target is remote.
-commandFor :: TargetMap -> Change -> Service -> Maybe Command
-commandFor tmap change svc = map (wrap target) (raw change)
+commandFor :: GroupName -> TargetMap -> Change -> Service -> Maybe Command
+commandFor group = commandIn (Just group)
+
+-- The group is what a launch is titled with. A teardown launches nothing, so
+-- `downScript` has no group to give.
+commandIn :: Maybe GroupName -> TargetMap -> Change -> Service -> Maybe Command
+commandIn group tmap change svc = map (wrap target) (raw change)
   where
   name = svc.launch.localName
   target = resolveTarget tmap svc.host
@@ -176,9 +183,15 @@ commandFor tmap change svc = map (wrap target) (raw change)
   -- Start and a Process Restart are the SAME command: "ensure the old
   -- generation is dead, then launch" — there is no cheaper restart for a native
   -- process, and the reap is the `down`-orphan fix.
+  --
+  -- The launch is titled `<group>:<service>` (Bosun.ProcessTitle): in the
+  -- environment for every Process, and in the command itself when it runs
+  -- `node` directly.
   processLaunch pr = Shell
     { cwd: Just (unAbsPath pr.cwd)
-    , line: daemonize target.platform.os svc.id (envAssign pr.env <> pr.command)
+    , line: daemonize target.platform.os svc.id case map (\g -> processTitle g svc.id) group of
+        Just title -> envAssign (titledEnv title pr.env) <> titledCommand title pr.command
+        Nothing -> envAssign pr.env <> pr.command
     }
 
   -- Stop a Process by killing the group `daemonize` recorded for it — Bosun's

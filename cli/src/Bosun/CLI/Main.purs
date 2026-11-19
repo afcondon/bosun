@@ -39,6 +39,7 @@ import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.Adapters.Registry (ingestRegistry)
 import Bosun.Adapters.Targets (ingestTargets)
 import Bosun.Apply (Command(..), StagedCommand, applyScript, downScript)
+import Bosun.ProcessTitle (groupOfComposePath)
 import Bosun.Target (TargetMap, defaultTargets)
 import Bosun.Atoms (AbsPath, Port, ServiceId, mkAbsPath, mkHost, mkPort, mkProjectId, mkServiceId, unServiceId)
 import Bosun.CLI.Exec (execLine)
@@ -225,7 +226,7 @@ runApplyDryRun targets composePath registryPath snapshotPath = do
       log ""
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
     Right vd ->
-      log (renderScript (applyScript targets vd (plan vd { desired: vd, recorded: Nothing, observed })))
+      log (renderScript (applyScript (groupOfComposePath composePath) targets vd (plan vd { desired: vd, recorded: Nothing, observed })))
 
 -- ── bosun apply <compose> <registry> [snapshot.json] ────────────────────────
 -- |
@@ -251,7 +252,7 @@ runApply targets composePath registryPath snapshotPath = do
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
     Right vd -> do
       let
-        script = applyScript targets vd (plan vd { desired: vd, recorded: Nothing, observed })
+        script = applyScript (groupOfComposePath composePath) targets vd (plan vd { desired: vd, recorded: Nothing, observed })
         stages = A.groupBy (\a b -> a.stage == b.stage) script
       if A.null stages then log "apply: nothing to do — the rig already matches desired state."
       else runStages 1 (map NEA.toArray stages)

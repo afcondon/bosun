@@ -52,7 +52,7 @@ spec = describe "Bosun.Serve.servePlan" do
         r.publicPort `shouldEqual` 3050
         r.internalPort `shouldEqual` 23050
         r.cwd `shouldEqual` "/srv/web"
-        r.launchCommand `shouldEqual` "npx serve -p 23050"
+        r.launchCommand `shouldEqual` (titled "web" "npx serve -p 23050")
 
   it "rejects a Process whose command lacks the literal port (SDI PortNotInStartCommand)" do
     let p = servePlan (mkDeployment [ procSvc "web" 3050 "mbp" "/srv/web" "npx serve" ])
@@ -174,7 +174,7 @@ spec = describe "Bosun.Serve.servePlan" do
         Nothing -> fail "expected one brokered service"
         Just b -> do
           b.publicPort `shouldEqual` Just 3028
-          b.launchCommand `shouldEqual` "itajara --ws-port 23028"
+          b.launchCommand `shouldEqual` (titled "loop" "itajara --ws-port 23028")
           b.at.transport `shouldEqual` "tcp"
           b.at.port `shouldEqual` Just 23028
           -- the row's own scheme travels through, so the answer is dialable as
@@ -193,7 +193,7 @@ spec = describe "Bosun.Serve.servePlan" do
         Nothing -> fail "expected one brokered service"
         Just b -> do
           b.publicPort `shouldEqual` Nothing      -- binds nothing
-          b.launchCommand `shouldEqual` "./rig --serve"
+          b.launchCommand `shouldEqual` (titled "rig" "./rig --serve")
           b.at.port `shouldEqual` Just 3080
 
     it "brokers a UNIX-SOCKET daemon — a service the proxy model cannot represent at all" do
@@ -489,3 +489,9 @@ spec = describe "Bosun.Serve.servePlan" do
           ]
         cs = claims [ Tuple "a" 3050, Tuple "b" 3051, Tuple "c" 3052 ]
       map _.publicPort (planDrift cs (planOf []) fresh) `shouldEqual` [ 3050, 3051, 3052 ]
+
+-- | What the router hands a shell for a service: its title exported
+-- | (`serve:<service>`, Bosun.ProcessTitle), then the command.
+titled :: String -> String -> String
+titled service command =
+  "export NODE_OPTIONS=\"${NODE_OPTIONS:+$NODE_OPTIONS }--title=serve:" <> service <> "\"; " <> command

@@ -142,6 +142,10 @@ const stopRouter = async (signal = "SIGTERM") => {
   return gone;
 };
 
+// A backend the router starts is titled `serve:<service>` (Bosun.ProcessTitle),
+// and `ps` then shows the title in place of the command line: a backend is
+// found by its title, not by `node …/stub.mjs <port>`.
+const titleOf = (role) => `^serve:beh-${role}( |$)`;
 const row = (id, role, port, startCommand, more = {}) =>
   ({ id, projectId: "beh", projectName: "beh", role, port, host: "mbp", environment: "native", startCommand, ...more });
 const stubCommand = (port, flags = "") => `cd ${WORK} && node ${STUB} ${port}${flags === "" ? "" : " " + flags}`;
@@ -325,7 +329,7 @@ behaviour("P4", "many requests for a backend that is down start one process", as
   const pids = new Set(answers.map((a) => (a.json ? a.json.pid : `status ${a.status}`)));
   check("eight requests, all 200", answers.every((a) => a.status === 200), [...pids].join(" "));
   check("all answered by the same process", pids.size === 1, [...pids].join(" "));
-  const running = execSync(`pgrep -f "^node .*stub.mjs ${internal(P.alpha)}" | wc -l`).toString().trim();
+  const running = execSync(`pgrep -f "${titleOf("alpha")}" | wc -l`).toString().trim();
   check("one backend process is running", running === "1", `${running} running`);
 });
 
@@ -403,7 +407,7 @@ behaviour("P12", "a command that puts the service in the background is still ser
   check("the first request is answered by it", first.status === 200 && first.json && first.json.label === "detached", `status ${first.status} ${first.text}`);
   const second = await request(P.detached, "/pid");
   check("the second request reaches the same process", second.status === 200 && second.json.pid === first.json.pid, `status ${second.status}`);
-  const running = execSync(`pgrep -f "^node .*stub.mjs ${internal(P.detached)}" | wc -l`).toString().trim();
+  const running = execSync(`pgrep -f "${titleOf("detached")}" | wc -l`).toString().trim();
   check("one process is running", running === "1", `${running} running`);
   check("/state: up", (await route(P.detached)).up === true, JSON.stringify(await route(P.detached)));
 });

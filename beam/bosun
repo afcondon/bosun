@@ -17,9 +17,105 @@
 # `serve` is given more open files than the 256 launchd hands a service: a
 # relayed connection takes two. Where the limit cannot be raised the router
 # waits for a free one, so this is headroom, not a requirement.
+#
+# A resident command NAMES ITS VM, so `ps` and Activity Monitor say which
+# supervisor is which and not `beam.smp` six times over:
+#   serve                               bosun-serve
+#   supervise … <group>/compose.yml …   bosun-<group>
+#   BOSUN_PROC_NAME, if set, is the name whatever the command.
+# `erl` always runs `beam.smp`, but `erlexec` runs `$BINDIR/$EMU.smp`, so the
+# VM is run from a directory holding a COPY of beam.smp under the new name (a
+# symlink does not work: the kernel names the process for the file it reaches).
+# The copy is kept in ~/.cache/bosun/erts/<key>/, where <key> is the installed
+# `erl`, so an upgraded Erlang gets a directory of its own. `ps -o ucomm` shows
+# the first 16 characters of `<name>.smp`; Activity Monitor shows all of it.
+# If any of that cannot be done the command runs as plain `erl`, as before: a
+# missing name never stops a supervisor starting.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The name this command's VM should have, or nothing. The group is named for
+# the directory of its compose file, by the rule of `groupOfComposePath`
+# (core/src/Bosun/ProcessTitle.purs), which titles the group's services; the
+# two must agree.
+proc_name() {
+  local verb="" compose="" skip=0 a dir group
+  for a in "$@"; do
+    if [ "$skip" = 1 ]; then skip=0; continue; fi
+    case "$a" in
+      --targets|--port) skip=1 ;;
+      --plan|--audit) return 0 ;;        # `serve --plan` prints and exits
+      --*) ;;
+      *) if [ -z "$verb" ]; then verb="$a"; elif [ -z "$compose" ]; then compose="$a"; fi ;;
+    esac
+  done
+  case "$verb" in
+    serve) echo bosun-serve ;;
+    supervise)
+      [ -n "$compose" ] || return 0
+      dir="$(dirname "$compose")"; group="${dir##*/}"
+      case "$group" in ""|.) group="${compose##*/}"; group="${group%%.*}" ;; esac
+      echo "bosun-$(printf %s "$group" | tr -c 'A-Za-z0-9_.-' '-')" ;;
+  esac
+}
+
+# Prepare the renamed VM. On success ERLEXEC, NAMED_ROOT and NAMED_BIN are
+# set, and PATH has what the installed `erl` would have added to it; any
+# failure returns non-zero.
+named_vm() {
+  local name="$1" erl real key cache facts root bindir added vm_path tmp f e
+  erl="$(command -v erl)" || return 1
+  real="$(realpath "$erl" 2>/dev/null || readlink -f "$erl" 2>/dev/null)" || return 1
+  key="$(printf %s "$real" | cksum | cut -d' ' -f1)"
+  [ -n "$real" ] && [ -n "$key" ] || return 1
+  cache="${BOSUN_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/bosun}/erts/$key"
+  facts="$cache/erts"
+  if [ ! -s "$facts" ]; then
+    # Ask the installed Erlang, once, where it is and what PATH its launcher
+    # gives the VM. Calling erlexec directly skips that launcher (on nix it
+    # puts GNU sed and awk in front), so what it added is kept and put back:
+    # every entry the VM saw that this shell does not have, less Erlang's own
+    # directories, which erlexec adds itself.
+    mkdir -p "$cache" || return 1
+    tmp="$cache/.erts.$$"
+    { IFS= read -r root && IFS= read -r bindir && IFS= read -r vm_path; } < <(
+      erl -noshell -eval 'io:format("~ts~n~ts~n~ts~n", [code:root_dir(), os:getenv("BINDIR"), os:getenv("PATH")]), halt().' 2>/dev/null
+    ) || return 1
+    added=""
+    while IFS= read -r -d : e; do
+      case ":$PATH:$added:" in *":$e:"*) continue ;; esac
+      case "$e" in ""|"$root"/*) continue ;; esac
+      added="${added:+$added:}$e"
+    done <<<"$vm_path:"
+    printf '%s\n%s\n%s\n' "$root" "$bindir" "$added" >"$tmp" && mv -f "$tmp" "$facts" || { rm -f "$tmp"; return 1; }
+  fi
+  { IFS= read -r root && IFS= read -r bindir && IFS= read -r added; } <"$facts" || return 1
+  # An Erlang upgraded in place leaves facts that point nowhere: forget them,
+  # run as plain `erl` this once, and ask again next time.
+  [ -x "$bindir/erlexec" ] && [ -f "$bindir/beam.smp" ] || { rm -f "$facts"; return 1; }
+  for f in erl_child_setup inet_gethost epmd; do
+    [ -e "$cache/$f" ] || ln -sf "$bindir/$f" "$cache/$f" 2>/dev/null || return 1
+  done
+  # The copy, made under another name and moved into place: a root supervisor
+  # starts several of these within a second of each other.
+  if [ ! -x "$cache/$name.smp" ] || [ "$bindir/beam.smp" -nt "$cache/$name.smp" ]; then
+    tmp="$cache/.$name.smp.$$"
+    cp "$bindir/beam.smp" "$tmp" 2>/dev/null && chmod 755 "$tmp" && mv -f "$tmp" "$cache/$name.smp" || { rm -f "$tmp"; return 1; }
+  fi
+  while IFS= read -r -d : e; do
+    case ":$PATH:" in *":$e:"*) continue ;; esac
+    [ -n "$e" ] && PATH="$e:$PATH"
+  done <<<"$added:"
+  ERLEXEC="$bindir/erlexec"; NAMED_ROOT="$root"; NAMED_BIN="$cache"
+}
+
 [ "${1:-}" = serve ] && ulimit -n 4096 2>/dev/null
-exec erl +Bd -noshell -pa "$HERE/ebin" -pa "$HERE/deps/yamerl/ebin" -eval '
+
+# Not inherited: this VM's children name themselves.
+NAME="${BOSUN_PROC_NAME:-$(proc_name "$@")}"
+unset BOSUN_PROC_NAME
+
+# The VM's arguments, the same whichever program starts it.
+set -- +Bd -noshell -pa "$HERE/ebin" -pa "$HERE/deps/yamerl/ebin" -eval '
   try ('"'"'bosun_cLI_main@ps'"'"':main())() of _ -> ok
   catch
     error:terminated -> halt(141);
@@ -31,3 +127,13 @@ exec erl +Bd -noshell -pa "$HERE/ebin" -pa "$HERE/deps/yamerl/ebin" -eval '
     true -> receive after infinity -> ok end;
     false -> halt(0)
   end.' -extra "$@"
+
+if [ -n "$NAME" ]; then
+  SAVED_PATH="$PATH"
+  if named_vm "$NAME"; then
+    shopt -s execfail
+    ROOTDIR="$NAMED_ROOT" BINDIR="$NAMED_BIN" EMU="$NAME" PROGNAME=erl exec "$ERLEXEC" "$@"
+  fi
+  PATH="$SAVED_PATH"
+fi
+exec erl "$@"

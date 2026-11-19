@@ -29,6 +29,7 @@ import Bosun.Adapters.DockerPs (ContainerObs, healthVerdictToken, parseDockerIns
 import Bosun.Adapters.Registry (ingestRegistry)
 import Bosun.Protocol.State (printGroup)
 import Bosun.Apply (Command(..), applyScript, downScript)
+import Bosun.ProcessTitle (GroupName, groupOfComposePath)
 import Bosun.Atoms (Host, ServiceId, mkServiceId, unAbsPath, unServiceId)
 import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (readJsonFile, readYamlFile)
@@ -85,14 +86,14 @@ runDocker targets mPort audience composePath registryPath = do
       log "cannot drive docker: the deployment does not validate —"
       log ""
       log (renderReport { conflicts: r.conflicts, divergences: r.divergences } vErrors)
-    Right vd -> dockerResident targets mPort vd >>= runResidentFor audience
+    Right vd -> dockerResident (groupOfComposePath composePath) targets mPort vd >>= runResidentFor audience
 
 -- | Build the resident Docker substrate from a validated deployment, do the
 -- | initial read-only observe, and return the `Resident` for `runResident` to
 -- | mount. Factored out of `runDocker` so that a harness can build it from a
 -- | pure-constructed deployment, without the yaml/json/argv read foreigns.
-dockerResident :: TargetMap -> Maybe Int -> ValidatedDeployment -> Effect Resident
-dockerResident targets mPort vd = do
+dockerResident :: GroupName -> TargetMap -> Maybe Int -> ValidatedDeployment -> Effect Resident
+dockerResident group targets mPort vd = do
       -- The cached observation the resident `/state` serves; the tick refreshes
       -- it. `desired` is display-only ("observing" until a control verb sets the
       -- group's intent).
@@ -126,7 +127,7 @@ dockerResident targets mPort vd = do
         bringUp = do
           observe
           snap <- Ref.read snapRef
-          runScript "up (docker compose up -d)" (applyScript targets vd (plan vd { desired: vd, recorded: Nothing, observed: map _.status snap }))
+          runScript "up (docker compose up -d)" (applyScript group targets vd (plan vd { desired: vd, recorded: Nothing, observed: map _.status snap }))
           observe
 
         teardown = do
@@ -137,7 +138,7 @@ dockerResident targets mPort vd = do
           observe
           snap <- Ref.read snapRef
           let forced = Map.insert (mkServiceId arg) Failed (map _.status snap)
-          runScript ("restart " <> arg) (applyScript targets vd (plan vd { desired: vd, recorded: Nothing, observed: forced }))
+          runScript ("restart " <> arg) (applyScript group targets vd (plan vd { desired: vd, recorded: Nothing, observed: forced }))
           observe
 
         tick = observe       -- mode 2: observe only; Docker owns keep-alive

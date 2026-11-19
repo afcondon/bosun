@@ -9,6 +9,7 @@ module Test.Bosun.ApplySpec where
 import Prelude
 
 import Bosun.Apply (applyScript, downScript)
+import Bosun.ProcessTitle (mkGroupName)
 import Bosun.Artifact (Artifact(..), mkRef)
 import Bosun.Atoms (AbsPath, EnvVar, Port, mkAbsPath, mkDomain, mkEnvVar, mkHost, mkPort, mkServiceId)
 import Bosun.Reachability (Address(..), BindScope(..), Reachability(..))
@@ -91,7 +92,7 @@ withScript :: Deployment -> Snapshot -> (Array String -> Aff Unit) -> Aff Unit
 withScript d obs f = case toEither (validate d) of
   Left _ -> fail "fixture was expected to validate"
   Right vd ->
-    f (map (renderCommand <<< _.command) (applyScript defaultTargets vd (plan vd { desired: vd, recorded: Nothing, observed: obs })))
+    f (map (renderCommand <<< _.command) (applyScript (mkGroupName "rig") defaultTargets vd (plan vd { desired: vd, recorded: Nothing, observed: obs })))
 
 -- assert on the rendered teardown (down) command lines, in reverse boot order
 withDownScript :: Deployment -> (Array String -> Aff Unit) -> Aff Unit
@@ -108,14 +109,14 @@ spec = describe "Bosun.Apply" do
   -- pidfile and `|| true` no-ops.
   it "Process Start -> local, reap-then-daemonize, recording its process group (not ssh-wrapped)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) (snap []) \lines ->
-      lines `shouldEqual` [ launched "run-a" ]
+      lines `shouldEqual` [ launched "NODE_OPTIONS=--title=rig:a run-a" ]
 
   -- A startCommand may carry a leading env-var assignment (e.g. the julia atlas:
   -- `ATLAS_PORT=3210 julia …`). Bare `nohup VAR=val prog` makes nohup exec the
   -- string `VAR=val` — the `env` prefix lets the shell-style assignment through.
   it "Process Start with an env-var prefix is launched via `env` (not eaten by nohup)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "ATLAS_PORT=3210 run-a" ]) (snap []) \lines ->
-      lines `shouldEqual` [ launched "ATLAS_PORT=3210 run-a" ]
+      lines `shouldEqual` [ launched "NODE_OPTIONS=--title=rig:a ATLAS_PORT=3210 run-a" ]
 
   -- The typed `x-bosun.process.env` (e.g. purerl-tidal's rebar3
   -- `ERL_LIBS=_build/default/lib`) renders as a leading `KEY=VAL ` assignment
@@ -123,7 +124,7 @@ spec = describe "Bosun.Apply" do
   -- inline-prefix path above, but inspectable instead of buried in the command.
   it "Process Start with a typed env renders leading KEY=VAL assignments" $
     withScript (mkDeployment [ procLeafEnv "a" "/srv/a" "erl -pa ebin" [ Tuple (mkEnvVar "ERL_LIBS") "_build/default/lib" ] ]) (snap []) \lines ->
-      lines `shouldEqual` [ launched "ERL_LIBS=_build/default/lib erl -pa ebin" ]
+      lines `shouldEqual` [ launched "ERL_LIBS=_build/default/lib NODE_OPTIONS=--title=rig:a erl -pa ebin" ]
 
   -- REGRESSION (note #398): a typed env VALUE with a space (the CoreAudio
   -- device name `BlackHole 2ch` on SuperDirt) must be single-quoted, or `env`
@@ -132,7 +133,19 @@ spec = describe "Bosun.Apply" do
   -- (ERL_LIBS above) stay unquoted; only this one gets quotes.
   it "Process Start with a spaced env value single-quotes it (the BlackHole 2ch bug)" $
     withScript (mkDeployment [ procLeafEnv "a" "/srv/a" "./boot-superdirt.sh" [ Tuple (mkEnvVar "SUPERDIRT_DEVICE") "BlackHole 2ch" ] ]) (snap []) \lines ->
-      lines `shouldEqual` [ launched "SUPERDIRT_DEVICE='BlackHole 2ch' ./boot-superdirt.sh" ]
+      lines `shouldEqual` [ launched "SUPERDIRT_DEVICE='BlackHole 2ch' NODE_OPTIONS=--title=rig:a ./boot-superdirt.sh" ]
+
+  -- A launch is titled `<group>:<service>` (Bosun.ProcessTitle). Every case
+  -- above shows the half that rides in the environment. A command that runs
+  -- `node` directly also gets the title as an option, because node cuts a
+  -- title from the environment to the length of its own argument vector.
+  it "a Process that runs node carries its title in the command too" $
+    withScript (mkDeployment [ procLeaf "a" "/srv/a" "PORT=3100 node server/run.js" ]) (snap []) \lines ->
+      lines `shouldEqual` [ launched "NODE_OPTIONS=--title=rig:a PORT=3100 node --title=rig:a server/run.js" ]
+
+  it "a service's own NODE_OPTIONS is kept, with the title after it" $
+    withScript (mkDeployment [ procLeafEnv "a" "/srv/a" "node run.js" [ Tuple (mkEnvVar "NODE_OPTIONS") "--max-old-space-size=4096" ] ]) (snap []) \lines ->
+      lines `shouldEqual` [ launched "NODE_OPTIONS='--max-old-space-size=4096 --title=rig:a' node --title=rig:a run.js" ]
 
   -- REGRESSION (teardown fidelity): a command carrying its own trailing `&` used
   -- to be passed through verbatim — no reap, no barrier, and no pidfile — so its
@@ -141,14 +154,14 @@ spec = describe "Bosun.Apply" do
   -- trailing ampersand is a typing habit, not an opt-out of supervision.
   it "a Process command that backgrounds itself is tracked like any other (the & is dropped)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a &" ]) (snap []) \lines ->
-      lines `shouldEqual` [ launched "run-a" ]
+      lines `shouldEqual` [ launched "NODE_OPTIONS=--title=rig:a run-a" ]
 
   -- The redirection-terminated shape the fixtures actually carry: stripping the
   -- `&` must leave `2>&1` intact (it ends in an ampersand too, one character
   -- earlier), and the launch's own redirect then wins because it comes last.
   it "dropping the trailing & does not eat the 2>&1 in front of it" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "python3 -m http.server 8771 >greeter.log 2>&1 &" ]) (snap []) \lines ->
-      lines `shouldEqual` [ launched "python3 -m http.server 8771 >greeter.log 2>&1" ]
+      lines `shouldEqual` [ launched "NODE_OPTIONS=--title=rig:a python3 -m http.server 8771 >greeter.log 2>&1" ]
 
   -- Stop kills the process GROUP Bosun recorded at launch (reaping the whole
   -- nohup→server tree) — its own processes, not whatever holds the port — and
@@ -168,7 +181,7 @@ spec = describe "Bosun.Apply" do
   it "Process Restart -> kill the recorded group, then relaunch (recording the new one)" $
     withScript (mkDeployment [ procLeaf "a" "/srv/a" "run-a" ]) (snap [ Tuple "a" Failed ]) \lines ->
       lines `shouldEqual`
-        [ launched "run-a" ]
+        [ launched "NODE_OPTIONS=--title=rig:a run-a" ]
 
   -- A macmini container resolves to the macmini Target: ssh login, the remote
   -- compose workdir (so the file is found) and Docker Desktop's PATH (so a

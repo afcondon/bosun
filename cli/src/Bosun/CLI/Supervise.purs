@@ -25,6 +25,7 @@ import Prelude
 import Bosun.Adapters.Compose (ingestCompose)
 import Bosun.Adapters.Registry (ingestRegistry)
 import Bosun.Apply (Command(..), StagedCommand, applyScript, downScript)
+import Bosun.ProcessTitle (GroupName, groupOfComposePath)
 import Bosun.Atoms (ServiceId, unServiceId)
 import Bosun.CLI.Exec (execLine)
 import Bosun.CLI.IO (readJsonFile, readYamlFile)
@@ -122,7 +123,7 @@ runSupervise targets mPort startHeld audience composePath registryPath = do
         log "`Bosun.Machine.SuperviseGroupSource`. Regenerate both generated modules"
         log "after editing it: `scripts/machine-vocabulary.sh`."
       Right machine ->
-        superviseResident targets mPort startHeld (Just (reIngest composePath registryPath)) machine dep vd
+        superviseResident (groupOfComposePath composePath) targets mPort startHeld (Just (reIngest composePath registryPath)) machine dep vd
           >>= runResidentFor audience
 
 -- | The group lifecycle artifact, decoded and checked against what this daemon
@@ -150,8 +151,8 @@ loadMachine = case parseSpec artifactJson of
 -- | `Bosun.CLI.Docker.dockerResident`). The
 -- | `targets` are threaded (not hardcoded) so a remote-host supervise resolves
 -- | the same way `apply` does.
-superviseResident :: TargetMap -> Maybe Int -> Boolean -> ReloadSource -> Spec -> Deployment -> ValidatedDeployment -> Effect Resident
-superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
+superviseResident :: GroupName -> TargetMap -> Maybe Int -> Boolean -> ReloadSource -> Spec -> Deployment -> ValidatedDeployment -> Effect Resident
+superviseResident group targets mPort startHeld reloadSource machine dep0 vd0 = do
   -- `startHeld` boots the resident with the group HELD DOWN (desired=down) and
   -- skips the initial bring-up: the daemon is up and answering /state + /control
   -- so the Chair sees an armable supervise group, but nothing is launched until a
@@ -293,7 +294,7 @@ superviseResident targets mPort startHeld reloadSource machine dep0 vd0 = do
     enactPlan label now observed = do
       vd <- Ref.read vdRef
       let p = plan vd { desired: vd, recorded: Nothing, observed }
-      enact label (applyScript targets vd p)
+      enact label (applyScript group targets vd p)
       dep <- Ref.read depRef
       Ref.modify_ (recordLaunches (policiesFor dep) now (launchesOf p)) supRef
       -- A relaunched service's teardown verdict is about the generation we

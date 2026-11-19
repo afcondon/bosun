@@ -18,6 +18,7 @@ import Bosun.Health (BaseRestart(..), Probe(..))
 import Bosun.Holding (ReapVerdict(..), holdingJson, holdingScript, judgeHolding, readHoldingEvidence, readReap, reapScript, reapTag, settleTeardown, strangers)
 import Bosun.Substrate (TeardownVerdict(..), teardownTag)
 import Bosun.Apply (applyScript)
+import Bosun.ProcessTitle (mkGroupName)
 import Bosun.Target (defaultTargets)
 import Bosun.Plan (Snapshot, Status(..), plan)
 import Bosun.Reconcile (reconcile)
@@ -66,7 +67,7 @@ planReport = withPlanFixture \vd ->
 -- | script the node build does. This is the headline claim, gated.
 applyReport :: String
 applyReport = withPlanFixture \vd ->
-  renderScript (applyScript defaultTargets vd (plan vd { desired: vd, recorded: Nothing, observed: planObserved }))
+  renderScript (applyScript (mkGroupName "conformance") defaultTargets vd (plan vd { desired: vd, recorded: Nothing, observed: planObserved }))
 
 withPlanFixture :: (ValidatedDeployment -> String) -> String
 withPlanFixture f = case toEither (validate (reconcile Map.empty planFixture).deployment) of

@@ -59,6 +59,7 @@ import Bosun.Error (SdiViolation(..))
 import Bosun.Executor (Executor(..))
 import Bosun.Exposure (Exposure(..))
 import Bosun.Health (Probe(..))
+import Bosun.ProcessTitle (processTitle, serveGroup, titledShellLine)
 import Bosun.Protocol (Locator)
 import Bosun.Reachability (classify)
 import Bosun.Service (Deployment, LooseService, deploymentServices)
@@ -475,6 +476,9 @@ admit hintFor s = case mediationOf of
   Proxy -> admitProxy
   where
   sid = unServiceId s.id
+  -- What the backend is called in `ps`: `serve:<service>` (Bosun.ProcessTitle).
+  -- Applied after the port rewrite, so a port in a service's name is not moved.
+  titled = titledShellLine (processTitle serveGroup s.id)
   hint = hintFor sid
   mediationOf = maybe Proxy _.mediation hint
   scheme = hint >>= _.scheme
@@ -504,7 +508,7 @@ admit hintFor s = case mediationOf of
                   , publicPort: public
                   , internalPort: internalPort public
                   , cwd: unAbsPath pr.cwd
-                  , launchCommand: rewritePort public (internalPort public) pr.command
+                  , launchCommand: titled (rewritePort public (internalPort public) pr.command)
                   , idleTimeoutMs: defaultIdleMs
                   }
             | otherwise -> rejectAt public (Sdi PortNotInStartCommand)
@@ -558,7 +562,7 @@ admit hintFor s = case mediationOf of
         , publicPort: Nothing
         , declaredPort: Just (unPort p)
         , cwd: unAbsPath pr.cwd
-        , launchCommand: pr.command
+        , launchCommand: titled pr.command
         , at: portLocator scheme (unPort p)
         , probe: NoProbe
         }
@@ -575,7 +579,7 @@ admit hintFor s = case mediationOf of
               , publicPort: Just public
               , declaredPort: Just public
               , cwd: unAbsPath pr.cwd
-              , launchCommand: rewritePort public actual pr.command
+              , launchCommand: titled (rewritePort public actual pr.command)
               , at: portLocator scheme actual
               , probe: portProbe scheme p actual
               }
@@ -591,7 +595,7 @@ admit hintFor s = case mediationOf of
           , publicPort: Nothing
           , declaredPort: Just public
           , cwd: unAbsPath pr.cwd
-          , launchCommand: pr.command
+          , launchCommand: titled pr.command
           , at: portLocator scheme public
           , probe: portProbe scheme p public
           }
@@ -604,7 +608,7 @@ admit hintFor s = case mediationOf of
         , publicPort: Nothing
         , declaredPort: Nothing
         , cwd: unAbsPath pr.cwd
-        , launchCommand: pr.command
+        , launchCommand: titled pr.command
         , at: { transport: "unix", host: Nothing, port: Nothing, path: Just (unAbsPath path), url: Nothing }
         , probe: SocketReady path
         }
@@ -617,7 +621,7 @@ admit hintFor s = case mediationOf of
         , publicPort: Nothing
         , declaredPort: Nothing
         , cwd: unAbsPath pr.cwd
-        , launchCommand: pr.command
+        , launchCommand: titled pr.command
         , at: { transport: "none", host: Nothing, port: Nothing, path: Nothing, url: Nothing }
         , probe: NoProbe
         }
