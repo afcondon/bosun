@@ -116,3 +116,24 @@ services:
         command: VALENTIA_PORT=3111 VALENTIA_BASE=http://andrews-mac-mini.vaquita-paradise.ts.net:3111 node --experimental-sqlite run.js
       expose:
         - host: 3111
+
+  reading-library:
+    x-bosun:
+      host: macmini
+      # Calibre's content server + browser reader for the books Andrew means to
+      # read next: the 66 "to read" picks from the Kindle Collection triage
+      # (infovore-larder-db, 2026-11-21), read on the iPad in Safari over the
+      # tailnet. Added 2026-11-21.
+      # The library lives on the INTERNAL disk on purpose: per the
+      # marginalia-api note above, nothing this group runs may touch /Volumes
+      # (TCC charges it to Bosun's launcher). The staging copy on Crucial4TB
+      # (Books/Kindle To Read) is the source; add new books with
+      #   calibredb add --library-path ~/Books/reading-library <files>
+      # Anonymous access, tailnet/LAN only; writes stay localhost-only, which is
+      # calibre's default. Absolute binary path: launchd's PATH has no Homebrew.
+      probe: tcp
+      process:
+        cwd: /Users/andrew/Books/reading-library
+        command: /Applications/calibre.app/Contents/MacOS/calibre-server --listen-on 0.0.0.0 --port 3046 --disable-use-bonjour /Users/andrew/Books/reading-library
+      expose:
+        - host: 3046
