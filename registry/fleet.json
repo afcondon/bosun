@@ -883,8 +883,21 @@
       "id": 213,
       "projectName": "Helm",
       "projectId": 305
+    },
+    {
+      "role": "reader",
+      "port": 3046,
+      "url": "http://andrews-mac-mini:3046",
+      "startCommand": "cd /Users/andrew/Books/reading-library && /Applications/calibre.app/Contents/MacOS/calibre-server --listen-on 0.0.0.0 --port 3046 --disable-use-bonjour /Users/andrew/Books/reading-library",
+      "description": "Reading library: calibre content server + browser reader for the 66 to-read books from the Kindle Collection triage, read on the iPad over the tailnet. Supervised by the Mini root group (fixtures/macmini-router/compose.yml, service reading-library).",
+      "host": "macmini",
+      "tailscaleName": "andrews-mac-mini",
+      "environment": "native",
+      "id": 214,
+      "projectName": "Infovore Data Sources",
+      "projectId": 5
     }
   ],
-  "count": 66,
+  "count": 67,
   "collisions": {}
 }
