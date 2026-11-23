@@ -7,6 +7,7 @@ import Test.Bosun.AdapterSpec as AdapterSpec
 import Test.Bosun.ApplySpec as ApplySpec
 import Test.Bosun.ArtifactSpec as ArtifactSpec
 import Test.Bosun.AtomsSpec as AtomsSpec
+import Test.Bosun.BrowserPortSpec as BrowserPortSpec
 import Test.Bosun.DockerPsSpec as DockerPsSpec
 import Test.Bosun.HoldingSpec as HoldingSpec
 import Test.Bosun.PBTSpec as PBTSpec
@@ -32,6 +33,7 @@ main :: Effect Unit
 main = runSpecAndExitProcess [specReporter] do
   describe "bosun-core" do
     AtomsSpec.spec
+    BrowserPortSpec.spec
     AdapterSpec.spec
     ArtifactSpec.spec
     DockerPsSpec.spec

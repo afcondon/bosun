@@ -79,6 +79,18 @@ The `POST` body mirrors the old Marginalia server shape:
 `id`, `projectId`, `projectName` are filled in by the server —
 don't send them.
 
+> **No port on the browser bad-port list** (since 2026-11-23). A `POST` whose
+> `port` is on the Fetch standard's list
+> (<https://fetch.spec.whatwg.org/#port-blocking>; above 1024: 1719, 1720,
+> 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665–6669, 6679, 6697,
+> 10080) is refused with a `400` naming the reason, and `suggest` never offers
+> one. **Why:** a browser may refuse such a port without an error. Safari 26.5
+> showed a literal `about:blank` for a page on 4190 that Chrome loaded, and the
+> page took the blame for half an hour. The rule covers every role, because
+> `role` is free text and can't tell a browser-facing row from a raw socket. A
+> socket loses nothing by avoiding these ports. The list lives in
+> `core/src/Bosun/BrowserPort.purs`.
+
 ## Procedure
 
 1. **Make sure the project exists in Marginalia** (identity). If not, create it

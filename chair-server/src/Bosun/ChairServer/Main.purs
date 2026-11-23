@@ -34,6 +34,7 @@ module Bosun.ChairServer.Main where
 import Prelude hiding ((/))
 
 import Bosun.Analyze (AnalyzeInput, analyze)
+import Bosun.BrowserPort as BrowserPort
 import Bosun.ChairServer.IO (ReloadOutcome, fetchMarginaliaProject, readFleet, readJsonFile, readJsonUrl, readYamlFile, reloadBosunServe, resolvePort, writeFleet)
 import Bosun.View (AnalyzeRequest, ServiceInstanceView, TopologyEntry, analyzeRequestCodec, analyzeResultCodec, topologyCodec)
 import Data.Argonaut.Core (Json, jsonNull, stringify)
@@ -273,7 +274,10 @@ handleProjectServers pid = do
 handleCreateServer :: Int -> String -> ResponseM
 handleCreateServer pid bodyStr = case jsonParser bodyStr of
   Left err -> badRequest' jsonCors ("invalid JSON: " <> err)
-  Right bodyJson -> do
+  Right bodyJson
+    -- Refused before anything is read or written: no row, no reload.
+    | Just why <- BrowserPort.portRefusal =<< serverPort bodyJson -> badRequest' jsonCors why
+    | otherwise -> do
     fleetResult <- attempt (liftEffect readFleet)
     projectResult <- attempt (liftEffect (fetchMarginaliaProject pid))
     case Tuple fleetResult projectResult of
@@ -483,12 +487,10 @@ nextServerId fleet =
   let ids = A.mapMaybe serverId (serverList fleet)
   in 1 + fromMaybe 0 (maximum ids)
 
+-- | First free port from 3000 that a browser will also open (see Bosun.BrowserPort).
 nextFreePort :: Json -> Int
 nextFreePort fleet =
-  let
-    used = Set.fromFoldable (A.mapMaybe serverPort (serverList fleet))
-    go p = if Set.member p used then go (p + 1) else p
-  in go 3000
+  BrowserPort.nextFreePort 3000 (Set.fromFoldable (A.mapMaybe serverPort (serverList fleet)))
 
 -- | Compute port → claimants. Add as `collisions` field to the fleet object
 -- | for the GET /api/ports response. Mirrors Marginalia's response shape.
