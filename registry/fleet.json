@@ -546,20 +546,6 @@
       "projectId": 144
     },
     {
-      "role": "api",
-      "port": 3002,
-      "url": "http://localhost:3002",
-      "startCommand": "cd /Users/afc/work/afc-work/music/producing-with-your-feet && spago bundle -p pwyf-store --platform node --module Server.Main --outfile dist/main.js && PORT=3002 node server/dist/main.js",
-      "description": "pwyf-store — JSON document store for pedal presets, patches (board presets) and MC6 assignments. Replaces per-origin localStorage. GET /api/snapshot is the client's whole-state pull; /health for readiness.",
-      "prerequisites": "Store dir defaults to infovore-larder-db/data/producing-with-your-feet; override with PWYF_STORE_DIR. Seed a fresh store with `python3 server/seed.py`.",
-      "environment": "mbp-native",
-      "host": "mbp",
-      "tailscaleName": "andrews-macbook-pro",
-      "id": 184,
-      "projectName": "Producing With Your Feet",
-      "projectId": 144
-    },
-    {
       "role": "frontend",
       "port": 3003,
       "url": "http://localhost:3003",
@@ -896,6 +882,20 @@
       "id": 214,
       "projectName": "Infovore Data Sources",
       "projectId": 5
+    },
+    {
+      "role": "api",
+      "port": 3002,
+      "url": "http://localhost:3002",
+      "startCommand": "cd /Users/afc/work/afc-work/music/producing-with-your-feet && spago bundle -p pwyf-store --platform node --module Server.Main --outfile dist/main.js && PORT=3002 node server/dist/main.js",
+      "description": "pwyf-store — JSON document store for pedal presets, patches (board presets) and MC6 assignments. Replaces per-origin localStorage. GET /api/snapshot is the client's whole-state pull; /health for readiness.",
+      "prerequisites": "Store dir defaults to music/producing-with-your-feet/store (tracked in the PWYF repo; moved out of infovore-larder-db 2026-11-25); override with PWYF_STORE_DIR. Seed a fresh store with `python3 server/seed.py`.",
+      "environment": "mbp-native",
+      "host": "mbp",
+      "tailscaleName": "andrews-macbook-pro",
+      "id": 215,
+      "projectName": "Producing With Your Feet",
+      "projectId": 144
     }
   ],
   "count": 67,
