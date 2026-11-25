@@ -59,9 +59,25 @@ GET    /api/ports/suggest            next free port from 3000 (over fleet.json)
 GET    /api/projects/:id/servers     servers for one project
 POST   /api/projects/:id/servers     create a row — assigns id, writes fleet.json, reloads serve
                                      200 routed · 202 persisted-but-not-routed
+PUT    /api/servers/:id              replace a row, keeps its id, writes fleet.json, reloads serve
+                                     200 routed · 202 persisted-but-not-routed · 404 no such id
 DELETE /api/servers/:id              remove a row, writes fleet.json, reloads serve
                                      200 removed+unrouted · 202 removed, router not told
 ```
+
+**Editing a row: `PUT`, not `DELETE` + `POST`** (since 2026-11-25). A `PUT`
+keeps the row's `id`; delete-and-recreate renumbers it. The body is the
+**whole** row, as for `POST`: a field you leave out is removed. So read the
+row from `GET /api/ports`, change it, and send it back. `id`, `projectId` and
+`projectName` are kept from the existing row. Sending them back unchanged is
+fine; a different value is refused with a `400`. To move a row to another
+project, `DELETE` it and `POST` it there. If the port changes, the response
+also says whether the router let go of the old one.
+
+> **Security: not yet examined.** This API has no authentication, binds
+> `0.0.0.0`, and answers CORS with `*`. A row's `startCommand` is run by
+> `bosun serve`, so whoever can write here can run commands on the host. See
+> the SECURITY note at the top of `chair-server/src/Bosun/ChairServer/Main.purs`.
 
 The `POST` body mirrors the old Marginalia server shape:
 

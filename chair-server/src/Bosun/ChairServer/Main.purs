@@ -13,10 +13,27 @@
 -- |   GET    /ports/suggest              next free port from 3000
 -- |   GET    /projects/:id/servers       list servers for one project
 -- |   POST   /projects/:id/servers       create a server row (assigns id)
+-- |   PUT    /servers/:id                replace a server row's own fields
 -- |   DELETE /servers/:id                remove a server row
 -- |
 -- | Plus the pre-existing `POST /analyze` (compose+registry ladder) and
 -- | `GET /health`. CORS open for the :3020 Chair frontend.
+-- |
+-- | SECURITY — NOT YET EXAMINED (noted 2026-11-25, when PUT was added). Re-read
+-- | this before the server is reachable from anything but our own machines.
+-- |   - It binds 0.0.0.0, has no authentication, and answers CORS with `*`.
+-- |   - Its writes land in fleet.json, and a row's `startCommand` is a SHELL
+-- |     COMMAND that `bosun serve` runs on first request. Write access to this
+-- |     API is therefore code execution on the host.
+-- |   - The tailnet boundary is not the whole story: a browser on a machine
+-- |     that can reach this port is a client too, and CORS alone does not keep
+-- |     a page out. The analysis is in the private docs repo,
+-- |     `kb/research/bosun-write-api-security.md`.
+-- |   - Things to weigh: bind to the tailnet address or localhost only;
+-- |     require `Content-Type: application/json`; allow only the Chair's
+-- |     origin; a token shared with the Chair; validate or allow-list
+-- |     `startCommand`; and log every write with who sent it.
+-- | The same questions apply to `bosun serve`'s `/control` on :3997.
 -- |
 -- | Reads (the hot path) are fully independent — they touch only fleet.json.
 -- | Writes synchronously fetch the Marginalia project record for projectName
@@ -46,7 +63,7 @@ import Data.Either (Either(..))
 import Data.Foldable (foldl, maximum)
 import Data.Generic.Rep (class Generic)
 import Data.Int as Int
-import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Set as Set
 import Data.String as String
 import Data.Traversable (traverse)
@@ -85,10 +102,11 @@ route = root $ sum
   , "ApiServersById": "api" / "servers" / int segment
   }
 
+-- | CORS `*`: see SECURITY in the module header before narrowing or widening.
 corsHeaders :: ResponseHeaders
 corsHeaders = headers
   { "Access-Control-Allow-Origin": "*"
-  , "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS"
+  , "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS"
   , "Access-Control-Allow-Headers": "Content-Type"
   }
 
@@ -96,7 +114,7 @@ jsonCors :: ResponseHeaders
 jsonCors = headers
   { "Content-Type": "application/json"
   , "Access-Control-Allow-Origin": "*"
-  , "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS"
+  , "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS"
   , "Access-Control-Allow-Headers": "Content-Type"
   }
 
@@ -224,6 +242,9 @@ router { route: r, method, body } = case method of
         handleCreateServer pid bodyStr
       _ -> badRequest' jsonCors "method not allowed"
     ApiServersById sid -> case method of
+      Put -> do
+        bodyStr <- toString body
+        handleUpdateServer sid bodyStr
       Delete -> handleDeleteServer sid
       _ -> badRequest' jsonCors "method not allowed"
 
@@ -231,6 +252,7 @@ main :: ServerM
 main = do
   port <- resolvePort
   Console.log ("bosun chair-server — analysis + registry backend on :" <> show port)
+  -- 0.0.0.0 with no authentication: see SECURITY in the module header.
   serve { hostname: "0.0.0.0", port } { route, router }
 
 ----------------------------------------------------------------------
@@ -302,6 +324,50 @@ handleCreateServer pid bodyStr = case jsonParser bodyStr of
               if report.routed then ok' jsonCors (stringify answer)
               else response' Status.accepted jsonCors (stringify answer)
 
+-- | PUT /api/servers/:id — replace one row. The body is the whole row as the
+-- | client owns it, as for POST: a field left out is removed, so read the row
+-- | from `GET /api/ports` first and send it back changed. The server-owned
+-- | fields (`ownedFields`) are kept from the existing row. A body that names
+-- | one with a DIFFERENT value is refused: moving a row to another project is
+-- | DELETE + POST, which looks the new project up in Marginalia.
+-- |
+-- | The id is kept, so references to it survive an edit (a DELETE + POST
+-- | renumbers the row: 184 became 214 on 2026-11-25). The same port rules as
+-- | POST apply, and the same 200 (routed) / 202 (persisted, not routed) split.
+-- | When the port changes, the report also checks the router let go of the old one.
+handleUpdateServer :: Int -> String -> ResponseM
+handleUpdateServer sid bodyStr = case jsonParser bodyStr of
+  Left err -> badRequest' jsonCors ("invalid JSON: " <> err)
+  Right bodyJson
+    | Just why <- BrowserPort.portRefusal =<< serverPort bodyJson -> badRequest' jsonCors why
+    | otherwise -> do
+        fleetResult <- attempt (liftEffect readFleet)
+        case fleetResult of
+          Left e -> badRequest' jsonCors ("fleet.json read failed: " <> message e)
+          Right fleet -> case A.find (\s -> serverId s == Just sid) (serverList fleet) of
+            Nothing -> notFound' jsonCors
+            Just old -> case ownedFieldConflict old bodyJson of
+              Just why -> badRequest' jsonCors why
+              Nothing -> writeUpdate sid fleet old (replaceServerRow old bodyJson)
+
+writeUpdate :: Int -> Json -> Json -> Json -> ResponseM
+writeUpdate sid fleet old row = do
+  let
+    servers = serverList fleet
+    fleet' = setServers (map (\s -> if serverId s == Just sid then row else s) servers) fleet
+    -- another row on the old port means the router SHOULD still hold it
+    oldPortShared = A.any (\s -> serverId s /= Just sid && serverPort s == serverPort old && serverPort s /= Nothing) servers
+  writeResult <- attempt (liftEffect (writeFleet fleet'))
+  case writeResult of
+    Left e -> badRequest' jsonCors ("fleet.json write failed: " <> message e)
+    Right _ -> do
+      outcome <- liftEffect reloadBosunServe
+      let
+        report = updateReport (serverPort old) (serverPort row) oldPortShared outcome
+        answer = withField "routing" report.json row
+      if report.routed then ok' jsonCors (stringify answer)
+      else response' Status.accepted jsonCors (stringify answer)
+
 -- | DELETE /api/servers/:id — atomic remove + reload. 404 if id not present.
 -- | 202 when the removal persisted but the router was not told (it will still be
 -- | holding the port until someone reloads it).
@@ -362,7 +428,7 @@ createReport mport outcome = case reloadFailure outcome of
     Redirected -> report true "routed — bound as a 421 redirect (the row's host is not this machine)."
     Refused why -> unrouted true
       ( "persisted, and the router reloaded — but it will NOT route this row: " <> why
-          <> ". Fix the row (see docs/REGISTER-A-SERVICE.md) and re-register; the reload cannot help."
+          <> ". Fix the row (see docs/REGISTER-A-SERVICE.md) and write it again; the reload cannot help."
       )
     NoPortDeclared -> unrouted true
       "persisted; the row declares no port, so there is nothing for the router to bind."
@@ -371,6 +437,31 @@ createReport mport outcome = case reloadFailure outcome of
   where
   report routed note = { routed, json: routingJson routed true note outcome }
   unrouted reloaded note = { routed: false, json: routingJson false reloaded note outcome }
+
+-- | An update is a create on the new port, plus, when the port moved, a check
+-- | that the router released the old one (unless another row still claims it).
+updateReport :: Maybe Int -> Maybe Int -> Boolean -> ReloadOutcome -> WriteReport
+updateReport oldPort newPort oldPortShared outcome =
+  let
+    base = createReport newPort outcome
+    baseNote = fromMaybe "" (jsonString "note" base.json)
+    stillBound p = case verdictFor (Just p) outcome.body of
+      Routed -> true
+      Redirected -> true
+      _ -> false
+  in
+    case oldPort of
+      Just p
+        | oldPort /= newPort
+        , not oldPortShared
+        , reloadFailure outcome == Nothing
+        , stillBound p ->
+            { routed: false
+            , json: routingJson false true
+                (baseNote <> " But the router STILL holds the old port " <> show p <> "; check /state for what claims it.")
+                outcome
+            }
+      _ -> base
 
 deleteReport :: Maybe Int -> ReloadOutcome -> WriteReport
 deleteReport mport outcome = case reloadFailure outcome of
@@ -533,6 +624,33 @@ claimant s =
 -- | it is what proves the project EXISTS before a row claims to belong to it
 -- | (see `fetchMarginaliaProjectImpl`'s `curl -f`), and it is where the human
 -- | name comes from.
+-- | The fields the server fills in and a client never sets.
+ownedFields :: Array String
+ownedFields = [ "id", "projectId", "projectName" ]
+
+-- | `Just why` when a PUT body gives a server-owned field a different value
+-- | from the row's. Sending the same value back (as a read-modify-write
+-- | does) is fine.
+ownedFieldConflict :: Json -> Json -> Maybe String
+ownedFieldConflict old body = A.findMap conflict ownedFields
+  where
+  conflict k = case serverField k body of
+    Nothing -> Nothing
+    Just v
+      | Just v == serverField k old -> Nothing
+      | otherwise -> Just
+          ( "`" <> k <> "` is set by the server and a PUT cannot change it"
+              <> " (to move a row to another project, DELETE it and POST it there)."
+          )
+
+-- | The body, with the server-owned fields taken from the existing row.
+replaceServerRow :: Json -> Json -> Json
+replaceServerRow old body =
+  let
+    keep acc k = maybe acc (\v -> FO.insert k v acc) (serverField k old)
+  in
+    J.fromObject (foldl keep (fromMaybe FO.empty (J.toObject body)) ownedFields)
+
 buildServerRow :: Int -> Int -> Json -> Json -> Json
 buildServerRow newId pid project body =
   let
