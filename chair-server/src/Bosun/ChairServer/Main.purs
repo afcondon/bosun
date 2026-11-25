@@ -71,7 +71,7 @@ import Data.Tuple (Tuple(..))
 import Effect.Aff (Aff, attempt)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
-import Effect.Exception (message)
+import Effect.Exception (message, try)
 import Foreign.Object as FO
 import HTTPurple (Method(..), Request, ResponseM, ServerM, badRequest', notFound', ok', response', serve, toString)
 import HTTPurple.Headers (ResponseHeaders, headers)
@@ -221,8 +221,11 @@ router { route: r, method, body } = case method of
       case fleet of
         Left e -> response' Status.serviceUnavailable jsonCors
           (stringify (healthJson false ("registry unreadable: " <> message e)))
-        Right f -> ok' jsonCors
-          (stringify (healthJson true (show (A.length (serverList f)) <> " server rows")))
+        Right f -> case duplicateIds f of
+          [] -> ok' jsonCors
+            (stringify (healthJson true (show (A.length (serverList f)) <> " server rows")))
+          dups -> response' Status.serviceUnavailable jsonCors
+            (stringify (healthJson false (duplicateIdsNote dups)))
     Analyze -> do
       bodyStr <- toString body
       case parseBody analyzeRequestCodec bodyStr of
@@ -252,6 +255,14 @@ main :: ServerM
 main = do
   port <- resolvePort
   Console.log ("bosun chair-server — analysis + registry backend on :" <> show port)
+  -- Said once at start, as well as on every /health: a merge that duplicated an
+  -- id should be in the log of the restart that follows the pull.
+  startFleet <- try readFleet
+  case startFleet of
+    Left e -> Console.warn ("fleet.json unreadable at start: " <> message e)
+    Right f -> case duplicateIds f of
+      [] -> pure unit
+      dups -> Console.warn (duplicateIdsNote dups)
   -- 0.0.0.0 with no authentication: see SECURITY in the module header.
   serve { hostname: "0.0.0.0", port } { route, router }
 
@@ -344,11 +355,12 @@ handleUpdateServer sid bodyStr = case jsonParser bodyStr of
         fleetResult <- attempt (liftEffect readFleet)
         case fleetResult of
           Left e -> badRequest' jsonCors ("fleet.json read failed: " <> message e)
-          Right fleet -> case A.find (\s -> serverId s == Just sid) (serverList fleet) of
-            Nothing -> notFound' jsonCors
-            Just old -> case ownedFieldConflict old bodyJson of
+          Right fleet -> case A.filter (\s -> serverId s == Just sid) (serverList fleet) of
+            [] -> notFound' jsonCors
+            [ old ] -> case ownedFieldConflict old bodyJson of
               Just why -> badRequest' jsonCors why
               Nothing -> writeUpdate sid fleet old (replaceServerRow old bodyJson)
+            rows -> ambiguousId sid rows
 
 writeUpdate :: Int -> Json -> Json -> Json -> ResponseM
 writeUpdate sid fleet old row = do
@@ -379,11 +391,11 @@ handleDeleteServer sid = do
     Right fleet ->
       let
         servers = serverList fleet
-        doomed = A.find (\s -> serverId s == Just sid) servers
+        doomed = A.filter (\s -> serverId s == Just sid) servers
       in
         case doomed of
-          Nothing -> notFound' jsonCors
-          Just row ->
+          [] -> notFound' jsonCors
+          [ row ] ->
             let fleet' = setServers (A.filter (\s -> serverId s /= Just sid) servers) fleet
             in do
               writeResult <- attempt (liftEffect (writeFleet fleet'))
@@ -397,9 +409,38 @@ handleDeleteServer sid = do
                       (J.fromObject (FO.singleton "deleted" (J.fromNumber (Int.toNumber sid))))
                   if report.routed then ok' jsonCors (stringify answer)
                   else response' Status.accepted jsonCors (stringify answer)
+          rows -> ambiguousId sid rows
 
 ----------------------------------------------------------------------
--- The routing half of a write, reported honestly
+-- Duplicate ids
+----------------------------------------------------------------------
+
+-- | Ids held by more than one row. fleet.json is one file shared between the
+-- | machines by git, and each machine's chair-server mints `max id + 1` over
+-- | its own copy, so two creates made apart from each other mint the same id
+-- | (214, 2026-11-25). Until minting is made collision-free, a duplicate is
+-- | REPORTED (`/health` 503, `duplicateIds` on `/api/ports`), and a PUT or
+-- | DELETE by an ambiguous id is refused rather than applied to whichever row
+-- | comes first.
+duplicateIds :: Json -> Array Int
+duplicateIds fleet =
+  let
+    count acc i = FO.alter (\n -> Just (1 + fromMaybe 0 n)) (show i) acc
+    counts = foldl count (FO.empty :: FO.Object Int) (A.mapMaybe serverId (serverList fleet))
+  in
+    A.mapMaybe Int.fromString (FO.keys (FO.filter (_ > 1) counts))
+
+duplicateIdsNote :: Array Int -> String
+duplicateIdsNote dups =
+  "duplicate server ids in fleet.json: " <> String.joinWith ", " (map show dups)
+    <> ". PUT and DELETE refuse these ids; renumber one row by hand (the git merge of fleet.json is where they come from)."
+
+ambiguousId :: Int -> Array Json -> ResponseM
+ambiguousId sid rows = response' Status.conflict jsonCors
+  ( "id " <> show sid <> " is held by " <> show (A.length rows)
+      <> " rows in fleet.json, so this request is ambiguous and nothing was changed. "
+      <> duplicateIdsNote [ sid ]
+  )
 ----------------------------------------------------------------------
 
 -- | The router's post-reload verdict on ONE public port. Closed alternatives, so
@@ -595,7 +636,8 @@ withCollisions fleet =
     grouped = foldl addRow (FO.empty :: FO.Object (Array Json)) servers
     cols = FO.filter (\v -> A.length v > 1) grouped
     obj = fromMaybe FO.empty (J.toObject fleet)
-  in J.fromObject (FO.insert "collisions" (J.fromObject (map J.fromArray cols)) obj)
+    dupIds = J.fromArray (map (J.fromNumber <<< Int.toNumber) (duplicateIds fleet))
+  in J.fromObject (FO.insert "duplicateIds" dupIds (FO.insert "collisions" (J.fromObject (map J.fromArray cols)) obj))
 
 claimant :: Json -> Json
 claimant s =

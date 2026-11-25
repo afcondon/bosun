@@ -74,6 +74,14 @@ fine; a different value is refused with a `400`. To move a row to another
 project, `DELETE` it and `POST` it there. If the port changes, the response
 also says whether the router let go of the old one.
 
+**Duplicate ids** (since 2026-11-25). `fleet.json` is shared between the
+machines by git, and each machine's chair-server gives a new row `max id + 1`
+over its own copy. So two creates made on different machines between merges
+get the same id; 214 did, on 2026-11-25. A duplicate is reported: `/health`
+answers `503` and names it, `GET /api/ports` lists it under `duplicateIds`,
+and the server warns at start. A `PUT` or `DELETE` on a duplicated id answers
+`409` and changes nothing. Renumber one of the rows by hand.
+
 > **Security: not yet examined.** This API has no authentication, binds
 > `0.0.0.0`, and answers CORS with `*`. A row's `startCommand` is run by
 > `bosun serve`, so whoever can write here can run commands on the host. See
